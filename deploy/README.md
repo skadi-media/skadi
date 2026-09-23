@@ -590,9 +590,14 @@ per-service `user:`) and `.env.nas` (ssh target, paths, uid — copy from
 two places:
 
 - **GHCR (the overlay's default)** — `.github/workflows/images.yml` publishes
-  `linux/amd64` builds of `main` as `ghcr.io/skadi-media/<image>:latest`;
-  `angreal nas pull` then `angreal nas up --recreate` rolls one out. Until that
-  workflow is committed and has run once, the default image refs do not exist.
+  multi-arch (`linux/amd64` + `linux/arm64`) builds of `main` as
+  `ghcr.io/skadi-media/<image>:latest`; `angreal nas pull` then
+  `angreal nas up --recreate` rolls one out. It is a **reusable workflow called
+  from `ci.yml`**, gated on the whole test suite, so nothing publishes until the
+  tests are green — and it never runs on `pull_request`, so a fork cannot
+  publish. The repo is private, so the packages are too: the NAS needs
+  `docker login ghcr.io` once, as root, with a classic token carrying
+  `read:packages`.
 - **Local `:nas` images** — `angreal nas build` (`docker build --platform
   linux/amd64` on this machine, ~11 min for the worker, 20–30 min for the
   daemon) and `angreal nas push --images` (`docker save | ssh | docker load`).

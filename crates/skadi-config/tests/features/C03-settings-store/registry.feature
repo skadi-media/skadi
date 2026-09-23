@@ -41,7 +41,7 @@ Feature: Settings store — the config key registry and env seeding (C03)
       | mode                           | production              | string |
       | library.root                   | /data                   | path   |
       | min_seeders                    | 1                       | u16    |
-      | sweep_max_concurrent           | 4                       | u16    |
+      | sweep_max_concurrent           | 8                       | u16    |
       | metadata_refresh_interval_secs | 21600                   | u64    |
       | cardigann_sync_enabled         | true                    | bool   |
       | worker.up_limit_bps            | 500000                  | u64    |

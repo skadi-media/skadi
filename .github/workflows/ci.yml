@@ -127,8 +127,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Named targets, not a bare `cargo test -p`: that also runs the `bdd`
+      # target, which is `harness = false` — a cucumber main that rejects
+      # `--test-threads` outright ("unexpected argument"). The BDD job already
+      # covers it via `cargo test --workspace --test bdd`, so running it here
+      # was duplicated work that happened to fail (2026-09-23).
+      #
+      # `--test-threads=1` stays for the rest: these tests share one database.
       - name: Run skadi-store tests against both backends
-        run: cargo test -p skadi-store -- --test-threads=1
+        run: cargo test -p skadi-store --lib --test cross_backend -- --test-threads=1
 
   test-bdd:
     name: BDD (cucumber, @gap/@lab excluded)
@@ -222,12 +229,15 @@ jobs:
           path: coverage/
 
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build (release)
+    # Linux only. skadi ships as a container and runs on Linux; the macOS job
+    # existed to catch portability breaks and instead failed at the linker,
+    # unable to find `libpq` on the runner. That is an environment gap, not a
+    # code defect, and paying for a Homebrew install on every push to guard a
+    # platform nothing deploys to is the wrong trade (2026-09-23). Development
+    # on macOS is still covered by `cargo check` locally.
+    runs-on: ubuntu-latest
     needs: check
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 

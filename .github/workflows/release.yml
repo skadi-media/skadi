@@ -24,9 +24,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             asset: skadi-linux-aarch64.tar.gz
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            asset: skadi-darwin-aarch64.tar.gz
     steps:
       - uses: actions/checkout@v4
 

@@ -1276,6 +1276,16 @@ pub(crate) mod tests {
         let (_d, store) = fresh_store().await;
         let mut a = Author::new("Andy Weir");
         a.asin = Some(AsinId("A1".into()));
+        // The store holds timestamps to **microsecond** precision, so a value
+        // read back is not bit-identical to one built from `Utc::now()` when
+        // the clock offers more. Truncate before storing, and the round trip
+        // is an equality the store can actually honour.
+        //
+        // This went unnoticed because macOS clocks stop at microseconds — the
+        // assertion passed on the machine it was written on and failed on the
+        // Linux runner, where nanoseconds survive (2026-09-23).
+        a.added_at = chrono::DateTime::from_timestamp_micros(a.added_at.timestamp_micros())
+            .expect("a timestamp from Utc::now() is in range");
         store.upsert_author(&a).await.unwrap();
 
         assert_eq!(store.get_author(a.id).await.unwrap().unwrap(), a);

@@ -89,7 +89,16 @@ def test():
     try:
         env = dict(os.environ, SKADI_TEST_DATABASE_URL=DB_TEST_DATABASE_URL)
         result = subprocess.run(
-            ["cargo", "test", "-p", "skadi-store", "--", "--test-threads=1"],
+            # Named targets, not a bare `-p`: that also runs the `bdd` target,
+            # which is `harness = false` and rejects `--test-threads` with
+            # "unexpected argument". `cargo test --workspace --test bdd`
+            # covers it (SKADI-T-0482). `--test-threads=1` stays for the rest,
+            # which share one database.
+            [
+                "cargo", "test", "-p", "skadi-store",
+                "--lib", "--test", "cross_backend",
+                "--", "--test-threads=1",
+            ],
             cwd=cwd, env=env,
         )
     finally:

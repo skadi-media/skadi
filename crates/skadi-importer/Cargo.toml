@@ -1,0 +1,34 @@
+[package]
+name = "skadi-importer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Importer for Skadi: finalize completed downloads into the library (parse, match, hardlink)"
+
+[dependencies]
+tracing = { workspace = true }
+skadi-core = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-downloaders = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true }
+# The BDD steps read the operator-settable import guards through the same
+# `ConfigView` path production uses (SKADI-T-0416), rather than restating the
+# unit conversion in the test.
+skadi-config = { path = "../skadi-config" }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

@@ -1,0 +1,2043 @@
+/* Skadi design system — "cold Nordic" (SKADI-I-0035, from the design handoff).
+   Token-first: surfaces are slate, accents are an ice/teal/violet aurora + a gold
+   "owned/cutoff" accent. Type is IBM Plex Sans (UI) + Plex Mono (numbers/paths). */
+:root {
+  /* surfaces */
+  --bg: #0e1116;
+  --sidebar: #12161c;
+  --panel: #161a21;
+  --panel-2: #13171e;
+  --inset: #0a0c10;
+  --control: #1b2129;
+  /* borders */
+  --border: #232a34;
+  --border-soft: #1d232c;
+  --border-fainter: #15191f;
+  --border-control: #2a3340;
+  /* text */
+  --fg: #e6e9ee;
+  --fg-bright: #f1f4f8;
+  --fg-2: #c3cbd5;
+  --muted: #8b95a3;
+  --faint: #5b6573;
+  --fainter: #4a525e;
+  /* accents + semantic */
+  --ice: #7fb2ff;
+  --brand-stroke: #8fbcff;
+  --teal: #5fd0c5;
+  --violet: #9d8cff;
+  --gold: #d8a657;
+  --ok: #4bd07f;
+  --warn: #d8a657;
+  --bad: #f06464;
+  /* back-compat alias: existing rules use var(--accent) */
+  --accent: var(--ice);
+  /* tinted accent fills */
+  --ice-tint: rgba(127, 178, 255, 0.13);
+  --ice-tint-soft: rgba(127, 178, 255, 0.08);
+  /* gradients */
+  --aurora: linear-gradient(90deg, #5fd0c5, #7fb2ff, #9d8cff);
+  --progress: linear-gradient(90deg, #5fd0c5, #7fb2ff);
+  /* type */
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* radius */
+  --r-tile: 8px;
+  --r-card: 10px;
+  --r-pill: 20px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* Default link tone (specific classes — nav, cards, gear — override). */
+a { color: var(--ice); text-decoration: none; }
+/* Mono for numbers, paths, env vars, release titles, timestamps, technical labels. */
+.mono { font-family: var(--mono); }
+.tnum { font-variant-numeric: tabular-nums; }
+.u-label {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Cold thin scrollbars (9px, slate thumb, transparent track). */
+* { scrollbar-width: thin; scrollbar-color: #283039 transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #283039; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #313b47; }
+::-webkit-scrollbar-track { background: transparent; }
+.app { display: flex; min-height: 100vh; max-height: 100vh; }
+/* App shell sidebar (SKADI-I-0035): 228px fixed, slate, flex column. */
+.nav {
+  width: 228px;
+  flex: none;
+  background: var(--sidebar);
+  padding: 18px 14px;
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.nav .brand { display: flex; align-items: center; gap: 0.5rem; padding: 0 0.4rem; }
+.brand-mark { flex: none; }
+.brand-name { font-size: 16px; font-weight: 600; color: var(--fg-bright); }
+.daemon-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 11px;
+  padding: 0.4rem 0.4rem 0;
+  margin-bottom: 0.9rem;
+}
+.daemon-line .faint { color: var(--faint); }
+/* Full-width primary "+ Add media". */
+.add-media {
+  width: 100%;
+  background: var(--ice);
+  color: #0b0d10;
+  border: none;
+  border-radius: 9px;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 10px;
+  margin-bottom: 1rem;
+  cursor: pointer;
+}
+.add-media:hover { background: #93bdff; }
+
+.nav-main { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+  font-size: 0.92rem;
+  box-shadow: inset 2px 0 0 transparent;
+}
+.nav a .nav-label { flex: 1; }
+.nav a .nav-count { font-size: 11px; color: var(--faint); }
+.nav a:hover { background: rgba(127, 178, 255, 0.06); color: var(--fg-2); }
+/* leptos_router adds aria-current="page" to the active link. */
+.nav a[aria-current] {
+  background: var(--ice-tint);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--ice);
+}
+.nav a[aria-current] .nav-count { color: var(--muted); }
+/* 2px square domain dots: ice (movies), teal (audiobooks). */
+.nav-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.nav-dot.ice { background: var(--ice); }
+.nav-dot.teal { background: var(--teal); }
+.nav-dot.gold { background: var(--gold); }
+.nav-dot.muted { background: var(--faint); }
+
+.nav-group { margin-top: 1.1rem; }
+.nav-group-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  padding: 0 0.5rem;
+  margin-bottom: 0.35rem;
+}
+/* Footer: root-folder usage bars, pinned to the bottom. */
+.nav-footer {
+  margin-top: auto;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.storage-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+.storage-row-head .storage-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.storage-track { height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; }
+.storage-fill { height: 100%; background: var(--ice); border-radius: 3px; }
+/* Severity thresholds (SKADI-T-0347): capacity should read as warning/danger. */
+.storage-fill.warn { background: var(--warn); }
+.storage-fill.bad { background: var(--bad); }
+.storage-pct.warn { color: var(--warn); }
+.storage-pct.bad { color: var(--bad); }
+.main { flex: 1; min-width: 0; padding: 22px 28px; overflow-y: auto; }
+/* Cap content to a comfortable measure and center it, so wide viewports don't
+   strand everything in the top-left corner (SKADI-T-0144). */
+.main > * { max-width: 1180px; margin-inline: auto; }
+
+/* Page header row: title + an action (gear / back link). */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  /* Stack above detail pages' pulled-up hero/body (negative margins) so the
+     "← Library" link stays clickable (SKADI-T-0329). */
+  position: relative;
+  z-index: 3;
+}
+.page-head { margin-bottom: 0.8rem; }
+.page-head h2 { margin: 0; }
+.page-head a { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+.page-head a:hover { color: var(--fg); }
+a.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--muted);
+  text-decoration: none;
+  background: var(--control);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+}
+a.gear:hover { background: #222b35; color: var(--fg); }
+.page-head-actions { display: flex; align-items: center; gap: 0.6rem; }
+a.btn-link {
+  color: var(--fg-2);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 0.4rem 0.75rem;
+  background: var(--control);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+}
+a.btn-link:hover { background: #222b35; color: var(--fg); }
+/* Activity + history (SKADI-T-0082). */
+.activity-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.spinner {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid var(--border-control);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Live-work stage board (SKADI-T-0321): runs grouped by what they're doing. */
+.stage-board { display: flex; flex-direction: column; gap: 0.5rem; }
+.stage-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--ice-tint-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.stage-name { color: var(--muted); }
+.stage-count {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+.stage-items { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.4rem 0.5rem; }
+.stage-items .activity-row { border: none; padding: 0.2rem 0.1rem; }
+.stage-doing { font-size: 0.8rem; color: var(--muted); }
+.stage-when { margin-left: auto; font-size: 0.75rem; }
+.stage-idle { color: var(--fainter); font-size: 0.8rem; padding: 0.15rem 0.1rem; }
+.badge.ok { background: rgba(75, 208, 127, 0.13); color: var(--ok); }
+.badge.upgrade { background: rgba(157, 140, 255, 0.15); color: var(--violet); }
+
+.history-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.history-table td {
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+.history-table td.nowrap { white-space: nowrap; }
+.plain-list { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.plain-list li { margin: 0.15rem 0; }
+.history-table td .badge { margin-left: 0.4rem; }
+/* Collapsible technical payload (magnet/infohash/error) — hidden until asked. */
+.history-detail { margin-top: 0.2rem; }
+.history-detail > summary { cursor: pointer; font-size: 0.8rem; }
+.history-detail > code.break {
+  display: block;
+  margin-top: 0.25rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--panel-2);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  word-break: break-all;
+  white-space: pre-wrap;
+  color: var(--fg-2);
+}
+
+/* Library posters grid + movie detail (SKADI-T-0076). */
+.poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+}
+.poster-tile { text-decoration: none; color: inherit; display: block; }
+.poster-img {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(165deg, #1c2532, #0f141b);
+  border: 1px solid var(--border);
+}
+.poster-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster-tile:hover .poster-img { border-color: var(--accent); }
+/* Missing (known-but-unowned) tile: greyed + dashed, clickable to add. */
+.poster-tile.missing { cursor: pointer; }
+.poster-tile.missing .poster-img { border-style: dashed; border-color: var(--border-control); }
+.poster-tile.missing .poster-img img { filter: grayscale(1) brightness(0.5); }
+.poster-tile.missing .poster-ph { opacity: 0.55; }
+.poster-tile.missing .poster-title { color: var(--muted); }
+.poster-tile.missing:hover .poster-img { border-color: var(--accent); border-style: solid; }
+.poster-tile.missing:hover .poster-img img { filter: grayscale(0) brightness(0.85); }
+.poster-add {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.poster-tile.missing:hover .poster-add { color: var(--accent); }
+.poster-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.5rem;
+  width: 100%;
+  height: 100%;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.status-dot {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+.status-dot.ok { background: var(--ok); }
+.status-dot.pending { background: var(--accent); }
+.status-dot.muted { background: #5a6470; }
+.status-dot.bad { background: var(--bad); }
+/* Inline status dot for list rows (provider/downloader health) — unlike
+   `.status-dot` it sits in the flow, not absolutely in a poster corner. */
+.health-dot {
+  display: inline-block;
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+.health-dot.ok { background: var(--ok); }
+.health-dot.pending { background: var(--accent); }
+.health-dot.bad { background: var(--bad); }
+.health-dot.muted { background: #5a6470; }
+.poster-meta { display: flex; flex-direction: column; margin-top: 0.4rem; }
+.poster-title { font-size: 0.85rem; line-height: 1.2; }
+.poster-meta .muted { font-size: 0.78rem; }
+
+.detail { position: relative; }
+.detail-hero {
+  height: 260px;
+  margin: -1.5rem -2rem 0;
+  background-size: cover;
+  background-position: center 20%;
+  opacity: 0.35;
+  /* Purely decorative — its negative margins pull it OVER the page head, and it
+     was swallowing clicks on "← Library" (SKADI-T-0329). */
+  pointer-events: none;
+}
+.detail-body {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: -120px;
+  position: relative;
+  align-items: flex-start;
+}
+.detail-poster {
+  width: 200px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.detail-info { flex: 1; padding-top: 130px; min-width: 0; }
+/* No backdrop (books, and films/series without one): nothing to overlap, so
+   nothing is pulled up — the cover used to be clipped at the top (SKADI-T-0580). */
+.detail.no-hero .detail-body { margin-top: 0; }
+.detail.no-hero .detail-info { padding-top: 0; }
+/* Book covers are square; a 2:3 frame cropped the title off both sides. */
+.detail.book .detail-poster { aspect-ratio: 1; width: 220px; }
+/* Manual grab lives behind a disclosure; it is the exception, not the flow. */
+details.manual-grab { margin-top: 0.4rem; }
+details.manual-grab > summary { cursor: pointer; font-size: 12px; color: var(--muted); list-style: none; }
+details.manual-grab > summary::before { content: "▸ "; }
+details.manual-grab[open] > summary::before { content: "▾ "; }
+details.manual-grab > summary:hover { color: var(--fg); }
+details.manual-grab .releases-magnet { margin-top: 0.4rem; }
+.detail-info h2 { margin: 0 0 0.5rem; }
+.detail-info h2 .muted { font-weight: 400; }
+.detail-info .overview { max-width: 60ch; margin: 0.75rem 0; line-height: 1.5; }
+
+/* Dense tabular review for library import (SKADI-T-0080). Full width — not
+   constrained by the narrow `.form` the selectors live in. */
+.import-review { margin-top: 0.75rem; }
+.import-review .checks { align-items: center; margin-bottom: 0.5rem; }
+.import-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: fixed; }
+.import-table col.c-sel { width: 2.2rem; }
+.import-table col.c-folder { width: 28%; }
+.import-table col.c-qual { width: 8rem; }
+.import-table col.c-tmdb { width: 7rem; }
+.import-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border-control);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+.import-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+  line-height: 1.3;
+}
+.import-table td.folder {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-table tr.in-lib { opacity: 0.5; }
+.import-table input.tmdb-input { width: 6rem; padding: 0.15rem 0.3rem; }
+/* TV import: series → SxxExx label stacked in the folder cell. */
+.import-table td.folder .tv-series { display: block; overflow: hidden; text-overflow: ellipsis; }
+.import-table td.folder .tv-epcode {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.status { font-size: 0.8rem; margin-top: 0.4rem; }
+.status .ok { color: var(--ok); }
+.status .bad { color: var(--bad); }
+.status .pending { color: var(--muted); }
+.muted { color: var(--muted); }
+
+/* Settings (SKADI-T-0066) */
+button {
+  background: var(--control);
+  color: var(--fg);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: var(--sans);
+  transition: background 0.12s, border-color 0.12s;
+}
+button:hover { background: #222b35; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.danger { border-color: #5a2b2b; }
+button.danger:hover { background: #4a2222; }
+button.secondary { background: transparent; }
+/* Primary call-to-action — ice fill, dark ink (Add / Grab / Continue). */
+button.primary, .btn-primary {
+  background: var(--ice);
+  color: #0b0d10;
+  border: 1px solid var(--ice);
+  border-radius: 9px;
+  font-weight: 600;
+}
+button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #93bdff; }
+
+/* Shared primitives (SKADI-I-0035). */
+.tag {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--fg-2);
+}
+.tag.film { color: var(--ice); }
+.tag.tv { color: var(--gold); }
+.tag.book { color: var(--teal); }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 11px;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--r-pill);
+  background: var(--control);
+  border: 1px solid var(--border-control);
+  color: var(--fg-2);
+}
+.protocol-badge {
+  font-size: 10.5px;
+  padding: 0.1rem 0.45rem;
+  border-radius: 5px;
+  background: var(--ice-tint);
+  color: var(--ice);
+}
+/* Toggle switch (38×22 track, 18px knob; on = accent). */
+.switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  border: none;
+  border-radius: 12px;
+  background: var(--control);
+  cursor: pointer;
+  transition: background 0.15s;
+  padding: 0;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.switch.on { background: var(--ice); }
+.switch.on.teal { background: var(--teal); }
+.switch.on::after { transform: translateX(16px); }
+
+.provider-section { margin-bottom: 2rem; }
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.section-head h3 { margin: 0 0 0.2rem; }
+.section-head p { margin: 0; font-size: 0.85rem; }
+
+.cards { display: flex; flex-direction: column; gap: 0.5rem; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "main actions" "test test";
+  gap: 0.4rem 1rem;
+  align-items: center;
+}
+/* A card that is itself a link (e.g. an author card) shouldn't read as blue
+   underlined link text — inherit colour, lift on hover like other card-links. */
+a.card { color: inherit; text-decoration: none; transition: border-color 0.12s, background 0.12s; }
+a.card:hover { border-color: var(--border-control); background: #20252e; }
+.card-main { grid-area: main; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.card-main .summary { font-size: 0.85rem; }
+.card-actions { grid-area: actions; display: flex; gap: 0.4rem; }
+.card-test { grid-area: test; font-size: 0.85rem; min-height: 0; }
+.card-test:empty { display: none; }
+.badge {
+  font-size: 0.7rem;
+  background: var(--ice-tint);
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 0.1rem 0.5rem;
+}
+
+/* Active-profile banner + quality ladder (SKADI-T-0379). The daemon enforces
+   exactly one profile, resolved by lowest internal id; these surface which one
+   and what it accepts. */
+.active-profile {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  background: var(--ice-tint);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.active-profile .muted { font-size: 0.78rem; }
+
+.quality-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.quality-chip { font-size: 0.72rem; }
+.quality-chip.is-cutoff {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cutoff-mark {
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+/* Inline explanation under a control — states a consequence, not an error. */
+.notice {
+  margin: 0.1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--fg-2);
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: var(--control);
+  border-left: 2px solid var(--border-control);
+}
+.notice.warn {
+  color: var(--warn);
+  border-left-color: var(--warn);
+  background: rgba(216, 166, 87, 0.1);
+}
+.notice strong { color: inherit; }
+
+.form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 0.75rem;
+  max-width: 560px;
+}
+.field { margin-bottom: 0.7rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.field > label { font-size: 0.8rem; color: var(--muted); }
+.field input[type="text"], .field input[type="password"], .field select {
+  background: var(--control);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 0.45rem 0.55rem;
+  font-size: 0.9rem;
+  font-family: var(--sans);
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--ice); }
+.checks { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--fg); }
+.form-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.ok { color: var(--ok); }
+.bad { color: var(--bad); }
+.pending { color: var(--accent); }
+
+/* Movies (SKADI-T-0069) */
+.movie-card { grid-template-areas: "main actions" "overview overview" "editions editions"; }
+.overview { grid-area: overview; font-size: 0.85rem; margin: 0; line-height: 1.4; }
+.card-editions { grid-area: editions; display: flex; flex-direction: column; gap: 0.3rem; }
+.card-editions:empty { display: none; }
+.edition-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--border);
+}
+.edition-row > span:first-child { min-width: 8rem; }
+.edition-row button:first-of-type { margin-left: auto; }
+.edition-row button + span { margin-left: 0; }
+/* TV episode rows (SKADI-T-0275): tighter than edition rows, title flexes. */
+.episode-row { font-size: 0.8rem; padding-top: 0.25rem; }
+.episode-row > span:first-child { min-width: 4.5rem; }
+.episode-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.episode-row button { margin-left: 0.4rem; }
+
+/* Home system dashboard (SKADI-T-0072). */
+.dash-section { margin-bottom: 1.6rem; }
+.dash-section h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+}
+.dash-subhead { margin: 1rem 0 0.5rem; font-size: 0.85rem; font-weight: 500; }
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.6rem;
+}
+.metric {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.metric.placeholder { opacity: 0.6; border-style: dashed; }
+.metric .status-dot { flex: none; }
+.metric-body { display: flex; flex-direction: column; min-width: 0; }
+.metric-name { font-size: 0.85rem; }
+.metric-detail {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Health checks: let detail wrap so a failure (e.g. an indexer network error) is
+   fully readable, and align to the top now that it can be multi-line. */
+.metric.check { align-items: flex-start; }
+.metric-detail.wrap { overflow: visible; white-space: normal; text-overflow: clip; line-height: 1.35; }
+.metric.check.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, var(--panel, var(--panel))); }
+.storage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 0.6rem;
+}
+.storage-card {
+  padding: 0.6rem 0.75rem;
+  background: var(--panel, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.storage-head { display: flex; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; }
+.storage-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0.3rem 0;
+}
+.bar-fill { height: 100%; }
+.bar-fill.ok { background: var(--ok); }
+.bar-fill.pending { background: var(--accent); }
+.bar-fill.bad { background: var(--bad); }
+.domain-card {
+  padding: 0.6rem 0.75rem;
+  background: var(--panel, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+a.domain-card { display: block; color: inherit; text-decoration: none; transition: border-color 0.12s, background 0.12s; }
+a.domain-card:hover { border-color: var(--border-control); background: #20252e; }
+.domain-head { display: flex; justify-content: space-between; margin-bottom: 0.4rem; }
+.domain-stats { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.82rem; }
+
+/* Interactive search + grab panel (SKADI-T-0117). */
+.edition-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.releases { margin: 0.2rem 0 0.4rem; }
+
+/* Collapsible season blocks + collected progress (TV detail). */
+.season-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0 !important; /* override .edition-row button:first-of-type */
+  color: var(--fg);
+}
+.season-toggle:hover strong { color: var(--ice); }
+.season-toggle .chevron { color: var(--faint); font-size: 0.7rem; width: 0.8rem; flex: none; }
+.season-count { font-size: 0.78rem; color: var(--faint); }
+.season-count.ok { color: var(--ok); }
+.season-mon { margin-left: auto; }
+.season-eps { display: flex; flex-direction: column; gap: 0.3rem; }
+.season-eps.collapsed { display: none; }
+.series-progress { color: var(--faint); }
+.series-progress.ok { color: var(--ok); }
+
+/* Hierarchical TV library-import review (SKADI-I-0047): reuses the season-block
+   visual language for a Show → Season → Episode tree. */
+.import-shows { gap: 0.5rem; margin-top: 0.5rem; }
+.import-show {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+}
+.import-show.in-lib { opacity: 0.5; }
+.import-show > .season-head { gap: 0.5rem; }
+.import-show > .season-head input[type="checkbox"] { flex: none; }
+.import-show > .season-head .badge { margin-left: 0.3rem; }
+.import-show > .season-head .season-count { margin-left: auto; }
+.import-show > .season-head .import-find { margin-left: 0.5rem; flex: none; font-size: 0.78rem; padding: 0.15rem 0.45rem; }
+.import-show > .season-head .import-tvdb { margin-left: 0.4rem; flex: none; width: 6rem; }
+.import-show-body { padding-left: 0.5rem; margin-top: 0.3rem; }
+/* Flat-table import rows: find-button + id cell, inline picker row (SKADI-T-0328). */
+.import-actions { white-space: nowrap; }
+.import-actions .import-find { padding: 0.1rem 0.35rem; margin-right: 0.25rem; }
+.picker-tr td { border-top: none; }
+/* "Hide already-imported" toggle + benign/error result disclosures (SKADI-T-0324). */
+.import-hide-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; cursor: pointer; }
+.import-unmatched summary, .import-errors summary { cursor: pointer; font-size: 0.85rem; }
+.import-unmatched ul, .import-errors ul { max-height: 14rem; overflow-y: auto; font-size: 0.78rem; }
+/* NFO facts + synopsis under a matched show's header (SKADI-T-0324). */
+.import-show-meta { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.15rem 0 0.1rem 2.4rem; }
+.import-facts { font-size: 0.78rem; color: var(--ice); }
+.import-overview { font-size: 0.78rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70ch; }
+/* Series picker: search a title and pick the right show (SKADI-T-0324). */
+.import-picker { border-top: 1px dashed var(--border); margin-top: 0.4rem; padding-top: 0.4rem; }
+.import-picker-search { display: flex; gap: 0.4rem; align-items: center; }
+.import-picker-search .path-field { flex: 1; }
+.import-picker-results { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.4rem; max-height: 16rem; overflow-y: auto; }
+.import-picker-result { display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left; padding: 0.3rem 0.5rem; }
+.import-picker-result:hover { border-color: var(--accent); }
+.import-picker-result .picker-title { flex: 1; }
+/* Cover art in a search result (SKADI-T-0319): the thing that actually
+   disambiguates two items sharing a title and year. Fixed box so a missing or
+   slow image does not reflow the list under the pointer mid-click. */
+.import-picker-result .picker-art { width: 2rem; height: 3rem; flex: none; object-fit: cover; border-radius: 2px; background: var(--border); }
+/* The "← filename" against a mapped episode, and the muted "(no file)" row. */
+.episode-row .ep-file { margin-left: auto; color: var(--ice); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+.episode-row.ep-empty .episode-title { color: var(--faint); }
+.episode-row.ep-empty .ep-file { color: var(--faint); }
+.ep-empty { color: var(--faint); }
+/* Manual picker for files that didn't auto-map. */
+.unmapped { border-top: 1px dashed var(--border); padding-top: 0.3rem; margin-top: 0.2rem; }
+.unmapped-head strong { color: var(--accent); font-size: 0.82rem; }
+.unmapped-row select { margin-left: 0.4rem; flex: none; }
+.unmapped-row.resolved { opacity: 0.5; }
+/* Extras: bonus content — informational, never a warning (SKADI-T-0329). */
+.unmapped.extras-block .unmapped-head strong { color: var(--faint); }
+.unmapped.extras-block { opacity: 0.75; }
+
+/* On-disk location for an imported file (SKADI-T-0147). */
+.file-location {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  margin: 0.1rem 0 0.3rem;
+  background: var(--panel-2);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.file-location .file-meta { font-size: 0.8rem; }
+.path-row { display: flex; gap: 0.4rem; align-items: center; }
+.path-field {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: #c2c9d2;
+}
+.copy-btn { flex: 0 0 auto; font-size: 0.78rem; padding: 0.25rem 0.6rem; }
+
+/* Server-side folder picker (SKADI-T-0149). */
+.path-picker { display: flex; flex-direction: column; gap: 0.3rem; width: 100%; }
+.fs-browser {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--inset);
+  padding: 0.4rem;
+}
+.fs-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+.fs-here {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  word-break: break-all;
+}
+.fs-list { display: flex; flex-direction: column; max-height: 14rem; overflow-y: auto; }
+.fs-entry {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--fg);
+  padding: 0.25rem 0.4rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.fs-entry:hover { background: var(--ice-tint); }
+.fs-up { color: var(--muted); }
+
+/* Audiobook "search by title" hits (SKADI-T-0151). */
+.search-hits { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.2rem 0; }
+.search-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--panel-2);
+  border-radius: 4px;
+}
+.search-hit .hit-cover {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.search-hit .hit-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.search-hit .hit-asin { font-size: 0.72rem; }
+.search-hit .hit-desc {
+  font-size: 0.78rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.search-hit button { flex: 0 0 auto; }
+
+/* Collapsible series groups in the audiobook library (SKADI-T-0153). */
+.series-groups { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.6rem; }
+.series-group { border: 1px solid var(--border-soft); border-radius: 5px; overflow: hidden; }
+.series-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: none;
+  color: var(--fg);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.series-head:hover { background: var(--border); }
+.series-head .series-caret { width: 0.9rem; color: var(--muted); }
+.series-head .series-count { margin-left: auto; font-size: 0.82rem; }
+.series-group .poster-grid { padding: 0.5rem 0.7rem 0.7rem; }
+.watch-btn {
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.watch-btn:hover { background: var(--border); color: var(--fg); }
+.watch-btn.on { background: var(--ice-tint); color: var(--fg); border-color: var(--border-control); }
+.section-head-actions { display: flex; align-items: center; gap: 0.6rem; }
+/* Downloads page = the torrent worker's front-end (SKADI-T-0166 / T-0170) */
+.worker-strip { display: flex; align-items: center; gap: 0.45rem; margin: 0.1rem 0 1.1rem; line-height: 1.35; }
+.worker-strip .health-dot { position: relative; top: 0.5px; }
+.dl-summary { font-variant-numeric: tabular-nums; margin-bottom: 0.6rem; }
+.dl-footnote { font-size: 0.8rem; margin-top: 0.6rem; }
+.dl-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.dl-row { padding: 0.55rem 0.7rem; background: var(--panel, var(--panel)); border: 1px solid var(--border); border-radius: 6px; }
+.dl-head { display: flex; align-items: center; gap: 0.6rem; }
+.dl-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-head .dl-pct { flex: none; font-variant-numeric: tabular-nums; }
+.dl-actions { flex: none; display: flex; gap: 0.35rem; }
+.dl-actions button { font-size: 0.76rem; padding: 0.2rem 0.55rem; }
+.dl-meta { font-size: 0.8rem; margin-top: 0.3rem; font-variant-numeric: tabular-nums; }
+/* Body-of-work browse (author page, SKADI-T-0159) */
+.work-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.work-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+}
+.work-row .work-cover {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 3px;
+  font-size: 0.55rem;
+}
+.work-row .work-meta { display: flex; flex-direction: column; min-width: 0; gap: 0.1rem; }
+.work-row .work-title { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-row .work-title .badge { margin-right: 0.4rem; }
+.work-row .work-meta .muted { font-size: 0.76rem; }
+.work-row .work-actions { margin-left: auto; display: flex; gap: 0.35rem; flex: 0 0 auto; }
+.work-row > .badge, .work-row > a.badge { margin-left: auto; flex: 0 0 auto; }
+.releases-head { display: flex; align-items: center; gap: 0.6rem; }
+.releases-head .ok { color: var(--ok); font-size: 0.8rem; }
+.releases-head .bad { color: var(--bad); font-size: 0.8rem; }
+/* Manual acquisition: paste-a-magnet row (SKADI-I-0043). */
+.releases-magnet { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.releases-magnet input { flex: 1; min-width: 0; padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.85rem; }
+.releases-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+.releases-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  padding: 0.25rem 0.4rem;
+}
+.releases-table td {
+  padding: 0.25rem 0.4rem;
+  border-top: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+.releases-table td:first-child {
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.releases-table td.row-actions { white-space: nowrap; text-align: right; }
+.releases-table td.row-actions button { margin-left: 0.3rem; padding: 0.15rem 0.5rem; }
+
+/* ====================================================================
+   Library wall + tiles + Add view (SKADI-I-0035 / T-0245, T-0247)
+   ==================================================================== */
+.page-title { font-size: 22px; font-weight: 600; margin: 0; color: var(--fg-bright); }
+.page-sub { margin: 0.2rem 0 0; font-size: 12px; color: var(--faint); }
+
+/* Library header: domain accent square + title + right status. */
+.lib-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
+.lib-title { display: flex; align-items: center; gap: 0.6rem; }
+.lib-title h2 { margin: 0; font-size: 22px; font-weight: 600; }
+.lib-accent { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+.lib-accent.ice { background: var(--ice); }
+.lib-accent.teal { background: var(--teal); }
+.lib-status { font-size: 12px; color: var(--muted); }
+
+/* Filter bar: segmented status chips (live counts) + free-text filter. */
+.filter-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding-bottom: 0.8rem; margin-bottom: 1.1rem;
+  border-bottom: 1px solid var(--border-fainter);
+}
+.filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.filter-chip {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
+  border-radius: var(--r-pill); padding: 0.3rem 0.85rem; font-size: 13px; cursor: pointer;
+}
+.filter-chip:hover { border-color: var(--border-control); }
+.filter-chip.active { background: var(--ice); color: #0b0d10; border-color: var(--ice); font-weight: 600; }
+.chip-count { font-size: 11px; opacity: 0.85; }
+.lib-filter-input {
+  width: 230px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 9px; color: var(--fg); padding: 0.45rem 0.7rem; font-size: 13px;
+  font-family: var(--sans);
+}
+.lib-filter-input:focus { outline: none; border-color: var(--ice); }
+
+/* "Organize by" pivot (SKADI-T-0254): switcher chips + collapsible author/series
+   clusters (collapsed by default for a fast scroll). */
+.org-chips { align-items: center; }
+.org-label {
+  font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-right: 0.1rem;
+}
+.lib-clusters { display: flex; flex-direction: column; gap: 0.35rem; }
+/* Cluster header row: the collapse toggle grows; a Watch button sits at the end
+   (SKADI-T-0353). Watch stays visible so an author/series is one click to monitor. */
+.lib-cluster-head-row { display: flex; align-items: center; gap: 0.5rem; }
+.lib-cluster-head-row .lib-cluster-head { width: auto; flex: 1 1 auto; min-width: 0; }
+.lib-cluster-head-row .watch-btn { flex: 0 0 auto; }
+.lib-cluster-head {
+  display: flex; align-items: center; gap: 0.55rem; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  font-family: inherit; padding: 0.5rem 0.2rem;
+  font-size: 14px; font-weight: 600; color: var(--fg);
+}
+.lib-cluster-head:hover { color: var(--ice); }
+.cluster-chevron { font-size: 10px; color: var(--muted); width: 0.8rem; }
+.lib-cluster-head .chip-count {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-pill); padding: 0.05rem 0.5rem; color: var(--muted);
+}
+.lib-cluster .poster-grid { margin: 0.2rem 0 0.9rem; }
+/* Author → series sub-groups: smaller, muted headings separating the runs. */
+.lib-subclusters { display: flex; flex-direction: column; gap: 0.3rem; }
+.lib-subcluster-head {
+  margin: 0.3rem 0 0.5rem; font-size: 12px; font-weight: 500; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+
+/* Per-item acquisition History (SKADI-T-0315): arr-style timeline on the item detail. */
+.history-panel { margin-top: 1rem; }
+
+/* Per-item "why isn't this grabbed?" diagnostics (SKADI-T-0381) — key/value
+   facts, a proportional rejection breakdown, and the remedy for the busiest
+   gate. Shares .history-panel / .hist-head chrome so the two read as siblings. */
+.diag-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.9rem;
+  padding: 0.5rem 0 0.7rem;
+  font-size: 0.82rem;
+}
+.diag-fact { display: contents; }
+.diag-k { color: var(--muted); }
+.diag-v { color: var(--fg-2); min-width: 0; overflow-wrap: anywhere; }
+.diag-v.warn { color: var(--warn); }
+
+.diag-bars { display: flex; flex-direction: column; gap: 0.25rem; }
+.diag-bar-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 5.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.diag-bar-label { color: var(--fg-2); }
+.diag-bar-track {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--control);
+  overflow: hidden;
+}
+.diag-bar-fill { display: block; height: 100%; background: var(--ice); }
+/* The busiest gate leads the list — flag it as the one to act on. */
+.diag-bar-row:first-child .diag-bar-fill { background: var(--warn); }
+.diag-bar-n { color: var(--fainter); text-align: right; }
+
+@media (max-width: 640px) {
+  .diag-facts { grid-template-columns: 1fr; gap: 0 0; }
+  .diag-fact { display: block; margin-bottom: 0.4rem; }
+  .diag-bar-row { grid-template-columns: 4.5rem 1fr 4.5rem; }
+}
+.hist-head {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  font-family: inherit; padding: 0.3rem 0; margin-bottom: 0.2rem;
+}
+.hist-head:hover h4 { color: var(--ice); }
+.hist-head h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg); }
+.hist-note { font-size: 11px; color: var(--muted); }
+.hist-rows { display: flex; flex-direction: column; gap: 0.25rem; }
+.hist-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.3rem 0.55rem; font-size: 12px;
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: 7px;
+}
+.hist-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.hist-dot.ok { background: #3fb950; }
+.hist-dot.pending { background: #d29922; }
+.hist-dot.bad { background: #f85149; }
+.hist-event {
+  flex: 0 0 64px; text-transform: uppercase; letter-spacing: 0.03em;
+  font-size: 10px; color: var(--muted);
+}
+.hist-label {
+  flex: 1 1 auto; min-width: 0; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-detail {
+  flex: 0 1 auto; max-width: 340px; color: var(--muted); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-at { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.hist-bl {
+  flex: 0 0 auto; background: none; border: 1px solid var(--border-control);
+  color: var(--muted); border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 11px; cursor: pointer;
+}
+.hist-bl:hover { border-color: #f85149; color: #f85149; }
+.hist-toggle { width: 1rem; }
+.episode-wrap { display: flex; flex-direction: column; }
+.episode-wrap .history-panel { margin: 0.1rem 0 0.6rem 1.5rem; }
+
+/* Tiles (SKADI-T-0580): caption BELOW the art, not over it. The old scrim put
+   the title on the bottom of the cover, where most covers carry their own title
+   and author — two typographies fighting on every tile. Denser grid: 155 px
+   tiles showed 12 of 1,818 films per screen. `content-visibility` keeps a
+   1,800-tile grid from laying out off-screen rows. */
+.poster-grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 16px 12px; }
+.poster-tile { content-visibility: auto; contain-intrinsic-size: 128px 236px; }
+.poster-tile .poster-img { cursor: pointer; }
+.tile-tag {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 5px; border-radius: 3px; background: rgba(0, 0, 0, 0.45); color: var(--fg-2);
+}
+.status-dot.owned { background: var(--ok); }
+.status-dot.dl { background: var(--ice); }
+.status-dot.wanted { background: var(--gold); }
+.tile-scrim {
+  display: flex; flex-direction: column; gap: 1px; padding: 6px 2px 0;
+}
+.tile-title {
+  font-size: 12px; font-weight: 500; line-height: 1.25; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tile-sub { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wanted tiles: dimmed + dashed border + centered gold "+". */
+.tile-wanted {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(9, 11, 15, 0.5); border: 1px dashed #3a4250; border-radius: 8px;
+}
+.tile-wanted span { font-size: 1.9rem; font-weight: 600; color: var(--gold); }
+
+/* Missing known-work tiles inline with owned covers (SKADI-T-0353): greyscaled +
+   gold accent bar (vs the owned teal), with Grab / + Want actions in the scrim. The
+   greyscale + hover-reveal is inherited from `.poster-tile.missing` above. */
+.poster-tile.book.missing .poster-img { box-shadow: inset 4px 0 0 var(--gold); cursor: default; }
+.missing-actions { display: flex; gap: 5px; margin-top: 4px; }
+.mini-btn {
+  flex: 1 1 auto; font-family: inherit; font-size: 10px; font-weight: 600;
+  padding: 3px 6px; border-radius: 5px; cursor: pointer;
+  background: var(--gold); color: #14181f; border: 1px solid var(--gold);
+}
+.mini-btn:hover { filter: brightness(1.12); }
+.mini-btn.ghost { background: transparent; color: var(--fg-2); border-color: var(--border-control); }
+.mini-btn.ghost:hover { background: var(--border); color: var(--fg); filter: none; }
+
+/* Add / acquire view (SKADI-T-0247 shell). */
+.add-view { max-width: 760px; margin: 0 auto; padding-top: 12px; }
+.add-search {
+  display: flex; align-items: center; gap: 0.6rem; margin-top: 1.3rem;
+  background: var(--panel); border: 1px solid var(--border-control); border-radius: 11px;
+  padding: 13px 16px;
+}
+.add-search-icon { color: var(--ice); font-size: 16px; }
+.add-search-input {
+  flex: 1; background: transparent; border: none; color: var(--fg);
+  font-size: 15px; outline: none; font-family: var(--sans);
+}
+.add-search-input::placeholder { color: var(--faint); }
+/* Domain selector — a dark pill that reads as part of the search bar, not the
+   raw OS <select>. Custom caret via an inline SVG data URI. */
+.add-domain {
+  flex: none;
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-color: var(--panel-2); color: var(--fg);
+  border: 1px solid var(--border-soft); border-radius: 8px;
+  padding: 7px 30px 7px 12px; margin-right: 0.2rem;
+  font-size: 13px; font-weight: 500; font-family: var(--sans); line-height: 1.1;
+  cursor: pointer; outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237f8b9e' stroke-width='1.6' stroke-linecap='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  transition: border-color 0.15s ease;
+}
+.add-domain:hover { border-color: var(--border-control); }
+.add-domain:focus { border-color: var(--ice); }
+.add-domain option { background: var(--panel); color: var(--fg); }
+
+/* ====================================================================
+   Overview / Home (SKADI-I-0035 / T-0246)
+   ==================================================================== */
+.ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; }
+.ov-search {
+  display: flex; align-items: center; gap: 0.5rem; width: 280px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+  color: var(--faint); padding: 0.6rem 0.8rem; font-size: 13px; cursor: pointer; text-align: left;
+}
+.ov-search:hover { border-color: var(--border-control); }
+.ov-search-icon { color: var(--ice); }
+
+/* Metric row: 4 cards — uppercase label, big number, mono sub. */
+.metrics-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 18px; }
+.ov-metric {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 15px 16px;
+}
+.ov-metric-num { font-size: 30px; font-weight: 600; line-height: 1; color: var(--fg-bright); }
+.ov-metric-sub { font-size: 11px; color: var(--faint); }
+
+/* Health strip: compact 6-up chips. */
+.health-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 9px; margin-bottom: 22px; }
+.health-chip {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 9px; padding: 10px 11px;
+  min-width: 0;
+}
+.health-chip-body { display: flex; flex-direction: column; min-width: 0; }
+.health-chip-name { font-size: 12px; font-weight: 500; }
+.health-chip-detail {
+  font-size: 10.5px; color: var(--muted); line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* Two-column body: active hunt + rollups | recently imported. */
+.ov-cols { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 18px; }
+.ov-sec-head { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.4rem; margin-bottom: 0.8rem; }
+.ov-sec-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.ov-sec-link { color: var(--muted); text-decoration: none; font-size: 11px; }
+.ov-sec-link:hover { color: var(--fg-2); }
+
+.hunt-row { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.7rem 0.85rem; margin-bottom: 0.6rem; }
+.hunt-row-head { display: flex; align-items: center; gap: 0.6rem; }
+.hunt-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hunt-pct { color: var(--ice); font-size: 13px; font-weight: 600; }
+.hunt-bar { height: 6px; background: var(--control); border-radius: 3px; overflow: hidden; margin: 0.55rem 0 0.45rem; }
+.hunt-bar-fill { height: 100%; background: var(--aurora); border-radius: 3px; }
+.hunt-meta { font-size: 11px; color: var(--muted); }
+.hunt-empty { border: 1px dashed var(--border-control); border-radius: 10px; padding: 1.4rem; text-align: center; color: var(--faint); font-size: 13px; }
+
+.rollups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 0.9rem; }
+.rollup { display: block; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 10px; padding: 0.8rem 0.9rem; text-decoration: none; color: inherit; transition: border-color 0.12s, background 0.12s; }
+.rollup:hover { border-color: var(--border-control); background: #181d25; }
+.rollup-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
+.rollup-head strong { font-size: 13px; }
+.rollup-stats { font-size: 11px; color: var(--muted); }
+
+.imp-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border-fainter); }
+.imp-title { flex: 1; min-width: 0; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-meta { font-size: 11px; color: var(--gold); flex: none; }
+
+/* ====================================================================
+   Activity — event log (SKADI-I-0035 / T-0249)
+   ==================================================================== */
+.event-log { background: var(--inset); border: 1px solid var(--border-soft); border-radius: 11px; padding: 0.9rem 1rem; margin-top: 1.1rem; }
+.event-log-label { display: block; margin-bottom: 0.7rem; color: var(--faint); }
+.event-log-lines { display: flex; flex-direction: column; gap: 0.15rem; }
+.log-line { display: flex; gap: 0.7rem; font-size: 12px; line-height: 1.55; }
+.log-time { color: var(--fainter); flex: none; }
+.log-stage { color: var(--faint); flex: none; min-width: 5.5rem; }
+.log-ev { flex: none; min-width: 8rem; }
+.log-text { color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Structured trace facts under a log line (SKADI-T-0380) — what was searched
+   for, which gates rejected what. Indented to the log-text column so they read
+   as belonging to the line above. */
+.log-facts { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0 0 0.3rem 15.4rem; }
+
+/* Run rows (SKADI-T-0582): one line per hunter run, folded further when a
+   sweep walks a season. Failures carry a stripe; a click opens the full text
+   and the search facts. */
+.event-log-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
+.event-log-head .event-log-label { margin: 0; }
+.log-filters .filter-chip { padding: 0.15rem 0.6rem; font-size: 12px; }
+.run-row { padding: 0.25rem 0.5rem; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; }
+.run-row:hover { background: var(--panel-2); }
+.run-row.bad { border-left-color: var(--bad); }
+.run-row.open { background: var(--panel-2); }
+.run-line { display: flex; align-items: baseline; gap: 0.7rem; font-size: 12px; line-height: 1.55; min-width: 0; }
+.run-time { color: var(--fainter); flex: none; min-width: 5.5rem; }
+.run-ev { flex: none; min-width: 7.5rem; }
+.run-text { color: var(--fg-2); min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-row.open .run-text { white-space: normal; overflow: visible; }
+.run-cands { flex: none; color: var(--faint); font-size: 11px; }
+.run-row .log-facts { margin-left: 13.7rem; }
+/* Live transfer numbers on a Downloading row. */
+.run-progress { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 11px; color: var(--muted); }
+.run-bar { display: inline-block; width: 90px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.run-bar-fill { display: block; height: 100%; background: var(--progress); }
+.log-facts:empty { display: none; }
+.log-fact {
+  font-size: 11px;
+  color: var(--fg-2);
+  background: var(--control);
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-fact.warn { color: var(--warn); border-color: var(--warn); }
+.log-fact-label {
+  color: var(--fainter);
+  text-transform: uppercase;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  margin-right: 0.35rem;
+}
+.log-fact.warn .log-fact-label { color: inherit; opacity: 0.75; }
+
+@media (max-width: 900px) {
+  .log-facts { margin-left: 0; }
+}
+
+.ev-ok { color: var(--ok); }
+.ev-ice { color: var(--ice); }
+.ev-violet { color: var(--violet); }
+.ev-bad { color: var(--bad); }
+.ev-muted { color: var(--muted); }
+
+/* Add results + toast (SKADI-T-0248). */
+.add-results { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 1.3rem; }
+.add-status { margin-top: 1.3rem; }
+.add-row { display: flex; align-items: flex-start; gap: 0.9rem; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 11px; padding: 13px 15px; }
+.add-poster { width: 46px; height: 69px; flex: none; border-radius: 5px; object-fit: cover; background: linear-gradient(165deg, #1c2532, #0f141b); }
+.add-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.add-info-head { display: flex; align-items: center; gap: 0.5rem; }
+.add-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-sub { font-size: 11.5px; color: var(--muted); }
+.add-overview {
+  font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 0.15rem;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.add-btn, .add-owned { align-self: center; }
+.add-btn { flex: none; padding: 0.4rem 1rem; }
+.add-owned { flex: none; font-size: 12px; color: var(--faint); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.35rem 0.8rem; }
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--control); border: 1px solid var(--border-control); border-radius: 10px;
+  padding: 0.6rem 1rem; font-size: 13px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); z-index: 50;
+}
+
+.lib-head-right { display: flex; align-items: center; gap: 0.7rem; }
+
+/* ====================================================================
+   Downloads — active transfers + seeding (SKADI-I-0035 / T-0249)
+   ==================================================================== */
+.dl-row { border-radius: 10px; }
+.dl-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.dl-state { flex: none; font-size: 11px; }
+.dl-state.ice { color: var(--ice); }
+.dl-state.muted { color: var(--muted); }
+.dl-head .dl-pct { color: var(--ice); font-weight: 600; }
+.dl-meta { color: var(--muted); }
+.dl-summary { color: var(--muted); font-size: 12px; }
+
+/* Seeding accordion (SKADI-T-0373). */
+.seed-accordion { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seed-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--panel-2); cursor: pointer; user-select: none; }
+.seed-header:hover { background: var(--panel); }
+.seed-chevron { font-size: 0.7rem; color: var(--muted); width: 1rem; text-align: center; }
+.seed-body { display: flex; flex-direction: column; }
+.seed-body.collapsed { display: none; }
+.seed-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.82rem; }
+.seed-row:hover { background: var(--panel); }
+.seed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); }
+.seed-size { color: var(--muted); font-size: 0.78rem; }
+.seed-up { font-size: 0.78rem; }
+.seed-ratio { font-size: 0.78rem; font-weight: 600; }
+
+/* Provider cards — indexers / notifiers (SKADI-I-0035 / T-0250). */
+.provider-card { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 0.5rem 0.9rem; }
+.provider-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.provider-main { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.provider-name { font-size: 14px; font-weight: 600; }
+.provider-actions { display: flex; gap: 0.4rem; flex: none; }
+.provider-actions button { font-size: 12px; padding: 0.3rem 0.7rem; }
+.provider-flag { font-size: 10px; color: var(--faint); }
+.provider-sub { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-card .card-test { font-size: 12px; margin-top: 0.4rem; }
+.provider-card .card-test:empty { display: none; }
+
+/* Config — domain rows with toggle switches (SKADI-I-0035 / T-0251). */
+.domain-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 0.85rem 1rem; }
+.domain-row-main { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.domain-row-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.domain-row-text strong { font-size: 14px; }
+.domain-row-desc { font-size: 11px; color: var(--faint); }
+.domain-row-right { display: flex; align-items: center; gap: 0.9rem; flex: none; }
+.domain-state { font-size: 11.5px; }
+.domain-state.ok { color: var(--ok); }
+.domain-state.muted { color: var(--muted); }
+.lib-accent.violet { background: var(--violet); }
+.lib-accent.gold { background: var(--gold); }
+.lib-accent.muted { background: var(--faint); }
+.switch.on.violet { background: var(--violet); }
+.switch.on.gold { background: var(--gold); }
+.switch.on.muted { background: var(--faint); }
+
+/* ====================================================================
+   Item drawer — slide-over (SKADI-I-0035 / T-0252)
+   ==================================================================== */
+.drawer-scrim { position: fixed; inset: 0; background: rgba(6, 8, 11, 0.55); z-index: 40; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 438px; max-width: 92vw;
+  background: var(--sidebar); border-left: 1px solid var(--border);
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.5); z-index: 41; overflow-y: auto; padding: 1.3rem 1.4rem;
+}
+.drawer-close {
+  position: absolute; top: 1.1rem; right: 1.2rem; width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--control); border: 1px solid var(--border-control); border-radius: 8px; color: var(--muted);
+}
+.drawer-close:hover { color: var(--fg); }
+.drawer-head { margin-bottom: 1.1rem; padding-right: 2.5rem; }
+.drawer-head-tags { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.status-pill { font-size: 11px; padding: 0.15rem 0.6rem; border-radius: var(--r-pill); }
+.status-pill.ok { background: rgba(75, 208, 127, 0.13); color: var(--ok); }
+.status-pill.ice { background: var(--ice-tint); color: var(--ice); }
+.status-pill.gold { background: rgba(216, 166, 87, 0.13); color: var(--gold); }
+.drawer-title { margin: 0; font-size: 19px; font-weight: 600; }
+.drawer-sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 12px; }
+.drawer-callout { border-radius: 10px; padding: 0.8rem 0.9rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.drawer-callout strong { font-size: 13px; }
+.drawer-callout span { font-size: 12px; color: var(--muted); }
+.drawer-callout.ok { background: rgba(75, 208, 127, 0.08); border: 1px solid rgba(75, 208, 127, 0.2); }
+.drawer-callout.ice { background: var(--ice-tint-soft); border: 1px solid var(--ice-tint); }
+.drawer-callout.gold { background: rgba(216, 166, 87, 0.08); border: 1px solid rgba(216, 166, 87, 0.22); }
+.drawer-callout.gold strong { color: var(--gold); }
+.drawer-search { width: 100%; padding: 0.6rem; }
+.drawer-note { font-size: 12px; margin: 0.7rem 0 0; }
+.drawer-releases { margin-top: 1.1rem; }
+.drawer-releases-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.6rem; }
+.drawer-releases-count { font-size: 11px; color: var(--faint); }
+.drawer-release { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 0; border-bottom: 1px solid var(--border-fainter); }
+.drawer-release-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.drawer-release-title { font-size: 12px; color: var(--fg-2); word-break: break-word; }
+.drawer-release-meta { font-size: 11px; color: var(--muted); display: flex; gap: 0.5rem; }
+.drawer-release-q { color: var(--gold); }
+.drawer-grab { flex: none; padding: 0.3rem 0.9rem; }
+/* The tile is now a click target (opens the drawer), not a link. */
+.poster-tile { cursor: pointer; }
+
+/* Audiobook tiles: teal spine + book cover gradient (SKADI-T-0253). */
+.poster-tile.book .poster-img { box-shadow: inset 4px 0 0 var(--teal); }
+.book-cover { background: linear-gradient(135deg, #1a2630, #0f1620); }
+/* Audiobook art is ~square — a square tile shows the whole cover instead of
+   edge-cropping it inside a 2:3 poster frame (SKADI-T-0348). */
+.poster-tile.book .poster-img { aspect-ratio: 1; }
+.poster-tile.book .poster-img img { object-fit: cover; }
+
+/* ====================================================================
+   Setup wizard (SKADI-I-0035 / T-0254)
+   ==================================================================== */
+.setup-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 60; display: flex; flex-direction: column; }
+.setup-header { display: flex; align-items: center; gap: 2rem; padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--border-soft); }
+.setup-header .brand { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+.setup-tag { color: var(--faint); font-size: 11px; }
+.setup-stepper { display: flex; align-items: center; gap: 0.4rem; flex: 1; }
+.step { display: flex; align-items: center; gap: 0.4rem; opacity: 0.5; }
+.step-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--control); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-family: var(--mono); flex: none; }
+.step-label { font-size: 12px; color: var(--muted); }
+.step.current { opacity: 1; }
+.step.current .step-dot { background: var(--ice); color: #0b0d10; }
+.step.done { opacity: 1; }
+.step.done .step-dot { background: rgba(75, 208, 127, 0.15); color: var(--ok); }
+.step.done .step-label, .step.current .step-label { color: var(--fg-2); }
+.step:not(:last-child)::after { content: ""; width: 26px; height: 1px; background: var(--border-soft); margin-left: 0.3rem; }
+.setup-content { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 2.6rem 1.6rem; }
+.setup-content > * { width: 100%; max-width: 620px; }
+.setup-footer { display: flex; justify-content: flex-end; gap: 0.7rem; padding: 1.1rem 1.6rem; border-top: 1px solid var(--border-soft); }
+.setup-next { padding: 0.6rem 1.4rem; }
+.setup-welcome { text-align: center; }
+.setup-mark { margin-bottom: 1rem; }
+.setup-welcome h1 { font-size: 30px; margin: 0 0 1rem; }
+.setup-lede { color: var(--fg-2); line-height: 1.6; max-width: 32rem; margin: 0 auto 1.4rem; }
+.setup-bullets { display: inline-flex; flex-direction: column; gap: 0.5rem; text-align: left; list-style: decimal; padding-left: 1.2rem; }
+.setup-bullets li { color: var(--fg-2); font-size: 13.5px; }
+.setup-step h2 { font-size: 20px; margin: 0 0 1rem; }
+.setup-help { color: var(--faint); font-size: 12px; margin: 0 0 1rem; line-height: 1.5; }
+.setup-domains { display: flex; flex-direction: column; gap: 0.7rem; }
+.setup-domain { display: flex; align-items: center; gap: 0.8rem; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 1rem; cursor: pointer; color: var(--fg); }
+.setup-domain.on { border-color: var(--ice); background: var(--ice-tint-soft); }
+.setup-domain-text { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
+.setup-domain-text strong { font-size: 14px; }
+.setup-domain-text span { font-size: 11px; color: var(--faint); }
+.setup-check { color: var(--ice); font-weight: 700; }
+.setup-input { width: 100%; background: var(--panel); border: 1px solid var(--border-control); border-radius: 10px; color: var(--fg); padding: 0.7rem 0.9rem; font-size: 14px; margin-bottom: 0.7rem; font-family: var(--sans); }
+.setup-input:focus { outline: none; border-color: var(--ice); }
+.setup-downloader { background: rgba(95, 208, 197, 0.07); border: 1px solid rgba(95, 208, 197, 0.25); border-radius: 11px; padding: 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.setup-downloader strong { color: var(--teal); }
+.setup-downloader span { color: var(--fg-2); font-size: 13px; }
+.setup-done { text-align: center; }
+.setup-done-badge { width: 56px; height: 56px; border-radius: 50%; background: rgba(75, 208, 127, 0.15); color: var(--ok); font-size: 26px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem; }
+.setup-summary { display: inline-flex; flex-direction: column; gap: 0.5rem; text-align: left; color: var(--fg-2); font-size: 13px; margin-top: 1rem; }
+
+/* --- Native Cardigann add-tracker catalog (SKADI-T-0261) --- */
+.catalog-add { margin: 0.4rem 0 0.9rem; }
+.catalog-add-btn {
+  background: var(--ice-tint); color: var(--ice);
+  border: 1px dashed var(--border-control); border-radius: 9px;
+  padding: 0.5rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+}
+.catalog-add-btn:hover { background: var(--ice-tint); border-color: var(--ice); }
+.catalog-panel {
+  margin-top: 0.6rem; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 11px; padding: 0.8rem;
+}
+.catalog-toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.catalog-filter {
+  flex: 1; background: var(--control); border: 1px solid var(--border-control);
+  border-radius: 8px; color: var(--fg); padding: 0.45rem 0.6rem; font-size: 0.85rem;
+}
+.catalog-filter:focus { outline: none; border-color: var(--ice); }
+.catalog-list {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;
+  max-height: 340px; overflow-y: auto;
+}
+.catalog-item {
+  display: flex; align-items: center; gap: 0.5rem; text-align: left;
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: 9px;
+  padding: 0.5rem 0.65rem; cursor: pointer; color: var(--fg);
+}
+.catalog-item:hover { border-color: var(--ice); background: var(--ice-tint-soft); }
+.catalog-name { flex: 1; font-size: 0.85rem; font-weight: 600; }
+.catalog-meta { font-size: 11px; color: var(--muted); }
+.catalog-form-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.pill.privacy-public { color: #6fcf97; }
+.pill.privacy-private { color: #eb8a8a; }
+.pill.privacy-semi-private { color: #e2b659; }
+@media (max-width: 720px) { .catalog-list { grid-template-columns: 1fr; } }
+
+/* Downloads control surface — engine status + honest empty state (SKADI-I-0041). */
+.dl-view { display: flex; flex-direction: column; }
+.dl-engine { display: flex; align-items: center; gap: 0.7rem; padding: 0.8rem 1rem; margin: 0.5rem 0 1.1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.dl-engine.ok { border-color: rgba(75, 208, 127, 0.4); }
+.dl-engine.bad { border-color: rgba(240, 100, 100, 0.45); background: rgba(240, 100, 100, 0.06); }
+.dl-engine .health-dot { width: 10px; height: 10px; flex: none; }
+.dl-engine-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.dl-engine-text strong { color: var(--fg-bright); }
+.dl-engine-sub { font-size: 0.82rem; }
+.dl-summary { margin: 0 0 0.6rem; }
+/* Summary + whole-queue controls on one row (SKADI-T-0290). */
+.dl-summary-row { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.dl-controls { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; flex-shrink: 0; }
+.dl-empty { padding: 1.25rem; text-align: center; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px; }
+
+/* Compact table-style downloads (SKADI-I-0053). */
+.dl-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.dl-header { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.4rem 0.6rem; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
+.dl-header span { cursor: pointer; user-select: none; }
+.dl-header span:hover { color: var(--fg); }
+.dl-header .sort-active { color: var(--fg-bright); }
+.dl-row-compact { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.35rem 0.6rem; align-items: center; font-size: 0.82rem; border-bottom: 1px solid var(--border); position: relative; }
+.dl-row-compact:last-child { border-bottom: none; }
+.dl-row-compact:hover { background: var(--panel); }
+.dl-row-compact.paused { opacity: 0.65; }
+.dl-row-compact .dl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); }
+.dl-row-compact .dl-size { text-align: right; }
+.dl-row-compact .dl-progress { display: flex; align-items: center; gap: 0.35rem; }
+.dl-row-compact .dl-bar { flex: 1; height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; }
+.dl-row-compact .dl-bar-fill { height: 100%; background: var(--aurora); border-radius: 3px; }
+.dl-row-compact .dl-pct { flex: none; width: 32px; text-align: right; font-size: 0.75rem; }
+.dl-row-compact .dl-down, .dl-row-compact .dl-up, .dl-row-compact .dl-peers, .dl-row-compact .dl-eta { text-align: right; color: var(--muted); white-space: nowrap; }
+.dl-row-compact .dl-down.active { color: var(--ice); }
+.dl-row-compact .dl-up.active { color: var(--gold); }
+.dl-row-compact .dl-actions { position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%); display: flex; gap: 0.25rem; opacity: 0; transition: opacity 0.12s; background: linear-gradient(90deg, transparent, var(--bg) 8px); padding-left: 12px; }
+.dl-row-compact:hover .dl-actions, .dl-row-compact:focus-within .dl-actions { opacity: 1; }
+.dl-row-compact .dl-actions button { font-size: 0.72rem; padding: 0.15rem 0.4rem; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.dl-row-compact .dl-actions button:hover { background: var(--control); }
+.dl-row-compact .dl-actions button.danger { color: var(--bad); border-color: rgba(240, 100, 100, 0.4); }
+.dl-row-compact .dl-error { grid-column: 1 / -1; font-size: 0.75rem; color: var(--bad); margin-top: 0.2rem; }
+
+/* Sticky toolbar with global controls + aggregate stats (SKADI-T-0369). */
+.dl-section { display: flex; flex-direction: column; gap: 0; }
+.dl-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px 8px 0 0; border-bottom: none; }
+.dl-toolbar-controls { display: flex; gap: 0.4rem; }
+.dl-toolbar-btn { font-size: 0.78rem; padding: 0.3rem 0.65rem; background: var(--control); border: 1px solid var(--border-control); border-radius: 6px; cursor: pointer; color: var(--fg); }
+.dl-toolbar-btn:hover { background: var(--panel); border-color: var(--border); }
+.dl-toolbar-stats { display: flex; gap: 0.75rem; margin-left: auto; font-size: 0.82rem; }
+.dl-toolbar-speed { white-space: nowrap; }
+.dl-toolbar-counts { font-size: 0.78rem; white-space: nowrap; }
+
+/* Live worker-settings form (SKADI-T-0291). */
+.dl-settings { margin-top: 1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.dl-settings > summary { padding: 0.75rem 1rem; cursor: pointer; color: var(--fg-bright); font-weight: 600; user-select: none; }
+.dl-settings[open] > summary { border-bottom: 1px solid var(--border); }
+.dl-settings-body { padding: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9rem 1.25rem; }
+.dl-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.dl-field > span:first-child { font-size: 0.85rem; color: var(--fg); }
+.dl-field input, .dl-field select { padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); }
+.dl-hint { font-size: 0.75rem; }
+.dl-settings-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.75rem; margin-top: 0.25rem; }
+.dl-save-msg { font-size: 0.85rem; }
+
+/* Naming settings page (SKADI-T-0299). */
+.naming-help { margin-bottom: 1rem; }
+.naming-help code { background: var(--panel-2); padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.85em; }
+.naming-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+.naming-domain { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
+.naming-domain h3 { margin: 0 0 0.75rem; color: var(--fg-bright); }
+.naming-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.7rem; }
+.naming-field > span { font-size: 0.82rem; color: var(--fg); }
+.naming-field input { padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.85rem; }
+.naming-preview { margin-top: 0.5rem; padding: 0.5rem 0.6rem; background: var(--panel-2); border: 1px dashed var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.78rem; word-break: break-all; }
+.naming-foot { display: flex; align-items: center; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap; }
+.naming-space { flex-direction: row; align-items: center; gap: 0.5rem; margin: 0; }
+.naming-space input { width: 3rem; text-align: center; }
+.naming-msg { font-size: 0.85rem; }
+
+/* VPN / kill-switch panel (SKADI-T-0292). */
+.vpn-panel { display: flex; align-items: center; gap: 0.7rem; padding: 0.8rem 1rem; margin: 0.5rem 0 0.75rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.vpn-panel.ok { border-color: rgba(75, 208, 127, 0.4); }
+.vpn-panel.bad { border-color: rgba(240, 100, 100, 0.45); background: rgba(240, 100, 100, 0.06); }
+.vpn-panel .health-dot { width: 10px; height: 10px; flex: none; }
+.vpn-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+.vpn-text strong { color: var(--fg-bright); }
+.vpn-sub { font-size: 0.82rem; }
+.vpn-btn { margin-left: auto; background: var(--control); color: var(--fg); border: 1px solid var(--border-control); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.vpn-btn.danger { border-color: rgba(240, 100, 100, 0.5); color: var(--bad); }
+.vpn-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* --- Offline audiobook player (SKADI-T-0331 / I-0048) — phone-first. --- */
+.player-page { max-width: 480px; margin: 0 auto; }
+.player { display: flex; flex-direction: column; align-items: center; gap: 0.55rem; padding: 0.5rem 0.8rem 2rem; text-align: center; }
+.player-cover { width: min(62vw, 280px); aspect-ratio: 1; object-fit: cover; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+.player-cover-ph { display: flex; align-items: center; justify-content: center; background: var(--panel); color: var(--muted); padding: 1rem; }
+.player-title { margin: 0.4rem 0 0; font-size: 1.15rem; line-height: 1.3; }
+.player-byline, .player-series { margin: 0; font-size: 0.85rem; }
+.player-chapter { min-height: 1.1em; margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--accent); }
+.player-dl { position: relative; width: 100%; height: 1.4rem; background: var(--panel); border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.player-dl-bar { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--accent) 30%, transparent); transition: width 0.3s; }
+.player-dl span { position: relative; font-size: 0.75rem; }
+.player-scrub { width: 100%; accent-color: var(--accent); }
+.player-clock { display: flex; justify-content: space-between; width: 100%; font-size: 0.78rem; }
+.player-controls { display: flex; align-items: center; justify-content: center; gap: 0.7rem; margin-top: 0.3rem; }
+.player-btn { min-width: 3rem; min-height: 3rem; font-size: 1.15rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.player-play { min-width: 4.2rem; min-height: 4.2rem; font-size: 1.7rem; background: var(--accent); color: var(--bg); border: none; }
+.player-play:hover { filter: brightness(1.1); }
+.player-sub { display: flex; align-items: center; gap: 0.8rem; margin-top: 0.4rem; }
+.player-btn-sm { min-height: 2.2rem; padding: 0 0.8rem; border-radius: 999px; font-size: 0.85rem; }
+.player-sleep { min-height: 2.2rem; border-radius: 999px; font-size: 0.85rem; }
+.player-drawer { width: 100%; max-height: 40vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+.player-ch { display: flex; justify-content: space-between; gap: 0.8rem; width: 100%; padding: 0.55rem 0.6rem; background: none; border: none; border-radius: 6px; text-align: left; cursor: pointer; }
+.player-ch:hover { background: var(--panel); }
+.player-ch.current { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.player-ch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listen-link { font-weight: 600; }
+
+/* --- Phone layout (SKADI-T-0331): the 228px sidebar ate half a phone screen.
+   Under 720px the shell stacks: the nav becomes a slim horizontal scroller on
+   top (brand + links in a row), the main pane gets the full width. --- */
+@media (max-width: 720px) {
+  .app { flex-direction: column; max-height: none; }
+  .nav {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 8px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-soft);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .nav .brand { padding: 0 0.3rem 0 0; }
+  /* On the phone strip drop everything that clips/wraps: the version cluster,
+     counts, sections, disk meter, AND the "+ Add media" CTA (it doesn't belong
+     over a player and was overflowing to "+ Add m") — SKADI-T-0349. */
+  .nav .brand .sub, .nav .daemon-line, .nav .nav-count, .nav .nav-section,
+  .nav .disk, .nav .add-media, .nav .nav-footer { display: none; }
+  .nav a { flex: none; padding: 6px 9px; white-space: nowrap; }
+  .main { padding: 14px 12px; }
+  .player-controls { gap: 0.45rem; }
+  /* Two-path Listen layout stacks on phones. */
+  .listen-paths { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .nav-main { flex-direction: row; align-items: center; gap: 0.15rem; overflow-y: hidden; overflow-x: auto; }
+  .main { max-height: none; }
+}
+
+/* /listen on-device shelf (SKADI-T-0332). */
+.listen-page { max-width: 560px; }
+.shelf-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0; border-bottom: 1px solid var(--border-soft); }
+.shelf-main { display: flex; align-items: center; gap: 0.7rem; flex: 1; min-width: 0; text-decoration: none; color: var(--fg); }
+.shelf-cover { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; flex: none; }
+.shelf-cover-ph { background: var(--panel); }
+.shelf-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 0.85rem; }
+.shelf-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Phone pairing QR (SKADI-T-0333). */
+.pair-card { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 10px; margin: 0.5rem 0 0.8rem; max-width: 300px; }
+.pair-qr svg { width: 260px; height: 260px; display: block; border-radius: 6px; }
+.pair-url-row { display: flex; gap: 0.4rem; width: 100%; }
+.pair-url-row input { flex: 1; min-width: 0; }
+/* The APK address under the download button: long, and worth reading before
+   you send it to someone, so it wraps rather than scrolling out of sight. */
+.pair-url { font-size: 0.78rem; overflow-wrap: anywhere; margin: 0.15rem 0 0; }
+
+/* Browser uploads (SKADI-T-0631). The progress track reuses the storage
+   meter's shape so "something is filling up" reads the same way everywhere. */
+.upload-controls { display: flex; align-items: end; gap: 1rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
+.upload-kind { display: flex; flex-direction: column; gap: 0.25rem; }
+.upload-pick { cursor: pointer; }
+.upload-resumable { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+.upload-resumable h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
+.upload-resumable ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.upload-resumable li { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.upload-jobs { display: flex; flex-direction: column; gap: 0.75rem; }
+.upload-job { border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.8rem; }
+.upload-job-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+/* The filename is the one thing that can outgrow its row, so it wraps rather
+   than pushing the badge and the cancel control off the end. */
+.upload-job-name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.upload-track { height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; }
+.upload-fill { height: 100%; background: var(--ice); transition: width 0.2s linear; }
+.pair-card .pending { font-size: 0.8rem; }
+
+/* Activity stage bar (SKADI-T-0348): compact pipeline summary; empty lanes live
+   here instead of as full-height empty panels. */
+.stage-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
+.stage-pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.7rem; border-radius: 999px; background: var(--panel); border: 1px solid var(--border-soft); color: var(--muted); }
+.stage-pill.active { border-color: var(--accent); color: var(--fg); }
+.stage-pill.active .mono { color: var(--accent); font-weight: 600; }
+/* Indexer rollup card on the dashboard (SKADI-T-0348). */
+a.indexer-rollup { text-decoration: none; }
+a.indexer-rollup:hover { border-color: var(--accent); }
+
+/* Listen page: two labeled paths (app vs web player) — SKADI-T-0349. */
+.listen-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.6rem 0 1.2rem; }
+.listen-path { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem; }
+.listen-path-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
+.listen-path-head strong { font-size: 1rem; white-space: nowrap; }
+.listen-path-head .btn-link { margin-left: auto; white-space: nowrap; flex: none; }
+.listen-shelf-head { font-size: 0.9rem; color: var(--muted); margin: 0.5rem 0; }
+.pair-app { display: flex; flex-direction: column; gap: 1rem; }
+.pair-step { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.pair-step-label { font-weight: 600; font-size: 0.85rem; align-self: flex-start; }
+
+/* Indexer health rollup chip on the Overview (SKADI-T-0348). */
+a.health-rollup { text-decoration: none; color: inherit; }
+a.health-rollup:hover { border-color: var(--accent); }
+
+/* Rotated-token banner (SKADI-T-0474). Spans the shell above the sidebar so it
+   is visible on every route — a stale token breaks all of them, not one. */
+.auth-banner {
+  grid-column: 1 / -1;
+  padding: 0.75rem 1rem;
+  background: var(--bad);
+  color: #fff;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: center;
+}
+.auth-banner button {
+  background: #fff;
+  color: var(--bad);
+  border: 0;
+  border-radius: 4px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+/* Inline feedback under a TV episode row (SKADI-T-0559): the acquire/reset
+   actions have no page to navigate to, so the result has to appear where the
+   click was. */
+.ep-note { margin: 0.1rem 0 0.2rem 1.6rem; font-size: 0.8rem; }
+
+/* Config → Advanced (SKADI-T-0580): one line per key. Save appears only once
+   the draft differs from what is stored; Reset is a quiet link, and only when
+   the key is actually set. Every row used to carry both buttons at rest —
+   two per field, forty on the page. */
+.config-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.7rem; padding: 0.3rem 0; }
+.config-key { font-family: var(--mono); font-size: 12px; color: var(--fg-2); flex: 0 0 220px; display: flex; align-items: center; gap: 0.4rem; }
+.config-row input[type="text"], .config-row input[type="number"] { flex: 1 1 200px; min-width: 0; }
+.config-row .row-actions { display: flex; align-items: center; gap: 0.4rem; }
+.config-row .muted { flex: 1 1 100%; font-size: 12px; margin: 0; }
+.link-btn { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 0.2rem 0.3rem; font-family: inherit; }
+.link-btn:hover { color: var(--fg); text-decoration: underline; }
+.hidden { display: none !important; }
+
+/* ====================================================================
+   Phone width (SKADI-T-0580). The previous rules dated from a nav that had
+   `.nav-section`; the groups are `.nav-group` now, so they were never hidden and
+   the strip wrapped into two columns with the System group cut off. Everything
+   below the header overflowed sideways: grids kept their desktop column counts
+   and detail pages kept poster-beside-text.
+   ==================================================================== */
+@media (max-width: 720px) {
+  .nav .nav-group { display: contents; }
+  .nav .nav-group-label, .nav .nav-dot { display: none; }
+  .main { overflow-x: hidden; }
+  .main > * { min-width: 0; }
+  .ov-head { flex-direction: column; align-items: stretch; }
+  .ov-search { width: 100%; }
+  .metrics-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .ov-metric-num { font-size: 24px; }
+  .health-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-cols { grid-template-columns: minmax(0, 1fr); }
+  .ov-sec-head { flex-wrap: wrap; gap: 0.3rem 0.8rem; }
+  .lib-head { flex-wrap: wrap; }
+  .lib-head-right { flex-wrap: wrap; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .lib-filter-input { width: 100%; }
+  .poster-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px 10px; }
+  .detail-hero { height: 150px; margin: -14px -12px 0; }
+  .detail-body { flex-direction: column; margin-top: -60px; gap: 0.8rem; }
+  .detail-poster { width: 120px; }
+  .detail-info { padding-top: 0; }
+  .config-key { flex-basis: 100%; }
+  .activity-row { flex-wrap: wrap; }
+  .run-line { flex-wrap: wrap; gap: 0.2rem 0.6rem; }
+  .run-text { flex-basis: 100%; white-space: normal; }
+  .run-row .log-facts { margin-left: 0; }
+  .activity-row .stage-doing.mono { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .log-line { flex-wrap: wrap; gap: 0.2rem 0.6rem; }
+  .log-line .log-text { flex-basis: 100%; white-space: normal; }
+  .provider-row { flex-wrap: wrap; }
+  .metrics-row, .health-strip, .ov-cols { min-width: 0; }
+}
+
+/* Browser video player (SKADI-T-0585). */
+.watch-page { max-width: 1180px; }
+.watch-head { display: flex; align-items: baseline; gap: 0.8rem; margin: 0.2rem 0 0.8rem; flex-wrap: wrap; }
+.watch-head h2 { margin: 0; font-size: 20px; }
+.watch-nav { margin-left: auto; display: flex; gap: 0.5rem; }
+.watch-nav .watch-next { color: var(--fg); border-color: var(--border-control); }
+.watch-video { display: block; width: 100%; max-height: 78vh; background: #000; border-radius: 10px; outline: none; }
+.watch-note { padding: 0.55rem 0.9rem; border-radius: 8px; margin-bottom: 0.8rem; font-size: 13px; line-height: 1.45; }
+.watch-note.warn { background: rgba(216, 166, 87, 0.12); color: var(--warn); }
+.watch-note.bad { background: rgba(240, 100, 100, 0.12); color: var(--bad); }
+.watch-meta { color: var(--faint); font-size: 11.5px; margin: 0.5rem 0 0; }
+
+/* Wanted (SKADI-T-0594) */
+.wanted-list { margin-top: 0.8rem; }
+.wanted-item { display: flex; flex-direction: column; gap: 0.3rem; }
+.wanted-row { flex-wrap: wrap; }
+.wanted-row .spacer { flex: 1; }
+.wanted-eds { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
+.wanted-ed {
+  font-family: var(--mono); font-size: 11px; padding: 0.1rem 0.4rem; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer;
+}
+.wanted-ed.bad { color: var(--bad); border-color: rgba(255, 107, 107, 0.35); }
+.wanted-ed.pending { color: var(--accent); }
+.wanted-ed.open, .wanted-ed:hover { border-color: var(--ice); color: var(--fg-bright); }
+.wanted-more { font-size: 11px; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 0.3rem; }
+.wanted-more:hover { color: var(--fg); }
+.wanted-unmonitor { font-size: 12px; }
+.wanted-filter { min-width: 14rem; }
+.wanted-panel { margin: 0 0 0.4rem 1.2rem; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.wanted-panel-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+.wanted-panel-head .spacer { flex: 1; }
+.wanted-bulk { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 12.5px; }
+.wanted-bulk.confirming { padding: 0.5rem 0.7rem; border: 1px solid var(--bad); border-radius: 6px; background: rgba(255, 107, 107, 0.08); }
+.wanted-bulk-ask { color: var(--fg-bright); font-weight: 600; }
+
+/* Genre facet under the status chips (SKADI-T-0605): a second, quieter row
+   that wraps — a library carries a dozen-plus genres and a scroll strip would
+   hide most of them. Empty (and therefore invisible) until metadata carries
+   genres. */
+.filter-chips.genre-chips {
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+}
+.filter-chips.genre-chips:empty {
+    display: none;
+}
+.filter-chips.genre-chips .filter-chip {
+    font-size: 0.82em;
+    padding: 0.2rem 0.6rem;
+}
+p.genres.muted {
+    color: var(--muted, #8a93a6);
+    font-size: 0.92em;
+    margin: 0.25rem 0 0.5rem;
+}
+
+/* Content rating (SKADI-T-0610): a small bordered label above the genres line. */
+.rating-chip {
+    display: inline-block;
+    border: 1px solid var(--muted, #8a93a6);
+    border-radius: 3px;
+    padding: 0 0.35rem;
+    font-size: 0.75em;
+    letter-spacing: 0.04em;
+    color: var(--muted, #8a93a6);
+    margin: 0.25rem 0 0;
+}
+
+/* Household (SKADI-T-0613) */
+.member-card { grid-template-areas: "main actions" "policy policy"; }
+@media (max-width: 720px) {
+  /* Four actions do not fit beside a name on a phone: stack them under it. */
+  .member-card { grid-template-areas: "main" "actions" "policy"; grid-template-columns: 1fr; }
+  .member-card .card-actions { flex-wrap: wrap; }
+}
+.member-policy { grid-area: policy; font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+.member-policy:empty { display: none; }
+.pill.role-admin { color: var(--ice); }
+.pill.role-member { color: var(--ok); }
+.pill.role-kid { color: var(--gold); }
+.pill.role-contributor { color: var(--teal); }
+.policy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.6rem 1rem; }
+.form.policy-form { max-width: 820px; }
+.picker { display: flex; flex-direction: column; gap: 0.3rem; }
+.picker-hits { display: flex; flex-direction: column; gap: 0.15rem; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem; }
+.picker-hits:empty { display: none; }
+.picker-hit { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; background: transparent; border: 0; color: var(--fg); text-align: left; padding: 0.2rem 0.3rem; border-radius: 4px; cursor: pointer; }
+.picker-hit:hover { background: var(--control); }
+.picker-hit .muted { font-size: 0.78rem; }
+.picked { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.picked .chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; background: var(--control); }
+.picked .chip button { border: 0; background: transparent; color: var(--muted); padding: 0; cursor: pointer; font-size: 0.9rem; line-height: 1; }
+.picked .chip button:hover { color: var(--bad); }
+.token-once { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.8rem; border: 1px solid var(--gold); border-radius: 10px; margin: 0.5rem 0; }
+.token-once code { word-break: break-all; font-size: 0.85rem; }
+.pair-link-row { display: flex; gap: 0.4rem; align-items: center; width: 100%; }
+.pair-link { flex: 1; min-width: 0; font-size: 0.72rem; word-break: break-all; color: var(--muted); }
+
+/* Sign-in page (SKADI-T-0621) */
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.login-title { margin: 0; font-size: 1.6rem; color: var(--ice); }
+.login-card .muted { margin: 0 0 0.4rem; font-size: 0.85rem; }
+.login-card .field input { width: 100%; box-sizing: border-box; }
+.login-submit { margin-top: 0.4rem; }
+.nav-account { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); padding: 0 0.2rem; }
+.nav-account button { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 0; font-size: 0.8rem; }
+.nav-account button:hover { color: var(--bad); }
+.pw-form { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.4rem; }
+.pw-form .field > label { font-size: 0.75rem; }
+.pw-form input { width: 100%; box-sizing: border-box; }
+
+/* Section strips (SKADI-T-0627): one sidebar entry per area, links per page. */
+.subnav { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+.subnav-title { font-size: 1.3rem; font-weight: 600; color: var(--fg); }
+.subnav-links { display: flex; gap: 0.15rem; flex-wrap: wrap; }
+.subnav-link { padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; color: var(--muted); text-decoration: none; }
+.subnav-link:hover { color: var(--fg); background: var(--control); }
+/* Marked the same way the sidebar marks its current entry, so "you are here"
+   reads identically in both navigations. */
+.subnav-link.is-here { color: var(--fg); background: var(--ice-tint); box-shadow: inset 0 -2px 0 var(--ice); }

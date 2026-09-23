@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Skadi brand mark: the "✳" eight-spoked asterisk, in the app's primary blue,
+     centred within the adaptive-icon safe zone (108x108 canvas, ~30 radius). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="#FF7FB2FF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:pathData="M54,24 L54,84 M24,54 L84,54 M32.8,32.8 L75.2,75.2 M75.2,32.8 L32.8,75.2" />
+</vector>

@@ -1,0 +1,43 @@
+/* Skadi design language — entry stylesheet.
+   Pulls in type + tokens, then the foundational base layer (the primitives every
+   screen relies on). Import THIS one file to get the whole design language.
+
+   @import closure: fonts.css -> tokens.css -> (this file's base rules)
+   The full compiled component CSS lives in crates/skadi-web/style.css; this
+   entry is the portable design-language subset (tokens, type, base). */
+@import "./fonts/fonts.css";
+@import "./tokens/tokens.css";
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Default link tone (specific surfaces — nav, cards, gear — override). */
+a { color: var(--ice); text-decoration: none; }
+
+/* Type roles ---------------------------------------------------------------
+   Mono carries numbers, paths, env vars, release titles, timestamps and other
+   technical labels; sans carries everything else. */
+.mono { font-family: var(--mono); }
+.tnum { font-variant-numeric: tabular-nums; }
+.u-label {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Cold thin scrollbars (9px, slate thumb, transparent track). */
+* { scrollbar-width: thin; scrollbar-color: #283039 transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #283039; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }

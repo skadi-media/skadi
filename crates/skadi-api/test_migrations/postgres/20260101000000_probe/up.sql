@@ -1,0 +1,1 @@
+CREATE TABLE bootstrap_probe (id BIGINT PRIMARY KEY, note TEXT NOT NULL);

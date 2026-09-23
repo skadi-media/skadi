@@ -1,0 +1,38 @@
+[package]
+name = "skadi-indexers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Indexer abstraction for Skadi (Indexer/SearchQuery traits, Release types)"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-http = { workspace = true }
+skadi-cardigann = { workspace = true }
+flate2 = "1"
+tar = "0.4"
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+quick-xml = { workspace = true }
+# SKADI-T-0497: info-hash of a fetched .torrent, so a challenge-fronted link is
+# resolved to a magnet by the indexer that holds the session.
+sha1_smol = "1"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+wiremock = "0.6"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

@@ -1,0 +1,64 @@
+[package]
+name = "skadi-hunter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Acquisition orchestration for Skadi, built on Cloacina workflows"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+skadi-indexers = { workspace = true }
+skadi-downloaders = { workspace = true }
+skadi-importer = { workspace = true }
+skadi-media-probe = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-notify = { workspace = true }
+cloacina = { version = "0.11.1", default-features = false, features = ["macros", "postgres", "sqlite"] }
+# The `#[task]`/`#[workflow]` macros expand to paths in these crates, so they
+# must be direct dependencies of any crate that defines tasks/workflows.
+cloacina-workflow = "0.11.1"
+async-trait = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+regex = { workspace = true }
+# `cloacina_target_for` swaps the Postgres URL's database (SKADI-T-0390).
+url = "2"
+
+[dev-dependencies]
+cucumber = { workspace = true }
+# SKADI-T-0440: the retention scenario asserts the key is *registered*, which is
+# what makes it settable — a fresh test store has no row until env seeding runs.
+skadi-config = { workspace = true }
+# `start_paused` for the circuit-breaker cool-off tests (SKADI-T-0534): virtual
+# time instead of racing real millisecond sleeps.
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
+diesel = { workspace = true }
+# The DomainModule wiring test names `EmbeddedMigrations` (SKADI-T-0051).
+diesel_migrations = { workspace = true }
+# Serializes tests that mutate the process-global service registry
+# (SKADI-T-0383). They share one `HUNTER` map, so in parallel one test's
+# `reset_services()` lands inside another's assertions; the loser then blocks
+# for the full `services_for` grace before panicking.
+serial_test = "3"
+
+[lints.rust]
+# Cloacina's `#[workflow]` macro expands to `#[cfg(packaged)]` branches (used by
+# its packaged-workflow build path, which we don't use). Cargo's lints table
+# doesn't honour `check-cfg` reliably for us; allow the lint entirely instead.
+unexpected_cfgs = "allow"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

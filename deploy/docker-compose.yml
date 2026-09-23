@@ -1,0 +1,626 @@
+# Skadi — opinionated, safe-by-default deployment stack (SKADI-T-0064 / I-0013).
+#
+#   skadi                     the daemon (HTTP API on :8080) — built from this repo
+#   skadi-downloader-worker   the built-in torrent client (librqbit) — ALL of its
+#                             traffic rides the VPN tunnel
+#   postgres                  the backing store (persistent volume, NOT exposed)
+#   gluetun                   VPN client; owns the namespace the worker lives in,
+#                             and exposes an HTTP proxy (8888) Skadi's native
+#                             indexer searches egress through (SKADI-I-0036)
+#   flaresolverr              CloudFlare solver for native cardigann trackers
+#
+# Indexers are NATIVE (SKADI-I-0036): Skadi's built-in Cardigann engine replaces
+# the Prowlarr container. Add trackers from the catalog in the UI (Indexers →
+# "+ Add tracker"). Their searches ride gluetun's VPN proxy; CloudFlare-gated
+# ones are solved by FlareSolverr from the same VPN exit IP.
+#
+# ## The kill switch (why this is "safe by default")
+#
+# The worker runs with `network_mode: service:gluetun`: it shares gluetun's
+# network namespace, so its ONLY route to the internet is the tunnel, and
+# gluetun's internal firewall drops all non-VPN egress. If the VPN drops,
+# torrent traffic STOPS — structurally, not a client setting that can be
+# misconfigured. The daemon stays OUTSIDE the namespace, so the UI/API keep
+# working during a tunnel outage. Verification steps are in deploy/README.md.
+#
+# ## The download interface is the database, not a port (SKADI-I-0013)
+#
+# The daemon and the worker never call each other. The daemon ENQUEUES a row in
+# the `downloads` table; the worker (in the VPN namespace) CLAIMS it, downloads
+# via librqbit, and writes progress/completion back. So the worker publishes NO
+# port — it only needs to reach Postgres. Because it lives in gluetun's
+# namespace (whose resolver doesn't know compose service names), it reaches
+# Postgres at a pinned IP via `extra_hosts`; `FIREWALL_OUTBOUND_SUBNETS` already
+# lets the namespace reach the compose subnet without the tunnel.
+#
+# In Skadi, register a built-in **skadi** downloader (kind "skadi" — no host,
+# no secret). It is the only download client: there is no external one to
+# configure, and no client port to expose.
+#
+# ## Paths — ONE library root skadi owns (SKADI-I-0045, the *arr footgun pre-solved)
+#
+# The `storage` NFS volume (writable, on the NAS at ${STORAGE_NFS_ADDR}:
+# ${STORAGE_NFS_PATH}) is mounted at /mnt/storage in BOTH the worker and skadi. The
+# library root is a DEDICATED skadi subfolder under it — `SKADI_LIBRARY_ROOT`,
+# default /mnt/storage/skadi — so skadi never collides with your other folders on a
+# shared NAS (your existing movies/, television/, downloads/, … are left alone).
+# skadi OWNS the layout under ITS root; there is no root-folder picker:
+#   /mnt/storage/skadi/movie    /mnt/storage/skadi/television    /mnt/storage/skadi/audiobook
+#   /mnt/storage/skadi/downloads/complete    (torrents download + seed here)
+# Because downloads + the library live under one NFS export, the importer HARDLINKS
+# completed files into their domain folder — instant, zero extra disk. (Separate
+# /downloads + /media mounts used to force a cross-device COPY — see README.)
+#
+# MIGRATION (SKADI-T-0303 made library-import a reorg-via-link MOVE): adopt an
+# existing library by scanning it through the WRITABLE mount (e.g. your old
+# /mnt/storage/movies) in Import — each file is hardlinked into /mnt/storage/skadi/movie
+# and the old path is dropped (same export ⇒ a free move, no copy). The old
+# read-only /library view is NOT suitable for adoption now (a move must delete the
+# source). Point SKADI_LIBRARY_ROOT at an EMPTY, skadi-only subfolder and VERIFY
+# the storage mount in .env before bringing up.
+#
+# Copy .env.example to .env, fill it in, then: docker compose up -d
+#
+# Metadata note: without SKADI_TMDB_API_KEY set, Skadi defaults to Servarr's
+# public metadata API — see ADR SKADI-A-0001 for the conditions on that.
+
+name: skadi
+
+# Bound EVERY container's logs. Without this the default json-file driver grows a
+# per-container log forever; gluetun's control-server access log (polled by the
+# vpn-watchdog every few seconds) grew to ~15 GB, filled the Docker VM disk, and
+# crashed postgres — the recurring "nothing loaded" outage. 10 MB × 3 = 30 MB max
+# per container, rotated. Referenced as `logging: *default-logging` on each service.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gluetun:
+    logging: *default-logging
+    image: qmcgaw/gluetun:v3
+    # Hard RAM ceiling. gluetun's `v3` rolling tag has memory leaks — it ballooned
+    # to ~15 GB and starved the Docker VM, so postgres/the daemon couldn't service
+    # queries (health still answered — it needs no DB — but /books hung): the other
+    # face of the recurring "nothing loaded" outage. Baseline usage is ~115 MB, so
+    # 512 MB is generous headroom; if the leak hits the cap, Docker OOM-kills gluetun
+    # and `restart: unless-stopped` + the vpn-watchdog bring it back — a brief VPN
+    # bounce instead of a whole-stack starvation.
+    mem_limit: 512m
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # Forwarded-port status file, shared with the worker (SKADI-T-0587).
+      - gluetun-run:/tmp/gluetun
+    environment:
+      # Provider + credentials come from .env; see gluetun's wiki for the
+      # full provider matrix: https://github.com/qdm12/gluetun-wiki
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER}
+      # Defaults to openvpn (matching gluetun's own default), so an env file
+      # with just OPENVPN_USER/PASSWORD works without setting VPN_TYPE.
+      VPN_TYPE: ${VPN_TYPE:-openvpn}
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:-}
+      SERVER_COUNTRIES: ${SERVER_COUNTRIES:-}
+      SERVER_CITIES: ${SERVER_CITIES:-}
+      OPENVPN_USER: ${OPENVPN_USER:-}
+      OPENVPN_PASSWORD: ${OPENVPN_PASSWORD:-}
+      # Allow the compose network to reach services inside this namespace
+      # without riding the tunnel.
+      FIREWALL_OUTBOUND_SUBNETS: ${COMPOSE_SUBNET:-172.28.0.0/16}
+      # Native cardigann search (SKADI-I-0036): expose gluetun's HTTP proxy (8888)
+      # so Skadi's indexer requests egress via the VPN, and open input for the
+      # proxy + FlareSolverr (8191) so Skadi (outside the namespace) can reach
+      # them. Both share this VPN exit IP, keeping FlareSolverr's cf_clearance valid.
+      HTTPPROXY: "on"
+      FIREWALL_INPUT_PORTS: "8191,8888"
+      # Inbound peers (SKADI-T-0587). Without a forwarded port nothing connects
+      # *in* to the worker, so a torrent whose only seeder is behind its own NAT
+      # never starts — the "stalled at 0% for 3h" blocklist entries. Needs a
+      # provider that forwards (protonvpn, pia, privatevpn, perfectprivacy; NOT
+      # nordvpn). gluetun writes the assigned port to the status file, which the
+      # worker reads at startup (it shares the `gluetun-run` volume) and listens
+      # on instead of its configured range.
+      VPN_PORT_FORWARDING: ${VPN_PORT_FORWARDING:-off}
+      VPN_PORT_FORWARDING_PROVIDER: ${VPN_PORT_FORWARDING_PROVIDER:-}
+      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+      # VPN-stability fix (see deploy/README "VPN stability"). The disease is gluetun's
+      # internal reconnect STORM: when the tunnel connects but can't route (NordVPN
+      # throttling, an MTU blip, a dead server), gluetun tears WireGuard down and
+      # reconnects every ~6s, cycling servers — which hammers NordVPN's rate-limiter
+      # into throttling the NordLynx key, so EVERY server then i/o-times-out and it
+      # never recovers. `HEALTH_VPN_DURATION_INITIAL` was removed from gluetun (was a
+      # no-op here). The real lever:
+      #   - HEALTH_RESTART_VPN=off → gluetun never internally restarts the tunnel, so
+      #     a blip can't snowball into a throttle. Recovery is handled GENTLY and
+      #     externally by the `vpn-watchdog` sidecar (one bounce per ~5min, not 10/min).
+      #   - WIREGUARD_MTU=1320 → lower MTU avoids the "handshake completes but no
+      #     traffic flows" silent failure that can start the cycle.
+      HEALTH_RESTART_VPN: "off"
+      WIREGUARD_MTU: "1320"
+      # Silence the control-server ACCESS LOG at the source. The vpn-watchdog polls
+      # gluetun's control API (/v1/vpn/status, /v1/publicip/ip) every few seconds,
+      # and gluetun logged FOUR lines per poll (two 200s + two "route unprotected"
+      # WARNs) — ~115k lines/day. This is what actually ballooned the log to 15 GB;
+      # log rotation caps the damage, this removes the cause.
+      HTTP_CONTROL_SERVER_LOG: "off"
+    networks:
+      default:
+    healthcheck:
+      # Gluetun is healthy only when the tunnel is up.
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+    restart: unless-stopped
+
+  # CloudFlare challenge solver (SKADI-T-0174 / SKADI-I-0036). Many public
+  # indexers sit behind CloudFlare; Skadi's **native** cardigann engine routes
+  # challenged requests through FlareSolverr, which runs a headless Chromium to
+  # clear them. Shares gluetun's namespace so the solve egresses from the SAME VPN
+  # IP as Skadi's searches (which ride gluetun's HTTP proxy) — otherwise the
+  # clearance cookie is bound to the wrong IP and CloudFlare rejects it. Skadi
+  # reaches it at http://gluetun:8191 (gluetun opens FIREWALL_INPUT_PORTS=8191).
+  flaresolverr:
+    logging: *default-logging
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    # Memory fuse (SKADI-T-0566). **Sized from measurement, not copied from
+    # docker-compose.nas.yml**, which uses 512m: this container was observed at
+    # 846 MiB steady and 993 MiB mid-solve on 2026-09-10, so the NAS value would
+    # OOM it on sight and turn a headroom fix into an outage. (That the NAS runs
+    # it that tight is very likely why Chromium dies mid-solve there —
+    # SKADI-T-0488.)
+    #
+    # Chromium has no reason to grow without bound; if this fuse ever blows, the
+    # solver is leaking and that is worth knowing rather than absorbing into a
+    # 23 GB host.
+    mem_limit: ${MEM_FLARESOLVERR:-1536m}
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      TZ: ${TZ:-Etc/UTC}
+    restart: unless-stopped
+    # After a VPN reconnect FlareSolverr can keep serving on localhost but not on
+    # the namespace's docker IP, so Skadi (a separate container) can't reach it.
+    # Test the eth0 IP, not 127.0.0.1, so this catches it; autoheal restarts it on
+    # unhealthy — gluetun is left alone (restarting it risks NordVPN auth churn).
+    # Headroom for a *busy* Chromium (SKADI-T-0488). The old 5 s curl / 8 s
+    # timeout / 3 retries declared it dead ~24 s into a burst, and autoheal then
+    # killed it **mid-solve** — on 2026-09-06 the restart itself failed and left
+    # it `Exited (128)`. A solve takes tens of seconds under load, so the check
+    # was measuring queue depth and calling it death.
+    #
+    # These are the NAS overlay's values, which were relaxed for exactly this
+    # reason on cut-over day and have held since. The base file having the tight
+    # ones meant the two environments failed differently under the same load.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 25 -o /dev/null http://$$(hostname -i):8191/ || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 180s
+    labels:
+      autoheal: "true"
+
+  # Watches containers labelled `autoheal=true` and restarts them when Docker marks
+  # them unhealthy. Scoped by label so it ONLY ever touches FlareSolverr — never
+  # gluetun (gluetun churn trips NordVPN auth rate-limiting; see ops notes).
+  autoheal:
+    logging: *default-logging
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 15
+      AUTOHEAL_START_PERIOD: 30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Gentle VPN recovery (deploy/README "VPN stability"). With HEALTH_RESTART_VPN=off,
+  # gluetun no longer self-restarts the tunnel — which is what stormed NordVPN into
+  # throttling the key. This watchdog provides recovery instead, but SLOWLY: only after
+  # gluetun has been unhealthy for a few minutes does it do ONE clean restart of gluetun
+  # plus its network-namespace mates (flaresolverr, worker, which lose the namespace
+  # when gluetun restarts), then it waits ~5 min. At most one reconnect per ~5 min — a
+  # controlled recovery, never the ~10/min storm. (Distinct from `autoheal`, which fires
+  # on the fast Docker-healthcheck cadence and can't do the netns dependency cascade.)
+  vpn-watchdog:
+    logging: *default-logging
+    image: docker:cli
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      GLUETUN: ${COMPOSE_PROJECT_NAME:-skadi}-gluetun-1
+      DEPENDENTS: "${COMPOSE_PROJECT_NAME:-skadi}-flaresolverr-1 ${COMPOSE_PROJECT_NAME:-skadi}-skadi-downloader-worker-1"
+      CHECK_INTERVAL: "60" # seconds between health checks
+      FAIL_THRESHOLD: "3" # consecutive unhealthy checks before a bounce (~3 min)
+      BOUNCE_COOLDOWN: "300" # seconds to settle after a bounce before checking again
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "vpn-watchdog: started (gentle gluetun recovery; HEALTH_RESTART_VPN=off)";
+        fails=0;
+        while true; do
+          status=$$(docker inspect --format '{{.State.Health.Status}}' "$$GLUETUN" 2>/dev/null || echo missing);
+          if [ "$$status" = healthy ]; then
+            fails=0;
+          else
+            fails=$$((fails + 1));
+            echo "vpn-watchdog: gluetun=$$status ($$fails/$$FAIL_THRESHOLD)";
+            if [ "$$fails" -ge "$$FAIL_THRESHOLD" ]; then
+              echo "vpn-watchdog: gentle bounce of gluetun + dependents (one clean reconnect)";
+              docker restart "$$GLUETUN" >/dev/null 2>&1 || true;
+              sleep 20;
+              docker restart $$DEPENDENTS >/dev/null 2>&1 || true;
+              fails=0;
+              sleep "$$BOUNCE_COOLDOWN";
+            fi;
+          fi;
+          sleep "$$CHECK_INTERVAL";
+        done
+
+  # Scheduled database backup (SKADI-T-0481).
+  #
+  # Nothing backed the database up on a schedule; only a hand-run `pg_dump` in
+  # the README. The library rows — what is owned, what is wanted, every quality
+  # decision and blocklist judgement — are the part that cannot be re-downloaded.
+  #
+  # Same `postgres:16` image as the server so `pg_dump` matches the server
+  # version exactly. A newer client can read an older server, but an older client
+  # cannot read a newer one, and pinning them together removes the question.
+  #
+  # Writes to the library share rather than a named volume: a backup that lives
+  # in the same Docker volume set as the thing it protects is not a backup.
+  # Pairs with SKADI-T-0463's app-level config backup — this is the raw DB half.
+  postgres-backup:
+    logging: *default-logging
+    image: postgres:16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-skadi}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-skadi}
+      # Seconds between dumps (default daily) and how many to keep.
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-86400}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      BACKUP_DIR: /mnt/storage/skadi/backups/postgres
+    volumes:
+      - storage:/mnt/storage
+    user: "${PUID:-1000}:${PGID:-999}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mkdir -p "$$BACKUP_DIR"
+        while :; do
+          stamp="$$(date -u +%Y%m%dT%H%M%SZ)"
+          out="$$BACKUP_DIR/skadi-$$stamp.dump"
+          # Dump to a .partial name and rename on success. A dump interrupted by
+          # a restart would otherwise sit in the directory looking like a valid
+          # backup, and the retention sweep below would happily delete a good
+          # older one to make room for it.
+          if pg_dump -Fc -f "$$out.partial" 2>/tmp/pgdump.err; then
+            # `pg_restore -l` parses the archive's table of contents, so a
+            # truncated or corrupt file fails here rather than on the day it is
+            # needed. This is the whole difference between having backups and
+            # believing you do.
+            if pg_restore -l "$$out.partial" >/dev/null 2>&1; then
+              mv "$$out.partial" "$$out"
+              echo "backup ok: $$out ($$(wc -c < "$$out") bytes)"
+            else
+              echo "backup FAILED verification, discarding: $$out.partial" >&2
+              rm -f "$$out.partial"
+            fi
+          else
+            echo "pg_dump failed:" >&2
+            cat /tmp/pgdump.err >&2
+            rm -f "$$out.partial"
+          fi
+          # Retention: keep the newest N *verified* dumps. Runs after the dump so
+          # a failed run never prunes — otherwise a week of failures would
+          # quietly eat the last good backup.
+          ls -1t "$$BACKUP_DIR"/skadi-*.dump 2>/dev/null \
+            | tail -n +$$((BACKUP_KEEP + 1)) \
+            | while read -r old; do
+                echo "pruning $$old"
+                rm -f "$$old"
+              done
+          sleep "$$BACKUP_INTERVAL"
+        done
+    restart: unless-stopped
+
+  postgres:
+    logging: *default-logging
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skadi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-skadi}
+    volumes:
+      # Persistent — unlike the repo-root test compose, this data matters.
+      - pg-data:/var/lib/postgresql/data
+    # Deliberately NOT port-published: only the compose network can reach it.
+    # Pinned to a static IP so the worker (which lives in gluetun's namespace and
+    # can't resolve compose service names through gluetun's DNS) can reach it via
+    # an `extra_hosts` entry. See the header note on the database interface.
+    networks:
+      default:
+        ipv4_address: ${POSTGRES_IP:-172.28.0.5}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-skadi} -d ${POSTGRES_DB:-skadi}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  skadi:
+    logging: *default-logging
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: skadi:latest
+    # PUID/PGID for LSIO parity (SKADI-T-0487). Only the removed qbittorrent
+    # service honoured these; skadi and the worker ran as the image's fixed uid,
+    # which is why the NAS overlay had to override `user:` by hand.
+    #
+    # The defaults are **exactly what the image already produced** — uid 1000,
+    # gid 999 from `useradd --system` — so this changes nothing for an existing
+    # deployment. A default of 1000:1000 would look tidier and would silently
+    # move the group on the next `up -d`, under a library whose files are already
+    # owned by the old one.
+    #
+    # Overriding PUID also needs a writable HOME: /home/skadi belongs to uid 1000
+    # in the image. Set `HOME=/tmp` alongside it, as docker-compose.nas.yml does.
+    user: "${PUID:-1000}:${PGID:-999}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gluetun:
+        # `service_started`, NOT `service_healthy`: the daemon and its web UI do
+        # NOT ride the VPN directly — only the worker + FlareSolverr share
+        # gluetun's namespace, and Skadi's indexer requests egress via gluetun's
+        # HTTP proxy (so a tunnel outage stops indexer/torrent egress but leaves
+        # the UI up to fix it). skadi only needs gluetun's container up to resolve
+        # the `gluetun` hostname for the proxy + FlareSolverr.
+        condition: service_started
+    environment:
+      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-skadi}
+      # Bearer auth is ON by default in this stack; set the token in .env.
+      SKADI_API_TOKEN: ${SKADI_API_TOKEN}
+      # Encrypts provider credentials (indexer API keys) at rest.
+      SKADI_SECRET_KEY: ${SKADI_SECRET_KEY}
+      # Optional: set to use TMDB directly instead of the Servarr metadata
+      # API default (ADR SKADI-A-0001).
+      SKADI_TMDB_API_KEY: ${SKADI_TMDB_API_KEY:-}
+      # Native cardigann indexer engine (SKADI-I-0036, replaces Prowlarr):
+      #   - definitions synced/seeded under a persistent volume,
+      #   - searches egress via gluetun's VPN HTTP proxy,
+      #   - CloudFlare challenges solved by FlareSolverr (same VPN exit IP).
+      SKADI_CARDIGANN_DEFINITIONS_DIR: /data/definitions
+      SKADI_CARDIGANN_PROXY_URL: http://gluetun:8888
+      SKADI_FLARESOLVERR_URL: http://gluetun:8191
+      # The single library root (SKADI-I-0045/T-0302): skadi OWNS the layout under
+      # this one writable mount — movies under movie/, TV under television/,
+      # audiobooks under audiobook/, downloads under downloads/{complete,incomplete}.
+      # There is no root-folder picker any more. Defaults to the shared NFS mount.
+      SKADI_LIBRARY_ROOT: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}
+      RUST_LOG: ${RUST_LOG:-info}
+      # Published native-app builds (deploy/publish-apk.sh) served at /app/*
+      # for LAN sideload install (SKADI-T-0340).
+      SKADI_APK_DIR: /apk
+      # Host:port the pairing/install QRs advertise (SKADI-T-0349). In Docker the
+      # daemon can't know the host's LAN IP, so pin it here — else the QR falls
+      # back to the browser's Host header (loopback if you browse via 127.0.0.1).
+      SKADI_ADVERTISE_HOST: ${SKADI_ADVERTISE_HOST:-}
+    # Both binaries stop on SIGTERM since SKADI-T-0476, so a stop is a real
+    # shutdown rather than a wait-then-SIGKILL. 30 s is ample for the daemon's
+    # in-flight requests and background tasks to unwind.
+    stop_grace_period: 30s
+    # SKADI-T-0479: the daemon had no healthcheck at all, so compose reported it
+    # up the moment the process started. `skadi health --ready` hits
+    # /api/v1/health/ready in-container (the CLI defaults to 127.0.0.1:8080) and
+    # exits non-zero until the database answers and providers are published. No
+    # curl needed in the runtime image — the binary is already there.
+    healthcheck:
+      test: ["CMD", "skadi", "health", "--ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # Migrations + the first provider reconcile happen here; don't mark the
+      # container unhealthy while that is legitimately in progress.
+      start_period: 90s
+    ports:
+      # LAN-exposed by default (SKADI-T-0339) so phones can pair, download
+      # books, and fetch the APK (native player, SKADI-I-0049). Home-LAN trust
+      # model: the UI injects the API token to any visitor — do NOT port-forward
+      # this through a router. Set SKADI_BIND=127.0.0.1 to go loopback-only.
+      - "${SKADI_BIND:-0.0.0.0}:${SKADI_PORT:-8080}:8080"
+    volumes:
+      # Persistent cardigann definition library (bundled set seeded on first run,
+      # then synced from the Prowlarr/Indexers repo via the UI's "Sync catalog").
+      - cardigann-defs:/data/definitions
+      # Published native-app APK + manifest (deploy/publish-apk.sh writes here).
+      # Relative to THIS file's dir — run the stack with deploy/ as the project
+      # directory (e.g. `docker compose -f deploy/docker-compose.yml …`); a
+      # `--project-directory .` from the repo root would resolve `./apk` to
+      # <repo>/apk instead and silently serve nothing.
+      - ./apk:/apk:ro
+      # The whole writable export is mounted here, but skadi only writes under its
+      # DEDICATED library root (SKADI_LIBRARY_ROOT=/mnt/storage/skadi): movie/,
+      # television/, audiobook/, and downloads/complete — all on one NFS export so
+      # the importer hardlinks (SKADI-I-0013/0045). No root-folder registration —
+      # the layout under skadi's root is owned, not configured; your other folders
+      # on the share are untouched.
+      - storage:/mnt/storage
+      # Optional read-only view of an existing library, e.g. for browsing. NOTE:
+      # adoption is now a reorg-via-link MOVE (SKADI-T-0303), which must delete the
+      # source — so to ADOPT an existing library, scan it through the WRITABLE
+      # /mnt/storage mount instead (a :ro mount can't be moved from). Drop this
+      # volume + mount if unused; the stack runs fine without it.
+      - nas-library:/library:ro
+    restart: unless-stopped
+
+  # The built-in torrent client (SKADI-I-0013): a librqbit engine driven through
+  # the `downloads` queue. Lives in gluetun's namespace (kill switch), serves NO
+  # port, and reaches Postgres at the pinned IP. Writes into the shared
+  # /mnt/storage so skadi hardlinks on import.
+  # Remote access (SKADI-T-0599): a Tailscale node that shares the daemon's
+  # network namespace, so the daemon's :8080 is reachable at this node's
+  # tailnet address from any device on the tailnet — the Android app on
+  # cellular, a laptop elsewhere — with WireGuard doing the encryption and
+  # NAT traversal (direct where it can punch, DERP relay where it cannot).
+  # Opt-in: only started with the `tailscale` compose profile
+  # (`COMPOSE_PROFILES=tailscale` in .env) and a TAILSCALE_AUTHKEY. State
+  # persists in the volume, so the auth key is used once and can be
+  # single-use; disable key expiry for the node in the admin console.
+  tailscale:
+    logging: *default-logging
+    image: tailscale/tailscale:latest
+    profiles: ["tailscale"]
+    network_mode: "service:skadi"
+    depends_on:
+      skadi:
+        condition: service_started
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
+      TS_HOSTNAME: ${TAILSCALE_HOSTNAME:-skadi}
+      TS_STATE_DIR: /var/lib/tailscale
+      # Kernel (tun) mode, like gluetun: the daemon listens on 0.0.0.0 in the
+      # shared namespace, so inbound tailnet traffic reaches it directly.
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TAILSCALE_EXTRA_ARGS:-}
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    restart: unless-stopped
+
+  skadi-downloader-worker:
+    logging: *default-logging
+    build:
+      context: ..
+      dockerfile: deploy/worker.Dockerfile
+    image: skadi-downloader-worker:latest
+    # Memory fuse (SKADI-T-0566). SKADI-T-0392 was a worker that reached ~9 GB;
+    # the fix landed and it now sits at ~535 MiB with a full 371-torrent library
+    # (measured 2026-09-10). The cap is not tuning — it turns a regression of that
+    # into one container restarting with an obvious cause, instead of a 23 GB host
+    # slowly swapping while every service gets worse.
+    mem_limit: ${MEM_WORKER:-1g}
+    # Same PUID/PGID contract as the daemon (SKADI-T-0487). Both write into the
+    # same library tree, so they must agree — a worker writing as a different
+    # group than the importer reads as is how a hardlink import starts failing on
+    # permissions.
+    user: "${PUID:-1000}:${PGID:-999}"
+    # THE kill switch: share gluetun's network namespace. No VPN, no traffic.
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # Same Postgres as the daemon, addressed by its PINNED IP: inside
+      # gluetun's namespace compose service names don't resolve, and Docker
+      # forbids extra_hosts together with network_mode, so the URL carries the
+      # IP directly (the postgres service pins ipv4_address to ${POSTGRES_IP}).
+      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD}@${POSTGRES_IP:-172.28.0.5}:5432/${POSTGRES_DB:-skadi}
+      # Downloads live under the single library root's downloads/ tree
+      # (SKADI-T-0302/0305): torrents download to + seed from `complete`, which is
+      # on the SAME NFS export as the library, so the importer hardlinks the finished
+      # file into movie/television/audiobook (no copy) and seeding continues from here.
+      SKADI_WORKER_DOWNLOAD_DIR: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}/downloads/complete
+      SKADI_WORKER_STATE_DIR: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}/downloads/.rqbit-session
+      SKADI_WORKER_ID: ${SKADI_WORKER_ID:-skadi-worker-1}
+      # Optional: "1" turns off the BitTorrent DHT in the built-in client (peer discovery
+      # then relies on trackers + PEX). Used for the SKADI-T-0392 memory A/B; empty = on.
+      SKADI_WORKER_DISABLE_DHT: ${SKADI_WORKER_DISABLE_DHT:-}
+      # gluetun's forwarded-port status file (SKADI-T-0587): when it holds a
+      # port the worker listens there instead of worker.port_lo..hi. Missing or
+      # empty (VPN_PORT_FORWARDING=off) ⇒ the configured range, as before.
+      SKADI_WORKER_FORWARDED_PORT_FILE: /tmp/gluetun/forwarded_port
+      RUST_LOG: ${RUST_LOG:-info}
+    # Longer than the daemon's (SKADI-T-0476): the worker may be mid-restore of
+    # several hundred torrents when a stop arrives, and librqbit's incremental
+    # persistence is better left to finish its current write than killed.
+    stop_grace_period: 60s
+    # SKADI-T-0479: the worker publishes no port — it lives in gluetun's network
+    # namespace and speaks only to Postgres — so a healthcheck cannot probe it
+    # over HTTP, and this image has no psql to read its heartbeat row. It writes
+    # the same heartbeat to a container-local file, before the startup restore
+    # and then every tick; this checks that file is fresher than two minutes. A
+    # worker wedged on a hung transfer stops ticking and goes unhealthy.
+    # Container-local on purpose: the marker answers "is this process alive", so
+    # it must not sit on the shared mount, which is itself a thing that can break.
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "test -n \"$$(find /tmp/skadi-worker-heartbeat -newermt '-120 seconds' 2>/dev/null)\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Restoring several hundred seeds takes minutes; the worker writes its
+      # marker before that begins (SKADI-T-0479), so this only needs to cover
+      # process start, not the restore.
+      start_period: 180s
+    volumes:
+      # Shared library root with skadi — completed files under
+      # /mnt/storage/skadi/downloads/complete are hardlinked into the domain folders
+      # (movie/television/audiobook) by the importer.
+      - storage:/mnt/storage
+      # gluetun's forwarded-port status file (SKADI-T-0587), read at startup.
+      - gluetun-run:/tmp/gluetun:ro
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        # Pinned so FIREWALL_OUTBOUND_SUBNETS above always matches.
+        - subnet: ${COMPOSE_SUBNET:-172.28.0.0/16}
+
+volumes:
+  pg-data:
+  # Tailscale node identity + state (SKADI-T-0599); keeps the node across
+  # recreates so the auth key is only needed the first time.
+  tailscale-state:
+  # gluetun's runtime status files (forwarded port), shared with the worker.
+  gluetun-run:
+  # The native cardigann definition library (SKADI-I-0036): bundled defs seeded on
+  # first run, plus anything synced from the Prowlarr/Indexers repo.
+  cardigann-defs:
+  # The central WRITABLE storage on the NAS, mounted at /mnt/storage in skadi +
+  # the worker — the single library root. skadi writes movie/, television/,
+  # audiobook/, and downloads/complete under one NFS export so the importer
+  # hardlinks (SKADI-I-0045). VERIFY STORAGE_NFS_ADDR / STORAGE_NFS_PATH in .env
+  # before bringing this up — it is writable, so point it at an export you're
+  # happy for Skadi to own.
+  storage:
+    driver_opts:
+      type: nfs
+      o: "addr=${STORAGE_NFS_ADDR},nfsvers=4"
+      device: ":${STORAGE_NFS_PATH}"
+  # Read-only NFS view of the Synology library for in-place import. The Docker
+  # VM mounts it; the host doesn't need it mounted. Adjust addr/device for your
+  # NAS, or drop this volume + the skadi `/library` mount to run without it.
+  nas-library:
+    driver_opts:
+      type: nfs
+      o: "addr=${STORAGE_NFS_ADDR},ro,nfsvers=4"
+      device: ":/volume1/media"

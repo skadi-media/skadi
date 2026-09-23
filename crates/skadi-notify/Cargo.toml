@@ -1,0 +1,32 @@
+[package]
+name = "skadi-notify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Notification abstraction for Skadi (Notifier trait + events + webhook notifier)"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-http = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# The tag-scoping rule must match the indexer side exactly (SKADI-T-0560), so
+# the test compares them directly rather than restating the rule.
+skadi-indexers = { workspace = true }
+cucumber = { workspace = true }
+tokio = { workspace = true }
+wiremock = "0.6"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

@@ -1,0 +1,23 @@
+# Generated schema trees are excluded from the formatting hooks: they are the
+# schema generator's output, and a hook rewriting them puts the committed tree
+# permanently at odds with what `angreal db schema` produces — which is exactly
+# what `db schema --check` exists to catch, so the hook would make the guard fail
+# forever. It had (SKADI-T-0555): `end-of-file-fixer` added a trailing newline to
+# two generated `down.sql` files and the drift was invisible because the check
+# itself was exiting non-zero for an unrelated reason.
+exclude: '^crates/[^/]+/schema/generated/'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # Compose overlays use the `!reset` / `!override` merge tags (compose spec,
+        # not core YAML); --unsafe parses structure without resolving tags.
+        args: ['--unsafe']
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']

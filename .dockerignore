@@ -1,0 +1,24 @@
+target/
+# Local skadi-web build artifacts — the image runs `trunk build` itself, so
+# stale host output must not leak into the build context (SKADI-T-0065/0068).
+crates/skadi-web/dist/
+crates/skadi-web/target/
+# The downloader worker is excluded from the workspace, so it has its own
+# crate-local target dir — keep that large host build output out of the context
+# (the worker image rebuilds it; SKADI-I-0013).
+crates/skadi-downloader-worker/target/
+# The native Android client isn't part of the skadi server image; its build
+# outputs (app/build ≈ 250MB after a publish-apk run) bloated the build context
+# and made context transfer crawl. The skadi image never needs clients/.
+clients/
+ds-bundle/
+web-e2e/
+deploy/
+.git/
+.metis/
+.angreal/
+.claude/
+docs/
+*.md
+.env
+.env.*

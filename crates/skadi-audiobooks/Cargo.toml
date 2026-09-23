@@ -1,0 +1,62 @@
+[package]
+name = "skadi-audiobooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Audiobooks domain for Skadi: Author/Series/Book/BookFile, repo, matcher, wanted-query, and DomainModule (SKADI-I-0017)"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+skadi-config = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-metadata = { workspace = true }
+skadi-importer = { workspace = true }
+skadi-naming = { workspace = true }
+skadi-indexers = { workspace = true }
+skadi-media-probe = { workspace = true }
+skadi-downloaders = { workspace = true }
+skadi-notify = { workspace = true }
+skadi-hunter = { workspace = true }
+skadi-api = { workspace = true }
+axum = { workspace = true }
+cloacina = { version = "0.11.1", default-features = false, features = ["macros", "postgres", "sqlite"] }
+# The `#[workflow]` macro (refresh.rs) expands to `::cloacina_workflow::…` paths.
+cloacina-workflow = "0.11.1"
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+diesel = { workspace = true }
+diesel-dualdb = { workspace = true }
+diesel_migrations = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+skadi-testsupport = { workspace = true }
+skadi-http = { workspace = true }
+skadi-downloaders = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true }
+diesel = { workspace = true }
+tower = { workspace = true }
+http-body-util = "0.1"
+wiremock = "0.6"
+
+[lints.rust]
+# Match skadi-hunter/skadi-movies: cloacina macros emit `#[cfg(packaged)]` branches.
+unexpected_cfgs = "allow"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

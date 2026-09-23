@@ -1,0 +1,13 @@
+{
+  "name": "skadi-web-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright end-to-end browser tests for the Skadi web UI (SKADI-T-0120)",
+  "scripts": {
+    "test": "playwright test",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

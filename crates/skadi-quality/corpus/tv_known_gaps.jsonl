@@ -1,0 +1,8 @@
+# TELEVISION titles `parse_tv` gets wrong today (SKADI-T-0444, tracked by
+# SKADI-T-0549). Asserted to keep failing, same as known_gaps.jsonl.
+#
+# `parse_tv` only cleans the work title once it has found a season/episode
+# marker. A complete-series pack has none, so nothing is stripped and the
+# whole release name — resolution, source, codec, group — is returned as the
+# series title.
+{"title":"Angel.Complete.Series.1080p.BluRay.x264-GRP","expected":{"title":"Angel","resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: complete-series pack \u2014 parse_tv currently returns the whole release name as the title"}

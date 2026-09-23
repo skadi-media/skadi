@@ -1,0 +1,95 @@
+# Skadi LAB stack (SKADI-T-0393) — an isolated second instance of the deploy
+# stack for experiments on the same Docker host as production.
+#
+#   angreal lab up | down | redeploy | logs | status | psql | reset
+#
+# = docker compose -p skadi-lab --env-file deploy/.env.lab \
+#       -f deploy/docker-compose.yml -f deploy/docker-compose.lab.yml …
+#
+# This is an OVERLAY on docker-compose.yml. Compose merges overlays by rule
+# (scalars override, maps merge, lists append), so anything that must be
+# *removed* rather than merged uses `!reset` / `!override` (compose >= 2.24).
+#
+# What differs from production, and why:
+#   - project `skadi-lab`: separate containers, network and named volumes; the
+#     prod `skadi` project is never touched. `angreal lab reset` (`down -v`) is
+#     the ONLY place a volume wipe is allowed, and it is pinned to this project.
+#   - NO VPN: gluetun, flaresolverr, autoheal and the vpn-watchdog sit behind the
+#     `vpn` profile and are not started. The worker therefore runs on the plain
+#     compose network WITHOUT the kill switch — the lab is for local / synthetic
+#     torrents only (SKADI-T-0392 memory profiling, upgrade rehearsals). Do not
+#     point it at real trackers.
+#   - local storage: the NFS `storage` / `nas-library` volumes are replaced by a
+#     bind mount of deploy/.lab/storage (gitignored), so nothing reaches the NAS
+#     and hash-checks run at local disk speed.
+#   - `:lab` image tags, so a lab build never replaces the `:latest` images the
+#     prod containers are (re)created from.
+#   - own subnet / postgres IP / host port (deploy/.env.lab): 172.29.0.0/16,
+#     172.29.0.5, http://127.0.0.1:8091.
+
+name: skadi-lab
+
+services:
+  gluetun:
+    profiles: ["vpn"]
+  flaresolverr:
+    profiles: ["vpn"]
+  autoheal:
+    profiles: ["vpn"]
+  vpn-watchdog:
+    profiles: ["vpn"]
+
+  postgres:
+    ports:
+      # psql from the host (`angreal lab psql` execs into the container, but a
+      # port is handy for GUI clients). Loopback only.
+      - "127.0.0.1:${LAB_POSTGRES_PORT:-5434}:5432"
+
+  skadi:
+    image: skadi:${LAB_IMAGE_TAG:-lab}
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    environment:
+      # Empty = unset for skadi-config: no VPN proxy / solver in the lab.
+      SKADI_CARDIGANN_PROXY_URL: ""
+      SKADI_FLARESOLVERR_URL: ""
+    volumes: !override
+      - cardigann-defs:/data/definitions
+      - ./apk:/apk:ro
+      - ./.lab/storage:/mnt/storage
+
+  skadi-downloader-worker:
+    image: skadi-downloader-worker:${LAB_IMAGE_TAG:-lab}
+    # No gluetun namespace: plain compose network, reaches postgres by its
+    # pinned lab IP exactly like prod (SKADI_DATABASE_URL is inherited).
+    network_mode: !reset null
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    volumes: !override
+      - ./.lab/storage:/mnt/storage
+    environment:
+      # Fault injection for SKADI-T-0392: `LAB_BLOCKING_BURST=450 angreal lab up`
+      # makes the worker fire that many blocking jobs at startup (see main.rs).
+      # Empty (default) = off. Lab only — never set in prod.
+      SKADI_WORKER_DEBUG_BLOCKING_BURST: ${LAB_BLOCKING_BURST:-}
+      # Keep the lab off the public DHT (no VPN here, and the torrents are
+      # synthetic). LAB_DISABLE_DHT=0 re-enables it for an A/B.
+      SKADI_WORKER_DISABLE_DHT: ${LAB_DISABLE_DHT:-1}
+      # Uncomment to A/B the allocator tuning baked into worker.Dockerfile.
+      # _RJEM_MALLOC_CONF: narenas:4,background_thread:true
+
+  # The backup sidecar (SKADI-T-0481) needs the same local bind as everything
+  # else here, since the lab resets the `storage` volume. Kept running rather
+  # than disabled: it takes one dump at startup, which makes the lab the place a
+  # broken `pg_dump` shows up instead of production.
+  postgres-backup:
+    volumes: !override
+      - ./.lab/storage:/mnt/storage
+    environment:
+      BACKUP_DIR: /mnt/storage/skadi/backups/postgres
+
+volumes:
+  storage: !reset null
+  nas-library: !reset null

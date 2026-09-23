@@ -1,0 +1,22 @@
+-- Index the column `/traces` orders by (SKADI-T-0495 / SKADI-T-0494).
+--
+-- `trace_events` had exactly one index: its primary key. Every `/traces` request
+-- does `ORDER BY at DESC LIMIT n`, so with no index on `at` Postgres reads the
+-- whole table and top-N sorts it. Measured on the live database on 2026-09-10
+-- with **2,319,939 rows**:
+--
+--   Parallel Seq Scan + top-N heapsort, Buffers: shared hit=10210 read=49739
+--   -> /traces p50 256 ms, up from 102 ms when P9 first measured it on 09-07
+--
+-- The cost scales with the table, not with the page, so this is the one endpoint
+-- that got *slower* while everything else got faster — the table grew.
+--
+-- DESC to match the query's direction. Postgres can scan an ASC index backwards,
+-- so this is a small win rather than a necessary one; it costs nothing to state
+-- the intent, and it is what the planner picks without a reverse-scan step.
+--
+-- Retention already exists (`delete from trace_events where at < cutoff`); an
+-- index is not a substitute for it, and 2.3M rows suggests the prune deserves
+-- its own look. But retention bounds the table's *size* while this bounds the
+-- *query* — a month of traces on a busy library is still a large sort without it.
+CREATE INDEX trace_events_at_idx ON trace_events(at DESC);

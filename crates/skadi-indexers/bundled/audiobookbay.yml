@@ -1,0 +1,89 @@
+---
+id: audiobookbay
+name: AudioBook Bay
+description: "AudioBook Bay (ABB) is a public torrent tracker dedicated to audiobooks."
+language: en-US
+type: public
+encoding: UTF-8
+followredirect: true
+testlinktorrent: false
+requestDelay: 2
+links:
+  - https://audiobookbay.lu/
+
+caps:
+  categorymappings:
+    - {id: audiobook, cat: Audio/Audiobook, desc: "Audiobook"}
+  modes:
+    search: [q]
+    book-search: [q]
+  allowrawsearch: true
+
+settings:
+  - name: info
+    type: info
+    label: About
+    default: "AudioBook Bay — a dedicated public audiobook tracker. Magnets are built from the detail-page info-hash; ABB does not report seeders, so a placeholder of 1 is used."
+
+search:
+  # ABB returns 404 to non-browser User-Agents (anti-bot); send a browser UA so
+  # Prowlarr's default "Prowlarr/x.y" doesn't get blocked (SKADI-T-0178).
+  headers:
+    User-Agent: ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
+  # ABB 301-redirects search queries that contain uppercase letters back to the
+  # homepage; lowercase queries return results. Lower-case the keywords first
+  # (SKADI-T-0178).
+  keywordsfilters:
+    - name: tolower
+  paths:
+    - path: "/"
+  inputs:
+    s: "{{ if .Keywords }}{{ .Keywords }}{{ else }}{{ end }}"
+  rows:
+    selector: div.post:has(div.postTitle h2 a)
+  fields:
+    title:
+      selector: div.postTitle h2 a
+    category:
+      text: audiobook
+    details:
+      selector: div.postTitle h2 a
+      attribute: href
+    download:
+      selector: div.postTitle h2 a
+      attribute: href
+    size:
+      selector: div.postContent
+      filters:
+        - name: regexp
+          args: "File Size:\\s*([\\d.]+\\s*[KMGT]B)"
+      default: "100 MB"
+    date:
+      selector: div.postContent
+      filters:
+        - name: regexp
+          args: "Posted:\\s*([0-9]{1,2} [A-Za-z]{3} [0-9]{4})"
+        - name: dateparse
+          args: "2 Jan 2006"
+      default: "now"
+    seeders:
+      text: "1"
+    leechers:
+      text: "0"
+    downloadvolumefactor:
+      text: "0"
+    uploadvolumefactor:
+      text: "1"
+
+download:
+  infohash:
+    hash:
+      selector: td:contains("Info Hash:") ~ td
+      filters:
+        - name: regexp
+          args: ([A-Fa-f0-9]{40})
+    title:
+      selector: h1
+      filters:
+        - name: trim
+        - name: validfilename

@@ -1,0 +1,33 @@
+[
+  {
+    "id": 1,
+    "name": "MockTorznab",
+    "supportsRss": true,
+    "supportsSearch": true,
+    "protocol": "torrent",
+    "capabilities": {
+      "categories": [
+        {
+          "id": 2000,
+          "name": "Movies",
+          "subCategories": []
+        },
+        {
+          "id": 102000,
+          "name": "Movies",
+          "subCategories": []
+        },
+        {
+          "id": 5000,
+          "name": "TV",
+          "subCategories": []
+        },
+        {
+          "id": 105000,
+          "name": "TV",
+          "subCategories": []
+        }
+      ]
+    }
+  }
+]

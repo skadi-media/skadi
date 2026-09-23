@@ -1,0 +1,11 @@
+[project]
+name = "skadi"
+version_from = "cargo"
+
+[output]
+format = "markdown"
+path = "docs/api"
+template = "mkdocs-material"
+
+[rust]
+crates = ["crates/skadi-core", "crates/skadi-cli"]

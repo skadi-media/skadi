@@ -1,0 +1,21 @@
+[package]
+name = "skadi-library-scan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Background library media scan for Skadi: profiles every imported file and reports what will not direct-play"
+
+[dependencies]
+tracing = { workspace = true }
+skadi-core = { workspace = true }
+skadi-media-probe = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

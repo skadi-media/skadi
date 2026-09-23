@@ -1,0 +1,37 @@
+[package]
+name = "skadi-media-probe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Media-info probing for Skadi: pure-Rust readers for mp4/mkv/m4b/mp3/flac, with an optional ffprobe pass for the two fields they cannot reach"
+
+[dependencies]
+tracing = { workspace = true }
+skadi-core = { workspace = true }
+# Pure-Rust container/metadata readers (SKADI-I-0033): audio via lofty, video
+# dimensions/codec via mp4 + matroska. These remain the primary path and serve
+# every field they already did.
+#
+# SKADI-T-0569 adds an *optional* `ffprobe` pass for exactly two fields these
+# cannot reach — MKV audio bitrate (no such Matroska element; deriving it means
+# reading every cluster) and Dolby Vision (signalled per block, not in the track
+# header). It is a supplement, never a replacement: absent, the probe behaves as
+# it did before and those two stay `None`.
+lofty = "0.24"
+mp4 = "0.14"
+matroska = "0.30"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+cucumber = { workspace = true }
+tempfile = "3"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

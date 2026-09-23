@@ -1,0 +1,21 @@
+[package]
+name = "skadi-testsupport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Shared test harness for Skadi integration tests: per-test isolated database (Postgres-default, SQLite fallback)"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+diesel = { workspace = true }
+diesel_migrations = { workspace = true }
+tempfile = "3"
+uuid = { workspace = true }
+tokio = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = "allow"

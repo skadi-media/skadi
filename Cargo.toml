@@ -1,0 +1,129 @@
+[workspace]
+members = ["crates/*"]
+# skadi-web is a Leptos CSR crate targeting wasm32-unknown-unknown, built by
+# `trunk` (not cargo) and embedded into skadi-api via rust-embed. Excluding it
+# keeps the host toolchain from having to pull leptos/wasm into every
+# `cargo build` / `angreal test all` run. See SKADI-T-0065 / ADR-free design
+# note in initiative SKADI-I-0010.
+# skadi-downloader-worker embeds librqbit (large dep tree) and is a separate
+# deployable binary the daemon talks to over HTTP — it links no skadi crates, so
+# keep it out of the main workspace build. Built on its own. See SKADI-I-0013.
+exclude = ["crates/skadi-web", "crates/skadi-downloader-worker"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+authors = ["Dylan Storey"]
+repository = "https://github.com/skadi-media/skadi"
+description = "A unified, Rust-native replacement for the *arr stack"
+
+[workspace.dependencies]
+# BDD harness for the component review (SKADI-I-0057): Gherkin features under
+# crates/<crate>/tests/features, run by each crate's tests/bdd.rs. Tags: @passing @gap @bug @lab.
+cucumber = "0.23"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+mdns-sd = "0.11"
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = { version = "0.8", default-features = false, features = ["derive", "uuid1", "chrono"] }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Identifiers
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Parsing
+regex = "1"
+quick-xml = "0.36"
+
+# Platform (statvfs free-space probe, SKADI-T-0116)
+libc = "0.2"
+
+# Async traits
+async-trait = "0.1"
+
+# Async combinators (bounded-concurrency sweep, SKADI-T-0040)
+futures = "0.3"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies"] }
+
+# HTTP server stack
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+
+# Credential encryption
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+# Password hashing for household logins (SKADI-T-0619). Tokens stay raw —
+# random, single-purpose, operator-only record — but passwords get reused, so
+# they are hashed with a memory-hard KDF and never stored recoverably.
+argon2 = "0.5"
+hmac = "0.12"
+
+# Storage. diesel-dualdb (sibling crate) collapses the dual-backend boilerplate
+# (SKADI-I-0015): write-once schema/queries over a `DualConnection`, run behind
+# `spawn_blocking` to keep the repos' async surface. It pins diesel 2.3 +
+# `returning_clauses_for_sqlite_3_35`; diesel-async/bb8 are gone.
+diesel = { version = "2.3", features = ["sqlite", "postgres", "chrono", "uuid", "serde_json", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2.3"
+# Published crate (collapses the dual-backend boilerplate; SKADI-I-0015). For
+# local co-development against the sibling checkout, override with a patch:
+#   [patch.crates-io]
+#   diesel-dualdb = { path = "../diesel-dualdb" }
+diesel-dualdb = "0.1.0"
+
+# Internal crates
+skadi-core = { path = "crates/skadi-core" }
+skadi-config = { path = "crates/skadi-config" }
+skadi-http = { path = "crates/skadi-http" }
+skadi-store = { path = "crates/skadi-store" }
+skadi-quality = { path = "crates/skadi-quality" }
+skadi-indexers = { path = "crates/skadi-indexers" }
+skadi-cardigann = { path = "crates/skadi-cardigann" }
+skadi-downloaders = { path = "crates/skadi-downloaders" }
+skadi-importer = { path = "crates/skadi-importer" }
+skadi-naming = { path = "crates/skadi-naming" }
+skadi-media-probe = { path = "crates/skadi-media-probe" }
+skadi-library-scan = { path = "crates/skadi-library-scan" }
+skadi-metadata = { path = "crates/skadi-metadata" }
+skadi-notify = { path = "crates/skadi-notify" }
+skadi-hunter = { path = "crates/skadi-hunter" }
+skadi-movies = { path = "crates/skadi-movies" }
+skadi-tv = { path = "crates/skadi-tv" }
+skadi-audiobooks = { path = "crates/skadi-audiobooks" }
+skadi-api = { path = "crates/skadi-api" }
+skadi-client = { path = "crates/skadi-client" }
+skadi-testsupport = { path = "crates/skadi-testsupport" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false

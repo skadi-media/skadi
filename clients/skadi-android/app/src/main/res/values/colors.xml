@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher-icon background = the app's brand near-black (SKADI-T-0356 follow-up). -->
+    <color name="ic_launcher_background">#FF0E1116</color>
+</resources>

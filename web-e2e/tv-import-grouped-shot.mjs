@@ -1,0 +1,14 @@
+import { chromium } from "@playwright/test";
+const BASE = "http://127.0.0.1:8090";
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto(BASE + "/tv/import", { waitUntil: "networkidle", timeout: 25000 }).catch(() => {});
+await page.waitForTimeout(1500);
+const input = page.locator('input.path-field').first();
+await input.fill("/mnt/storage/skadi/television");
+await page.getByRole("button", { name: "Scan" }).first().click();
+await page.waitForTimeout(7000);
+await page.screenshot({ path: "web-e2e/shots/live-tv-import-grouped.png", fullPage: true });
+console.log("captured grouped import");
+await browser.close();

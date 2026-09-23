@@ -1,0 +1,1 @@
+CREATE TABLE worker_status (worker_id TEXT PRIMARY KEY NOT NULL, last_seen_at TEXT NOT NULL, version TEXT NOT NULL);

@@ -1,0 +1,22 @@
+version = 1
+
+[install]
+rustup.pkg-path = "rustup"
+mdbook.pkg-path = "mdbook"
+mkdocs-material.pkg-path = "python312Packages.mkdocs-material"
+
+[hook]
+on-activate = '''
+  rustup toolchain install 1.93 2>/dev/null
+  rustup default 1.93 2>/dev/null
+  if ! command -v plissken &>/dev/null; then
+    echo "Installing plissken..."
+    cargo install plissken 2>/dev/null
+  fi
+'''
+
+[profile]
+
+[services]
+
+[options]

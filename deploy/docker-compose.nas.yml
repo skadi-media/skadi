@@ -1,0 +1,123 @@
+# Skadi on the Synology NAS (SKADI-I-0056) — overlay on docker-compose.yml.
+#
+#   angreal nas build | push | up | down | status | logs | db-migrate
+#
+# = ssh nas "cd /volume1/docker/skadi/deploy && docker compose \
+#       -f docker-compose.yml -f docker-compose.nas.yml up -d"
+#
+# The compute moves to the storage host: the library that prod used to reach over
+# NFS-over-Wi-Fi (~5 MB/s, the root of SKADI-T-0391 / T-0392) is a LOCAL bind
+# mount here. Everything else — service graph, kill switch, DB-as-interface —
+# is the base file, unchanged. This overlay only:
+#
+#   - re-points the `storage` / `nas-library` NAMED VOLUMES at local bind mounts
+#     (`/volume1/media`). Redefining the volume (not the services' `volumes:`
+#     lists) keeps the base file's mounts as-is and needs NO `!reset`/`!override`,
+#     so it works on Container Manager's older compose (< 2.24).
+#   - puts postgres data + cardigann defs on bind mounts under NAS_DATA_DIR
+#     (default /volume1/docker/skadi) so they're visible/backupable from DSM.
+#   - runs skadi + the worker as NAS_PUID:NAS_PGID — the ssh user by
+#     default: the share is mode 777, so it can write + hardlink next to the
+#     NFS-era files, and it owns the data dirs it creates (no chown).
+#   - puts a `mem_limit` on every service: the box has 4 GB and DSM uses ~1 GB.
+#     Budget (measured 2026-09-06): skadi ~340 MiB, postgres ~230, flaresolverr
+#     ~330, gluetun ≤512 (leak cap, base file), worker ~300 after SKADI-T-0392.
+#   - pulls the images from GHCR (.github/workflows/images.yml publishes
+#     linux/amd64 builds of main) — the NAS can't build a Rust workspace in 4 GB.
+#     NAS_IMAGE_PREFIX="" + NAS_IMAGE_TAG=nas switches to images loaded locally
+#     with `angreal nas push --images` (built on the Mac, emergency/offline path).
+#
+# DSM prerequisites (operator, once): Container Manager installed; a boot-time
+# Task Scheduler job (root) running `insmod /lib/modules/tun.ko` so gluetun's
+# /dev/net/tun exists; the ssh user able to run `docker` (docker group or sudo).
+
+name: skadi
+
+services:
+  # gluetun: base already caps it at 512m.
+
+  flaresolverr:
+    # Headless Chromium. Drop the service (`--profile` it) if the RAM is needed
+    # and no indexer in use is Cloudflare-fronted.
+    mem_limit: ${NAS_MEM_FLARESOLVERR:-512m}
+    # The Ryzen V1500B solves a Cloudflare challenge in tens of seconds, and the
+    # hunter can queue a dozen at once; with the base file's 8 s check timeout
+    # autoheal killed it mid-solve (cut-over day, SKADI-T-0397). Give a busy
+    # Chromium time to answer before it is declared dead.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 25 -o /dev/null http://$$(hostname -i):8191/ || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 180s
+
+  autoheal:
+    mem_limit: 64m
+
+  vpn-watchdog:
+    mem_limit: 64m
+
+  postgres:
+    mem_limit: ${NAS_MEM_POSTGRES:-512m}
+    # Modest, explicit memory settings for a 4 GB host (defaults are for bigger boxes).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${NAS_PG_SHARED_BUFFERS:-128MB}
+      - -c
+      - effective_cache_size=${NAS_PG_EFFECTIVE_CACHE:-512MB}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+
+  skadi:
+    image: ${NAS_IMAGE_PREFIX-ghcr.io/skadi-media/}skadi:${NAS_IMAGE_TAG:-latest}
+    mem_limit: ${NAS_MEM_SKADI:-768m}
+    user: "${NAS_PUID:-1000}:${NAS_PGID:-100}"
+    environment:
+      # Not uid 1000 any more, so /home/skadi isn't ours; give it a writable HOME.
+      HOME: /tmp
+
+  skadi-downloader-worker:
+    image: ${NAS_IMAGE_PREFIX-ghcr.io/skadi-media/}skadi-downloader-worker:${NAS_IMAGE_TAG:-latest}
+    # ~300 MiB expected (SKADI-T-0392). 1 GiB is a FUSE, not a budget: if the leak
+    # ever comes back Docker OOM-kills the worker and `restart: unless-stopped`
+    # brings it back (session persistence + fastresume make that cheap), instead of
+    # starving DSM/postgres.
+    mem_limit: ${NAS_MEM_WORKER:-1g}
+    user: "${NAS_PUID:-1000}:${NAS_PGID:-100}"
+    environment:
+      HOME: /tmp
+
+volumes:
+  # The library, local. Same container path (/mnt/storage) as the NFS era, so no
+  # DB path changes.
+  storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${NAS_MEDIA_DIR:-/volume1/media}
+  nas-library:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${NAS_MEDIA_DIR:-/volume1/media}
+  pg-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      # `angreal nas push` creates this dir and sets it no-CoW (chattr +C) first —
+      # postgres on a CoW btrfs dir fragments badly.
+      device: ${NAS_DATA_DIR:-/volume1/docker/skadi}/pg-data
+  cardigann-defs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      # created by `angreal nas push` as the ssh user (= NAS_PUID); the image dir is
+      # uid 1000, which is why the volume is a bind and not the image default.
+      device: ${NAS_DATA_DIR:-/volume1/docker/skadi}/cardigann-defs

@@ -1,0 +1,33 @@
+[package]
+name = "skadi-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Storage layer for Skadi: dual-backend (SQLite/Postgres) store and migrations"
+
+[dependencies]
+skadi-core = { workspace = true }
+diesel = { workspace = true }
+diesel-dualdb = { workspace = true }
+diesel_migrations = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

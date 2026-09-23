@@ -1,0 +1,53 @@
+# skadi-downloader-worker — Skadi-native torrent download client (SKADI-I-0013).
+#
+# DELIBERATELY excluded from the main workspace (see root Cargo.toml): it embeds
+# librqbit, whose dependency tree is large, and it's a SEPARATE deployable. Build
+# it on its own:
+#   cargo build --manifest-path crates/skadi-downloader-worker/Cargo.toml
+# Deployed in its own container inside gluetun's VPN namespace. It is a DB agent:
+# it links `skadi-store` and drives the `downloads` queue (no HTTP) — the daemon
+# enqueues jobs, the worker claims them and writes progress back (SKADI-T-0086).
+[package]
+name = "skadi-downloader-worker"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+authors = ["Dylan Storey"]
+description = "Skadi-native torrent download worker: a librqbit session driven by the downloads queue"
+publish = false
+
+[dependencies]
+skadi-store = { path = "../skadi-store" }
+skadi-config = { path = "../skadi-config" }
+librqbit = "8.1.1"
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Global allocator (SKADI-T-0392): glibc malloc retained ~8 GiB of freed piece
+# buffers across hundreds of idle blocking-pool threads; jemalloc gives them back.
+# See the comment on GLOBAL in main.rs and the _RJEM_MALLOC_CONF in worker.Dockerfile.
+tikv-jemallocator = "0.6"
+# Used to pre-resolve a torrent source URL before handing it to librqbit:
+# indexer/Prowlarr "download" links commonly 30x-redirect to the real .torrent
+# or to a magnet:, which librqbit's own add-by-URL does not follow. rustls to
+# match librqbit's TLS backend and avoid a system OpenSSL dependency.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+bytes = "1"
+# Session-wide extra trackers are `url::Url`s in librqbit (SKADI-T-0597).
+url = "2"
+
+[dev-dependencies]
+cucumber = "0.23"
+# The tests use `skadi_core::unique_temp_path` (SKADI-T-0530). This crate is
+# outside the workspace, so nothing built its tests and the missing dependency
+# went unnoticed until `angreal test verify` started compiling them
+# (SKADI-T-0551).
+skadi-core = { path = "../skadi-core" }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

@@ -1,0 +1,102 @@
+[package]
+name = "skadi-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "HTTP API surface for Skadi: axum app, auth, AppState, AppError mapping, daemon serve entrypoint"
+
+[dependencies]
+skadi-core = { workspace = true }
+qrcode = { workspace = true }
+mdns-sd = { workspace = true }
+skadi-config = { workspace = true }
+skadi-store = { workspace = true }
+skadi-metadata = { workspace = true }
+skadi-hunter = { workspace = true }
+# Provider factory (SKADI-T-0060): build live indexers/downloaders/notifiers
+# from stored settings + sealed credentials. These crates sit below skadi-api
+# (they depend only on core/http/quality), so no cycle.
+skadi-indexers = { workspace = true }
+skadi-downloaders = { workspace = true }
+# Manual-import endpoint (SKADI-T-0222): scan a path + run a domain importer.
+skadi-importer = { workspace = true }
+skadi-notify = { workspace = true }
+skadi-http = { workspace = true }
+# Quality definitions (SKADI-T-0067): the read-only `/quality/definitions`
+# endpoint the profile UI selects from. skadi-quality depends only on
+# skadi-core, so no cycle.
+skadi-quality = { workspace = true }
+# Naming preview/config (SKADI-T-0299): render sample library paths from the
+# operator's templates. skadi-naming is a leaf crate (no cycle).
+skadi-naming = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+# gluetun control-API client for the VPN/kill-switch panel (SKADI-T-0292).
+reqwest = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+subtle = "2"
+argon2 = { workspace = true }
+# Bootstrap (SKADI-T-0051) runs skadi-store + per-domain embedded migrations and
+# creates the `cloacina` PG database on demand.
+diesel = { workspace = true }
+diesel_migrations = { workspace = true }
+chrono = { workspace = true }
+# Streaming upload chunks to disk frame by frame (SKADI-T-0628), so memory
+# stays flat however large the file is.
+futures = { workspace = true }
+# Verifying a client-supplied upload checksum (SKADI-T-0628): size alone can
+# not tell a truncated-then-padded file from an intact one.
+sha2 = { workspace = true }
+# Proving an uploaded file is readable media before it can be adopted
+# (SKADI-T-0629). library-import never probes; an upload must.
+skadi-media-probe = { workspace = true }
+uuid = { workspace = true }
+# Web UI embedding (SKADI-T-0065). Off by default so the host workspace build
+# and `angreal test all` never need the wasm toolchain or a built dist/. The
+# Docker builder runs `trunk build` then compiles with `--features embed-ui`.
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+
+# Root-folder free-space probe (SKADI-T-0116): statvfs on unix.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[features]
+# Bake crates/skadi-web/dist into the binary and serve it at `/`.
+embed-ui = ["dep:rust-embed", "dep:mime_guess"]
+
+[dev-dependencies]
+# Integration tests compute an upload's digest themselves rather than trusting
+# the handler's (SKADI-T-0628).
+sha2 = { workspace = true }
+# Tests in one binary share a process environment; the config-seed tests write
+# SKADI_* vars and must not run concurrently.
+serial_test = "3"
+cucumber = { workspace = true }
+skadi-testsupport = { workspace = true }
+tokio = { workspace = true }
+http-body-util = "0.1"
+tempfile = "3"
+tower = { workspace = true }
+# Test-connection handler tests run against a fake Torznab server.
+wiremock = "0.6"
+# Bootstrap tests embed their own tiny migration set (see `test_migrations/`)
+# rather than depending on a domain crate — `skadi-api` sits below the domain
+# crates in the stack, so it must not depend on them. The real movies schema is
+# exercised by the binary-level end-to-end test (SKADI-T-0057).
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

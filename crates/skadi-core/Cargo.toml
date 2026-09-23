@@ -1,0 +1,34 @@
+[package]
+name = "skadi-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Core library for Skadi"
+
+[dependencies]
+serde = { workspace = true }
+schemars = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tokio-util = { workspace = true }
+# SKADI-T-0051 (migration delivery option A): `DomainModule` returns
+# `&'static EmbeddedMigrations`, whose type lives in `diesel_migrations`. This
+# is the one infrastructure type skadi-core takes on — no DB driver is used
+# here directly; domain crates and the daemon do the actual migration runs.
+diesel_migrations = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

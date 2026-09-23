@@ -1,0 +1,4 @@
+/* Skadi type — IBM Plex Sans (UI) + IBM Plex Mono (numbers/paths/timestamps).
+   Loaded from Google Fonts, matching crates/skadi-web/index.html. Swap these
+   @imports for self-hosted @font-face if you need offline / no-CDN delivery. */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");

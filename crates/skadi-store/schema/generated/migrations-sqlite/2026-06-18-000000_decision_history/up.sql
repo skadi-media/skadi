@@ -1,0 +1,1 @@
+CREATE TABLE decision_history (id TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, kind TEXT NOT NULL, acquirable_ref TEXT NOT NULL, title TEXT NOT NULL, quality TEXT, decision TEXT, format_score INTEGER NOT NULL, explanation TEXT NOT NULL);

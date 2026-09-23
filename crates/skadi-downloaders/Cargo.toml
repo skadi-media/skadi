@@ -1,0 +1,28 @@
+[package]
+name = "skadi-downloaders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Downloader abstraction for Skadi (Downloader trait + the built-in DB-queue client)"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-indexers = { workspace = true }
+skadi-store = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+skadi-quality = { workspace = true }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS config;
+DROP TABLE IF EXISTS downloads;
+DROP TABLE IF EXISTS acquisition_history;
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS credentials;
+DROP TABLE IF EXISTS domains;

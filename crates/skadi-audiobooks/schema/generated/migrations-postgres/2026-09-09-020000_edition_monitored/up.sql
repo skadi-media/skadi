@@ -1,0 +1,1 @@
+ALTER TABLE book_editions ADD COLUMN monitored BOOLEAN NOT NULL DEFAULT true;

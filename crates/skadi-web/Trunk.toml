@@ -1,0 +1,13 @@
+# Trunk build config for skadi-web (SKADI-T-0065).
+[build]
+# Built assets land here; rust-embed in skadi-api bakes this folder into the
+# daemon binary (see crates/skadi-api/src/assets.rs).
+dist = "dist"
+# Relative asset URLs so the app works when served from the daemon at `/`.
+public_url = "/"
+
+[serve]
+# `trunk serve` dev loop: proxy /api to a locally running daemon so the
+# front-end talks to the real API without CORS or a token (open-mode v1).
+[[proxy]]
+backend = "http://127.0.0.1:8080/api"

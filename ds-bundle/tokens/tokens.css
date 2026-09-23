@@ -1,0 +1,48 @@
+/* Skadi design tokens — "Cold Nordic" (SKADI-I-0035).
+   Single source of truth for the design language. Extracted verbatim from
+   crates/skadi-web/style.css :root. Import this, then style with var(--*). */
+:root {
+  /* surfaces */
+  --bg: #0e1116;
+  --sidebar: #12161c;
+  --panel: #161a21;
+  --panel-2: #13171e;
+  --inset: #0a0c10;
+  --control: #1b2129;
+  /* borders */
+  --border: #232a34;
+  --border-soft: #1d232c;
+  --border-fainter: #15191f;
+  --border-control: #2a3340;
+  /* text */
+  --fg: #e6e9ee;
+  --fg-bright: #f1f4f8;
+  --fg-2: #c3cbd5;
+  --muted: #8b95a3;
+  --faint: #5b6573;
+  --fainter: #4a525e;
+  /* accents + semantic */
+  --ice: #7fb2ff;
+  --brand-stroke: #8fbcff;
+  --teal: #5fd0c5;
+  --violet: #9d8cff;
+  --gold: #d8a657;
+  --ok: #4bd07f;
+  --warn: #d8a657;
+  --bad: #f06464;
+  /* back-compat alias: rules use var(--accent) */
+  --accent: var(--ice);
+  /* tinted accent fills */
+  --ice-tint: rgba(127, 178, 255, 0.13);
+  --ice-tint-soft: rgba(127, 178, 255, 0.08);
+  /* gradients */
+  --aurora: linear-gradient(90deg, #5fd0c5, #7fb2ff, #9d8cff);
+  --progress: linear-gradient(90deg, #5fd0c5, #7fb2ff);
+  /* type */
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* radius */
+  --r-tile: 8px;
+  --r-card: 10px;
+  --r-pill: 20px;
+}

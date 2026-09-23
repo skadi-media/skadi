@@ -1,0 +1,27 @@
+[package]
+name = "skadi-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Shared HTTP client wrapper for Skadi (timeout, retry/backoff, typed errors)"
+
+[dependencies]
+skadi-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+serde_json = { workspace = true }
+wiremock = "0.6"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

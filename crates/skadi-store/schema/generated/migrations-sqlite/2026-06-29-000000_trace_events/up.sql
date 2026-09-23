@@ -1,0 +1,1 @@
+CREATE TABLE trace_events (id TEXT PRIMARY KEY NOT NULL, at TEXT NOT NULL, run_id TEXT, kind TEXT NOT NULL, acquirable_ref TEXT NOT NULL, stage TEXT NOT NULL, event TEXT NOT NULL, message TEXT NOT NULL, detail TEXT);

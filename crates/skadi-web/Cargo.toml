@@ -1,0 +1,59 @@
+# skadi-web — Leptos CSR front-end for the Skadi daemon (SKADI-I-0010).
+#
+# This crate is DELIBERATELY excluded from the workspace (see root Cargo.toml):
+# it targets wasm32-unknown-unknown and is built by `trunk`, not `cargo`. The
+# build output (dist/) is embedded into skadi-api via rust-embed and served at
+# `/`.
+#
+# Build:   trunk build --release      (from this directory)
+# Dev:     trunk serve --proxy-backend=http://127.0.0.1:8080/api
+[package]
+name = "skadi-web"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+authors = ["Dylan Storey"]
+description = "Leptos CSR web UI for the Skadi daemon"
+publish = false
+
+[dependencies]
+leptos = { version = "0.7", features = ["csr"] }
+leptos_router = { version = "0.7" }
+gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-net = { version = "0.6", features = ["http"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "HtmlElement", "HtmlButtonElement", "HtmlDetailsElement", "Node", "NodeList",
+    "Navigator", "Clipboard",
+    # Offline audiobook player (SKADI-I-0048): authed XHR download with
+    # progress, blob playback, lockscreen MediaSession, localStorage position.
+    # (MediaSession itself is driven via js_sys::Reflect — its web-sys types
+    # are unstable-gated and not worth threading the cfg through trunk/wasm-pack/Docker.)
+    "HtmlAudioElement", "HtmlMediaElement",
+    "HtmlVideoElement", "XmlHttpRequest",
+    "XmlHttpRequestResponseType", "ProgressEvent", "Blob", "Url", "Storage",
+    "Event",
+    # OPFS offline book storage (SKADI-T-0332).
+    "StorageManager", "FileSystemDirectoryHandle", "FileSystemFileHandle",
+    "FileSystemWritableFileStream", "FileSystemGetFileOptions",
+    "FileSystemGetDirectoryOptions", "File", "WritableStream",
+    # Browser uploads (SKADI-T-0631): read a picked file and send it in Blob
+    # slices, so only the chunk in flight is ever in memory.
+    "HtmlInputElement", "FileList",
+] }
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+# Web UI test pyramid (SKADI-T-0118/T-0119): run logic + component tests as real
+# wasm in a headless browser via `wasm-pack test --headless --chrome`.
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

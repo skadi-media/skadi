@@ -1,0 +1,50 @@
+[package]
+name = "skadi-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "CLI for Skadi"
+
+[[bin]]
+name = "skadi"
+path = "src/main.rs"
+
+[features]
+# Ship the bundled Leptos web UI inside the `skadi` binary (SKADI-T-0065).
+# Off by default so a plain `cargo build` needs no wasm toolchain / built dist.
+# The Docker image runs `trunk build` then builds with `--features embed-ui`.
+embed-ui = ["skadi-api/embed-ui"]
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+skadi-config = { workspace = true }
+skadi-api = { workspace = true }
+skadi-hunter = { workspace = true }
+skadi-movies = { workspace = true }
+skadi-tv = { workspace = true }
+skadi-audiobooks = { workspace = true }
+skadi-metadata = { workspace = true }
+skadi-http = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-media-probe = { workspace = true }
+skadi-client = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+tempfile = "3"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

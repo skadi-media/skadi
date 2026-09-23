@@ -1,0 +1,67 @@
+[package]
+name = "skadi-movies"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Movies domain for Skadi: Movie/MovieEdition/EditionKind, repo, matcher, wanted-query, and DomainModule"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+skadi-config = { workspace = true }
+skadi-quality = { workspace = true }
+skadi-media-probe = { workspace = true }
+skadi-library-scan = { workspace = true }
+skadi-indexers = { workspace = true }
+skadi-downloaders = { workspace = true }
+skadi-importer = { workspace = true }
+skadi-naming = { workspace = true }
+skadi-metadata = { workspace = true }
+skadi-notify = { workspace = true }
+skadi-hunter = { workspace = true }
+skadi-api = { workspace = true }
+axum = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+diesel = { workspace = true }
+diesel-dualdb = { workspace = true }
+diesel_migrations = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+cloacina = { version = "0.11.1", default-features = false, features = ["macros", "postgres", "sqlite"] }
+# The `#[workflow]` macro (refresh.rs) expands to `::cloacina_workflow::…` paths.
+cloacina-workflow = "0.11.1"
+
+[dev-dependencies]
+cucumber = { workspace = true }
+# The hunter service registry is a process global; e2e tests that install into it
+# must not run concurrently (see `#[serial_test::serial(hunter_registry)]`).
+serial_test = "3"
+skadi-testsupport = { workspace = true }
+tempfile = "3"
+diesel = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+http-body-util = "0.1"
+# SKADI-T-0057 binary-boundary e2e: drive the daemon through skadi-client over HTTP.
+skadi-client = { workspace = true }
+reqwest = { workspace = true }
+# SKADI-T-0062 provider e2e: a fake Torznab server.
+wiremock = "0.6"
+
+[lints.rust]
+# Match skadi-hunter: cloacina macros emit `#[cfg(packaged)]` branches.
+unexpected_cfgs = "allow"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

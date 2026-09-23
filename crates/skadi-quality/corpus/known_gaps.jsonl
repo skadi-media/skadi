@@ -1,0 +1,9 @@
+# Movie titles the parser gets wrong today. **Currently empty** — the three
+# entries SKADI-T-0444 parked here were fixed by SKADI-T-0549 and promoted into
+# expanded.jsonl.
+#
+# Kept as a file, with its guard relaxed to allow empty, because the pattern is
+# worth preserving: a known parser bug goes here with the parse it *should*
+# produce, asserted to keep failing, so fixing the parser breaks the guard and
+# says to promote the entry. A bug with no test rots; the same bug in the main
+# corpus turns the build red for everyone.

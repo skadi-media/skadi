@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS book_files;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS book_series;
+DROP TABLE IF EXISTS authors;

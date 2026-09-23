@@ -1,0 +1,14 @@
+# Skadi TELEVISION release-title regression corpus (SKADI-T-0444).
+# Tested against `parse_tv`, not `parse`: the movie parser deliberately does
+# not strip SxxExx, so a TV title run through it keeps the episode token in
+# the work title. Episode identity is the axis these entries exist to pin —
+# it is what SKADI-T-0386 and SKADI-T-0402 were about.
+#
+# Provenance: authored from publicly-observable release-naming conventions.
+{"title":"Severance.S01E01.1080p.WEB-DL.h264-GRP","expected":{"title":"Severance","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","season":1,"episodes":[1]},"source":"authored: SxxExx episode identity"}
+{"title":"Severance.S03E02.1080p.WEB-DL.h264-GRP","expected":{"title":"Severance","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","season":3,"episodes":[2]},"source":"authored: SxxExx episode identity"}
+{"title":"Severance.S10E14.1080p.WEB-DL.h264-GRP","expected":{"title":"Severance","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","season":10,"episodes":[14]},"source":"authored: SxxExx episode identity"}
+{"title":"Severance.S00E01.1080p.WEB-DL.h264-GRP","expected":{"title":"Severance","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","season":0,"episodes":[1]},"source":"authored: SxxExx episode identity"}
+{"title":"Archer.S03.1080p.WEB-DL.h264-GRP","expected":{"title":"Archer","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","season":3,"full_season":true},"source":"authored: season pack sets full_season"}
+{"title":"The.Daily.Show.2024.03.01.1080p.WEB-DL.h264-GRP","expected":{"title":"The Daily Show","resolution":"1080p","source":"WEB-DL","codec":"h264","group":"GRP","air_date":"2024-03-01"},"source":"authored: date-keyed daily episode"}
+{"title":"House.of.the.Dragon.S02E06.2160p.WEB-DL.x265-GRP","expected":{"title":"House of the Dragon","resolution":"2160p","source":"WEB-DL","codec":"x265","group":"GRP","season":2,"episodes":[6]},"source":"authored: SxxExx with a 4-word title"}

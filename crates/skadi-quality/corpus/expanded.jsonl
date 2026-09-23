@@ -1,0 +1,50 @@
+# Skadi release-title regression corpus — systematic expansion (SKADI-T-0444).
+# One JSON CorpusEntry per line. Each block isolates ONE axis of the parse
+# (resolution, source, codec, modifier, edition, language, episode identity,
+# separator style, title/year collision) so a failure names the axis it broke.
+#
+# Provenance: authored from publicly-observable release-naming conventions.
+# NOT copied from *arr test suites, and NOT taken from the operator's own
+# acquisition history — this is a public repository and real release names
+# from a private library would disclose its contents.
+{"title":"Arrival.2016.480p.BluRay.x264-GRP","expected":{"title":"Arrival","year":2016,"resolution":"480p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: 480p BluRay convention"}
+{"title":"Arrival.2016.576p.BluRay.x264-GRP","expected":{"title":"Arrival","year":2016,"resolution":"576p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: 576p BluRay convention"}
+{"title":"Arrival.2016.720p.BluRay.x264-GRP","expected":{"title":"Arrival","year":2016,"resolution":"720p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: 720p BluRay convention"}
+{"title":"Arrival.2016.1080p.BluRay.x264-GRP","expected":{"title":"Arrival","year":2016,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: 1080p BluRay convention"}
+{"title":"Arrival.2016.2160p.BluRay.x264-GRP","expected":{"title":"Arrival","year":2016,"resolution":"2160p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: 2160p BluRay convention"}
+{"title":"Sicario.2015.1080p.BluRay.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: BluRay source token"}
+{"title":"Sicario.2015.1080p.WEB-DL.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"WEB-DL","codec":"x264","group":"GRP"},"source":"authored: WEB-DL source token"}
+{"title":"Sicario.2015.1080p.WEBRip.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"WEBRip","codec":"x264","group":"GRP"},"source":"authored: WEBRip source token"}
+{"title":"Sicario.2015.1080p.HDTV.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"HDTV","codec":"x264","group":"GRP"},"source":"authored: HDTV source token"}
+{"title":"Sicario.2015.1080p.BDRip.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"BDRip","codec":"x264","group":"GRP"},"source":"authored: BDRip source token"}
+{"title":"Sicario.2015.1080p.DVDRip.x264-GRP","expected":{"title":"Sicario","year":2015,"resolution":"1080p","source":"DVDRip","codec":"x264","group":"GRP"},"source":"authored: DVDRip source token"}
+{"title":"Dune.2021.1080p.WEB-DL.x264-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"x264","group":"GRP"},"source":"authored: x264 codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.x265-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"x265","group":"GRP"},"source":"authored: x265 codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.H.264-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"H.264","group":"GRP"},"source":"authored: H.264 codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.HEVC-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"HEVC","group":"GRP"},"source":"authored: HEVC codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.AV1-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"AV1","group":"GRP"},"source":"authored: AV1 codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.XviD-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"XviD","group":"GRP"},"source":"authored: XviD codec token"}
+{"title":"Dune.2021.1080p.WEB-DL.VP9-GRP","expected":{"title":"Dune","year":2021,"resolution":"1080p","source":"WEB-DL","codec":"VP9","group":"GRP"},"source":"authored: VP9 codec token"}
+{"title":"Tenet.2020.1080p.BluRay.x264.PROPER-GRP","expected":{"title":"Tenet","year":2020,"resolution":"1080p","source":"BluRay","codec":"x264","modifiers":["Proper"],"group":"GRP"},"source":"authored: PROPER modifier"}
+{"title":"Tenet.2020.1080p.BluRay.x264.REPACK-GRP","expected":{"title":"Tenet","year":2020,"resolution":"1080p","source":"BluRay","codec":"x264","modifiers":["Repack"],"group":"GRP"},"source":"authored: REPACK modifier"}
+{"title":"Heat.1995.2160p.UHD.BluRay.Remux.HEVC.DTS-HD.MA.5.1-GRP","expected":{"title":"Heat","year":1995,"resolution":"2160p","source":"BluRay","codec":"HEVC","modifiers":["Remux"],"group":"GRP"},"source":"authored: UHD remux"}
+{"title":"Blade.Runner.1982.Directors.Cut.1080p.BluRay.x264-GRP","expected":{"title":"Blade Runner","year":1982,"resolution":"1080p","source":"BluRay","codec":"x264","edition":"Director's Cut","group":"GRP"},"source":"authored: Director's Cut edition token"}
+{"title":"Blade.Runner.1982.Extended.1080p.BluRay.x264-GRP","expected":{"title":"Blade Runner","year":1982,"resolution":"1080p","source":"BluRay","codec":"x264","edition":"Extended","group":"GRP"},"source":"authored: Extended edition token"}
+{"title":"Blade.Runner.1982.Theatrical.1080p.BluRay.x264-GRP","expected":{"title":"Blade Runner","year":1982,"resolution":"1080p","source":"BluRay","codec":"x264","edition":"Theatrical","group":"GRP"},"source":"authored: Theatrical edition token"}
+{"title":"Blade.Runner.1982.Unrated.1080p.BluRay.x264-GRP","expected":{"title":"Blade Runner","year":1982,"resolution":"1080p","source":"BluRay","codec":"x264","edition":"Unrated","group":"GRP"},"source":"authored: Unrated edition token"}
+{"title":"Blade.Runner.1982.IMAX.1080p.BluRay.x264-GRP","expected":{"title":"Blade Runner","year":1982,"resolution":"1080p","source":"BluRay","codec":"x264","edition":"IMAX","group":"GRP"},"source":"authored: IMAX edition token"}
+{"title":"Amelie.2001.MULTi.1080p.BluRay.x264-GRP","expected":{"title":"Amelie","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","languages":["Multi"],"group":"GRP"},"source":"authored: MULTi language token"}
+{"title":"Amelie.2001.FRENCH.1080p.BluRay.x264-GRP","expected":{"title":"Amelie","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","languages":["French"],"group":"GRP"},"source":"authored: French language token"}
+{"title":"Amelie.2001.GERMAN.1080p.BluRay.x264-GRP","expected":{"title":"Amelie","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","languages":["German"],"group":"GRP"},"source":"authored: German language token"}
+{"title":"Amelie.2001.ITALIAN.1080p.BluRay.x264-GRP","expected":{"title":"Amelie","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","languages":["Italian"],"group":"GRP"},"source":"authored: Italian language token"}
+{"title":"Amelie.2001.SPANISH.1080p.BluRay.x264-GRP","expected":{"title":"Amelie","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","languages":["Spanish"],"group":"GRP"},"source":"authored: Spanish language token"}
+{"title":"101.Dalmatians.II.2003.1080p.BluRay.x264-GRP","expected":{"title":"101 Dalmatians II","year":2003,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: roman-numeral sequel (SKADI-T-0387)"}
+{"title":"John.Wick.Chapter.4.2023.2160p.WEB-DL.x265-GRP","expected":{"title":"John Wick Chapter 4","year":2023,"resolution":"2160p","source":"WEB-DL","codec":"x265","group":"GRP"},"source":"authored: worded sequel marker"}
+{"title":"The Godfather 1972 1080p BluRay x264-GRP","expected":{"title":"The Godfather","year":1972,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: space-separated release name"}
+{"title":"The_Godfather_1972_1080p_BluRay_x264-GRP","expected":{"title":"The Godfather","year":1972,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: underscore-separated release name"}
+{"title":"Nosferatu.1922.1080p.BluRay.x264","expected":{"title":"Nosferatu","year":1922,"resolution":"1080p","source":"BluRay","codec":"x264"},"source":"authored: release with no trailing group"}
+{"title":"Ocean's.Eleven.2001.1080p.BluRay.x264-GRP","expected":{"title":"Ocean's Eleven","year":2001,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: apostrophe in title"}
+{"title":"WALL-E.2008.1080p.BluRay.x264-GRP","expected":{"title":"WALL-E","year":2008,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: hyphen inside the title"}
+{"title":"2012.2009.1080p.BluRay.x264-GRP","expected":{"title":"2012","year":2009,"resolution":"1080p","source":"BluRay","codec":"x264","group":"GRP"},"source":"authored: purely numeric title (SKADI-T-0549 regression)"}
+{"title":"1917.2019.2160p.UHD.BluRay.x265-GRP","expected":{"title":"1917","year":2019,"resolution":"2160p","source":"BluRay","codec":"x265","group":"GRP"},"source":"authored: purely numeric title (SKADI-T-0549 regression)"}
+{"title":"Blade.Runner.2049.2017.2160p.BluRay.x265-GRP","expected":{"title":"Blade Runner 2049","year":2017,"resolution":"2160p","source":"BluRay","codec":"x265","group":"GRP"},"source":"authored: year-like token inside the title (SKADI-T-0549 regression)"}

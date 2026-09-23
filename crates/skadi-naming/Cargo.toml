@@ -1,0 +1,24 @@
+[package]
+name = "skadi-naming"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Naming / Path Engine for Skadi: configurable {Token} rename templates + canonical path sanitization (C21/C22)"
+
+[dependencies]
+tracing = { workspace = true }
+# SKADI-T-0421: one title must yield one on-disk name, so components are
+# normalised to NFC before they reach the filesystem.
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true }
+cucumber = { workspace = true }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

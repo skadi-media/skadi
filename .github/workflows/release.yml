@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            asset: skadi-linux-x86_64.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            asset: skadi-linux-aarch64.tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            asset: skadi-darwin-aarch64.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # The UI toolchain, mirroring the Dockerfile's builder stage
+      # (SKADI-T-0483). Without these the release tarball held a daemon whose
+      # web UI was simply absent — it served 404s and looked like a broken
+      # install rather than a missing build step.
+      - name: Add the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      # The version is read out of the Dockerfile rather than pinned again here,
+      # so the image and the release tarball cannot drift onto different trunk
+      # versions and produce different bundles from the same commit.
+      - name: Install trunk
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^ARG TRUNK_VERSION=//p' Dockerfile)"
+          test -n "$version"
+          # Trunk's asset names match Rust target triples, so the matrix target
+          # selects the right build directly.
+          url="https://github.com/trunk-rs/trunk/releases/download/v${version}/trunk-${{ matrix.target }}.tar.gz"
+          curl -fsSL "$url" | tar -xz -C /usr/local/bin trunk
+          trunk --version
+
+      # Must precede the daemon build: rust-embed reads crates/skadi-web/dist at
+      # compile time, so a daemon built first would embed nothing.
+      - name: Build the web UI bundle
+        run: cd crates/skadi-web && trunk build --release
+
+      - name: Build the daemon (UI embedded)
+        run: >-
+          cargo build --release --target ${{ matrix.target }}
+          -p skadi-cli --features embed-ui
+
+      # The worker is a separate crate outside the workspace, so the daemon build
+      # never produced it and releases shipped a stack that could not download
+      # anything (SKADI-T-0483).
+      - name: Build the download worker
+        run: >-
+          cargo build --release --target ${{ matrix.target }}
+          --manifest-path crates/skadi-downloader-worker/Cargo.toml
+
+      - name: Package binaries
+        run: |
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          cp "target/${{ matrix.target }}/release/skadi" "$stage/"
+          cp "crates/skadi-downloader-worker/target/${{ matrix.target }}/release/skadi-downloader-worker" "$stage/"
+          tar czf "${{ matrix.asset }}" -C "$stage" skadi skadi-downloader-worker
+
+      # A tarball whose daemon lost its UI, or whose worker went missing, is the
+      # failure this ticket was filed for. Assert both rather than trusting that
+      # the steps above stay in this order.
+      - name: Verify the tarball holds both binaries
+        run: |
+          set -euo pipefail
+          listing="$(tar tzf "${{ matrix.asset }}")"
+          echo "$listing"
+          echo "$listing" | grep -qx skadi
+          echo "$listing" | grep -qx skadi-downloader-worker
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

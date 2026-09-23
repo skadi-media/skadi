@@ -1,0 +1,30 @@
+[package]
+name = "skadi-cardigann"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native Cardigann indexer-definition engine for Skadi: parse + execute Jackett/Prowlarr YAML tracker definitions (SKADI-I-0036)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+regex = { workspace = true }
+chrono = { workspace = true }
+percent-encoding = "2"
+async-trait = { workspace = true }
+indexmap = { version = "2", features = ["serde"] }
+scraper = "0.20"
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

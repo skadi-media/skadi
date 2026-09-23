@@ -1,0 +1,11 @@
+import { chromium } from "@playwright/test";
+const BASE = process.env.SKADI_URL || "http://127.0.0.1:8090";
+const ID = process.env.SID || "3e943105-51b5-4109-a2cd-69b26457d59e";
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1600 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto(BASE + "/tv/" + ID, { waitUntil: "networkidle", timeout: 25000 }).catch(() => {});
+await page.waitForTimeout(2500);
+await page.screenshot({ path: "web-e2e/shots/live-tv-detail.png", fullPage: true });
+console.log("captured tv-detail");
+await browser.close();

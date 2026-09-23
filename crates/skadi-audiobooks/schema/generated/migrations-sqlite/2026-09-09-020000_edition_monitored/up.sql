@@ -1,0 +1,1 @@
+ALTER TABLE book_editions ADD COLUMN monitored INTEGER NOT NULL DEFAULT true;

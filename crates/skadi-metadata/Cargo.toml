@@ -1,0 +1,29 @@
+[package]
+name = "skadi-metadata"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Metadata provider abstraction for Skadi (MetadataProvider trait + TMDB)"
+
+[dependencies]
+futures = { workspace = true }
+skadi-core = { workspace = true }
+skadi-http = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+cucumber = { workspace = true }
+tokio = { workspace = true }
+wiremock = "0.6"
+
+# BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.
+[[test]]
+name = "bdd"
+harness = false

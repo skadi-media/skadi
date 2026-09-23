@@ -1,0 +1,18 @@
+-- Per-edition monitoring (SKADI-T-0562).
+--
+-- SKADI-T-0448 gave a book several editions; this is what makes "one book, one
+-- monitored edition" expressible. Monitoring lived only on `books`, so every
+-- edition of a book inherited one flag and there was no way to say "I want the
+-- Unabridged, not the Dramatized".
+--
+-- **Existing rows default to monitored**, because before this flag existed the
+-- book's own `monitored` was the only answer and every edition was implicitly
+-- covered by it. Defaulting to `FALSE` would silently unmonitor every audiobook
+-- in the library on upgrade — the acquisition would simply stop, with nothing
+-- saying why.
+--
+-- The operator decided (2026-09-09) that a **newly discovered** edition arrives
+-- *unmonitored*: visible and selectable, but not acquired until someone opts in.
+-- That is an ingest-path default, not this column's default — the two differ on
+-- purpose and conflating them is how the upgrade would break.
+ALTER TABLE book_editions ADD COLUMN monitored BOOLEAN NOT NULL DEFAULT TRUE;

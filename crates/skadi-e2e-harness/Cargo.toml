@@ -1,0 +1,48 @@
+# Test-only daemon for the Playwright web E2E (SKADI-T-0120). Boots `skadi-api`
+# with MOCK providers (a one-shot indexer + an immediate downloader + a fake
+# TMDB) and the movies domain, serving the real embedded UI. Build with
+# `--features embed-ui` (after `trunk build` of skadi-web) so the UI is served;
+# without the feature it compiles UI-less (keeps the workspace gate happy and
+# the boot code honest). NEVER ship this — `publish = false`.
+[package]
+name = "skadi-e2e-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Mock-provider daemon + embedded UI for the Playwright web E2E (test-only)"
+publish = false
+
+[[bin]]
+name = "skadi-e2e-harness"
+path = "src/main.rs"
+
+[dependencies]
+skadi-core = { workspace = true }
+skadi-api = { workspace = true }
+skadi-store = { workspace = true }
+skadi-hunter = { workspace = true }
+skadi-movies = { workspace = true }
+skadi-audiobooks = { workspace = true }
+skadi-http = { workspace = true }
+skadi-indexers = { workspace = true }
+skadi-downloaders = { workspace = true }
+skadi-notify = { workspace = true }
+skadi-metadata = { workspace = true }
+skadi-importer = { workspace = true }
+skadi-quality = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing-subscriber = { workspace = true }
+diesel = { workspace = true }
+diesel_migrations = { workspace = true }
+
+[features]
+# Bake the built skadi-web UI into the served binary (needs crates/skadi-web/dist).
+embed-ui = ["skadi-api/embed-ui"]

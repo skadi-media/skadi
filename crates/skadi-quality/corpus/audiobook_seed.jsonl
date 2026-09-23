@@ -1,0 +1,13 @@
+# Skadi AUDIOBOOK release-title regression corpus — seed set (SKADI-T-0122).
+# Format: one JSON CorpusEntry per line, tested against parse_audiobook.
+# Provenance: authored from publicly-observable audiobook release-naming
+# conventions (Author - Title (Year) [Series ##] {Format Bitrate Abridged}).
+# NOT derived from *arr / Readarr test suites.
+{"title":"Andy Weir - Project Hail Mary (2021) [M4B 128kbps]","expected":{"title":"Project Hail Mary","year":2021,"audio_format":"M4B","bitrate_kbps":128,"author":"Andy Weir"},"source":"authored: Author - Title (Year) [Format Bitrate]"}
+{"title":"Brandon Sanderson - The Way of Kings [Stormlight Archive 01] (2010) {MP3 64kbps Unabridged}","expected":{"title":"The Way of Kings","year":2010,"audio_format":"MP3","bitrate_kbps":64,"abridged":false,"author":"Brandon Sanderson","series":"Stormlight Archive","series_position":"1"},"source":"authored: bracketed series + unabridged"}
+{"title":"J.R.R. Tolkien - The Hobbit (Unabridged) - MP3 96kbps","expected":{"title":"The Hobbit","audio_format":"MP3","bitrate_kbps":96,"abridged":false,"author":"J.R.R. Tolkien"},"source":"authored: author initials with dots, dash-delimited tags"}
+{"title":"Stephen King - The Stand {Abridged} 32kbps MP3","expected":{"title":"The Stand","audio_format":"MP3","bitrate_kbps":32,"abridged":true,"author":"Stephen King"},"source":"authored: abridged signal"}
+{"title":"Frank Herbert - Dune (1965) M4B 192kbps","expected":{"title":"Dune","year":1965,"audio_format":"M4B","bitrate_kbps":192,"author":"Frank Herbert"},"source":"authored: no series, unbracketed format/bitrate"}
+{"title":"Jim Butcher - Storm Front (The Dresden Files #1) MP3 64kbps","expected":{"title":"Storm Front","audio_format":"MP3","bitrate_kbps":64,"author":"Jim Butcher","series":"The Dresden Files","series_position":"1"},"source":"authored: series via # numbering"}
+{"title":"Neil Gaiman - The Graveyard Book (2008) [M4B] [64 kbps]","expected":{"title":"The Graveyard Book","year":2008,"audio_format":"M4B","bitrate_kbps":64,"author":"Neil Gaiman"},"source":"authored: split format/bitrate brackets, spaced kbps"}
+{"title":"Terry Pratchett - Mort (Discworld, Book 4) (1987) M4B 128kbps","expected":{"title":"Mort","year":1987,"audio_format":"M4B","bitrate_kbps":128,"author":"Terry Pratchett","series":"Discworld","series_position":"4"},"source":"authored: series via 'Book N' numbering"}

@@ -1,0 +1,15 @@
+import { chromium } from "@playwright/test";
+const BASE = "http://127.0.0.1:8090";
+const browser = await chromium.launch();
+const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+const errors = [];
+page.on("console", m => { if (m.type() === "error") errors.push(m.text().slice(0, 200)); });
+await page.goto(BASE + "/tv/import", { waitUntil: "networkidle", timeout: 25000 }).catch(() => {});
+await page.waitForTimeout(1200);
+await page.getByRole("button", { name: "Browse" }).first().click();
+await page.waitForTimeout(2500);
+const panel = await page.locator(".fs-entry").count();
+console.log("fs entries visible after Browse click:", panel);
+console.log("console errors:", JSON.stringify(errors));
+await page.screenshot({ path: "web-e2e/shots/browse-test.png" });
+await browser.close();

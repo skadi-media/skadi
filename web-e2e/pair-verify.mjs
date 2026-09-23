@@ -1,0 +1,13 @@
+import { chromium } from "@playwright/test";
+const browser = await chromium.launch();
+const page = await (await browser.newContext({ viewport: { width: 412, height: 915 } })).newPage();
+await page.goto("http://127.0.0.1:8090/listen", { waitUntil: "networkidle", timeout: 30000 });
+await page.locator("text=Pair your phone").click();
+await page.waitForSelector(".pair-qr svg", { timeout: 10000 });
+console.log("warning shown:", await page.locator("text=loopback").count() > 0);
+await page.locator(".pair-url-row input").fill("http://203.0.113.27:8090/listen");
+await page.locator(".pair-url-row button").click();
+await page.waitForTimeout(1500);
+console.log("qr count:", await page.locator(".pair-qr svg").count());
+await page.screenshot({ path: "web-e2e/shots/pair-fixed.png" });
+await browser.close();

@@ -1,0 +1,13 @@
+import { chromium } from "@playwright/test";
+const BASE = "http://127.0.0.1:8090";
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto(BASE + "/tv/import", { waitUntil: "networkidle", timeout: 25000 }).catch(() => {});
+await page.waitForTimeout(1500);
+await page.locator("input.path-field").first().fill("/mnt/storage/television");
+await page.getByRole("button", { name: "Scan" }).first().click();
+await page.waitForTimeout(50000);
+await page.screenshot({ path: "web-e2e/shots/live-tv-import-meta.png" });
+console.log("captured meta");
+await browser.close();

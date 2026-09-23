@@ -1,0 +1,270 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Tags too (SKADI-T-0482): images and releases are cut from them, and until
+    # now nothing tested a tag before it was published.
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+
+      # --all-targets so test and bench code is linted too (SKADI-T-0484).
+      # Without it the lint gate covered library code only, which is how three
+      # separate test-code lint failures (T-0429/0443/0457) survived in-tree
+      # long enough to need their own tickets.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The worker lives outside the workspace, so --workspace does not reach it
+      # and it was linted by nothing (SKADI-T-0484). It went two tickets without
+      # compiling once for the same reason.
+      - name: Clippy (worker, outside the workspace)
+        run: >-
+          cargo clippy --manifest-path crates/skadi-downloader-worker/Cargo.toml
+          --all-targets -- -D warnings
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Cargo check (worker, outside the workspace)
+        run: cargo check --manifest-path crates/skadi-downloader-worker/Cargo.toml
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests
+        run: cargo test --workspace --lib -- --test-threads=1
+
+      - name: Run unit tests (worker, outside the workspace)
+        run: >-
+          cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml
+          --lib -- --test-threads=1
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run integration tests
+        run: cargo test --workspace --test integration -- --test-threads=1
+
+      - name: Run integration tests (worker, outside the workspace)
+        run: >-
+          cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml
+          --test integration -- --test-threads=1
+
+  test-store-dual-backend:
+    name: Store (SQLite + Postgres)
+    runs-on: ubuntu-latest
+    needs: check
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: skadi
+          POSTGRES_PASSWORD: skadi
+          POSTGRES_DB: skadi
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U skadi -d skadi"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      # Exercise the Postgres backend in skadi-store's cross-backend harness.
+      SKADI_TEST_DATABASE_URL: postgres://skadi:skadi@127.0.0.1:5432/skadi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run skadi-store tests against both backends
+        run: cargo test -p skadi-store -- --test-threads=1
+
+  test-bdd:
+    name: BDD (cucumber, @gap/@lab excluded)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Workspace BDD suites
+        run: cargo test --workspace --test bdd
+
+      - name: Worker BDD suite
+        run: cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml --test bdd
+
+  compose-config:
+    name: Compose renders (base, +lab, +nas)
+    runs-on: ubuntu-latest
+    # No `needs: check` — this validates YAML and env interpolation, not Rust, so
+    # it should still report when the code does not compile. That is exactly when
+    # a deploy-time-only failure is most expensive to discover.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render every compose combination with placeholder env
+        run: deploy/compose-check.sh
+
+  test-functional:
+    name: Functional Tests
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run functional tests
+        run: cargo test --workspace --test functional -- --test-threads=1
+
+      - name: Run ignored tests (external services)
+        run: cargo test --workspace --test functional -- --test-threads=1 --ignored
+        continue-on-error: true
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs:
+      [
+        test-unit,
+        test-integration,
+        test-store-dual-backend,
+        test-bdd,
+        test-functional,
+      ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage
+        run: |
+          cargo llvm-cov --workspace --no-report -- --test-threads=1
+          cargo llvm-cov report --workspace --html --output-dir coverage/
+          cargo llvm-cov report --workspace --lcov --output-path coverage/lcov.info
+          cargo llvm-cov report --workspace
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: check
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+  images:
+    name: Images (GHCR)
+    # A real `needs:` on the whole suite, which is only possible because
+    # images.yml is a reusable workflow called from here (SKADI-T-0482).
+    # Publishing an image that has not passed the tests is how a broken `latest`
+    # reaches the machine that serves the library.
+    needs:
+      [
+        check,
+        test-unit,
+        test-integration,
+        test-store-dual-backend,
+        test-bdd,
+        test-functional,
+        compose-config,
+        build,
+      ]
+    # Never on pull_request: a fork PR cannot be allowed to publish, and an
+    # in-repo PR publishing `sha-` tags for unmerged work clutters the registry.
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    uses: ./.github/workflows/images.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit

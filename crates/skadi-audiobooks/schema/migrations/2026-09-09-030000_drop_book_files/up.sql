@@ -1,0 +1,19 @@
+-- Retire `book_files` (SKADI-T-0562 part 3).
+--
+-- `book_editions` replaced it in SKADI-T-0448, which copied every row across.
+-- Nothing has read or written `book_files` since; it survived only because the
+-- expand/migrate/contract sequence stopped before the contract.
+--
+-- Dropping it now rather than leaving it indefinitely: a stale table that still
+-- looks like the real one is a trap for the next person reading the schema, and
+-- it keeps appearing in the generated `schema.rs` where it is one autocomplete
+-- away from being queried by mistake.
+DROP TABLE IF EXISTS book_files;
+--
+-- `IF EXISTS` because this must be safe on a database that reached here by any
+-- route, including one restored from a backup taken mid-sequence.
+--
+-- It cannot be squashed out of the history instead: `2026-09-09-010000` copies
+-- every row *from* `book_files` into `book_editions`, and the live library has
+-- not run that yet. Removing the table from the init DDL would leave that copy
+-- selecting from nothing and migrate the library to an empty `book_editions`.

@@ -304,9 +304,8 @@ impl IndexerConfig {
                 }
                 let rate = cfg.rate_per_minute.unwrap_or(KNABEN_RATE_PER_MINUTE);
                 let categories = cfg.categories.into_iter().map(Category).collect();
-                let inner = Box::new(
-                    Knaben::new(id, base_url, categories, http).with_flags(cfg.flags),
-                );
+                let inner =
+                    Box::new(Knaben::new(id, base_url, categories, http).with_flags(cfg.flags));
                 Ok(indexer_health_tracked(indexer_rate_limited(inner, rate)))
             }
             IndexerConfig::Prowlarr(cfg) => {
@@ -461,7 +460,10 @@ mod tests {
             flags: IndexerFlags::default(),
         });
         assert_eq!(cfg.name(), "Knaben");
-        assert!(cfg.is_builtin(), "no credential lookup for an account-less API");
+        assert!(
+            cfg.is_builtin(),
+            "no credential lookup for an account-less API"
+        );
         let http = HttpClient::new(std::time::Duration::from_secs(5)).unwrap();
         let built = cfg.build(IndexerId::new(), String::new(), http).unwrap();
         assert!(built.supports(skadi_core::MediaKind::Movie));

@@ -316,7 +316,8 @@ async fn household_pages_after_filtering_for_non_admins() {
     let (profile_id, root_path) = register_profile_and_root(&h.store).await;
     let mut ids = Vec::new();
     for tmdb in [603u64, 604] {
-        let req = serde_json::json!({ "tmdb_id": tmdb, "profile": profile_id, "root_folder": root_path });
+        let req =
+            serde_json::json!({ "tmdb_id": tmdb, "profile": profile_id, "root_folder": root_path });
         let (s, created) = call(h.http.routes(), "POST", "/movies", Some(req)).await;
         assert_eq!(s, StatusCode::CREATED);
         ids.push(created["id"].as_str().unwrap().to_string());
@@ -324,7 +325,10 @@ async fn household_pages_after_filtering_for_non_admins() {
     let kid = Member {
         role: Role::Kid,
         policy: Policy {
-            max_rating: MaxRating { movie: Some("PG".into()), series: None },
+            max_rating: MaxRating {
+                movie: Some("PG".into()),
+                series: None,
+            },
             allowed_items: vec![ids[1].clone()],
             ..Policy::default()
         },
@@ -333,7 +337,11 @@ async fn household_pages_after_filtering_for_non_admins() {
     let routes = || h.http.routes().layer(axum::Extension(kid.clone()));
     let (s, page) = call(routes(), "GET", "/movies?limit=1&offset=0", None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(page.as_array().unwrap().len(), 1, "the first page holds the one visible film");
+    assert_eq!(
+        page.as_array().unwrap().len(),
+        1,
+        "the first page holds the one visible film"
+    );
     assert_eq!(page[0]["id"], ids[1]);
     let (_, rest) = call(routes(), "GET", "/movies?limit=1&offset=1", None).await;
     assert_eq!(rest.as_array().unwrap().len(), 0, "nothing beyond it");

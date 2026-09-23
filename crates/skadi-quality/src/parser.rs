@@ -994,7 +994,10 @@ mod tests {
         let q = to_quality(&dvd, &defs).expect("DVDRip implies SD");
         assert_eq!((q.resolution, q.source), (Resolution::Sd, Source::Dvd));
         let bare = parse_tv("Some.Show.S01E01.x264-GRP");
-        assert!(to_quality(&bare, &defs).is_none(), "x264 alone still says nothing");
+        assert!(
+            to_quality(&bare, &defs).is_none(),
+            "x264 alone still says nothing"
+        );
     }
 
     #[test]

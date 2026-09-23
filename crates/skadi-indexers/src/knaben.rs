@@ -302,7 +302,9 @@ impl Indexer for Knaben {
             .map_err(|e| AppError::Network(format!("reading Knaben response: {e}")))?;
         serde_json::from_str::<SearchResponse>(&text)
             .map(|_| ())
-            .map_err(|e| AppError::Network(format!("Knaben did not answer with its search JSON: {e}")))
+            .map_err(|e| {
+                AppError::Network(format!("Knaben did not answer with its search JSON: {e}"))
+            })
     }
 
     /// The recent-releases feed (SKADI-T-0192): a query-less search, newest first.
@@ -363,7 +365,10 @@ mod tests {
         assert_eq!(rels.len(), 4);
 
         let first = &rels[0];
-        assert_eq!(first.title, "Godzilla Minus One (2023) [1080p] [BluRay] [5.1]");
+        assert_eq!(
+            first.title,
+            "Godzilla Minus One (2023) [1080p] [BluRay] [5.1]"
+        );
         assert_eq!(first.size, 2_469_606_195);
         assert_eq!(first.seeders, Some(297));
         assert_eq!(first.published.to_rfc3339(), "2024-05-01T22:00:00+00:00");
@@ -387,13 +392,16 @@ mod tests {
         )
         .unwrap();
         let r = hit.into_release(IndexerId::new()).unwrap();
-        assert!(matches!(&r.fetch, ReleaseFetch::Magnet(m) if m == "magnet:?xt=urn:btih:ABCDEF0123"));
+        assert!(
+            matches!(&r.fetch, ReleaseFetch::Magnet(m) if m == "magnet:?xt=urn:btih:ABCDEF0123")
+        );
         assert_eq!(r.categories, vec![Category(2000)]);
     }
 
     #[test]
     fn a_hit_with_neither_magnet_nor_hash_is_dropped() {
-        let hit: Hit = serde_json::from_str(r#"{"title":"No Way To Fetch This","bytes":1}"#).unwrap();
+        let hit: Hit =
+            serde_json::from_str(r#"{"title":"No Way To Fetch This","bytes":1}"#).unwrap();
         assert!(hit.into_release(IndexerId::new()).is_none());
     }
 
@@ -402,7 +410,10 @@ mod tests {
         // The space-padded separator is what the API really sends.
         assert_eq!(category_from_label("Movies / HD"), Some(Category(2040)));
         assert_eq!(category_from_label("TV / UHD"), Some(Category(5045)));
-        assert_eq!(category_from_label("Audio / Audiobook"), Some(Category(3030)));
+        assert_eq!(
+            category_from_label("Audio / Audiobook"),
+            Some(Category(3030))
+        );
         assert_eq!(category_from_label("Movies"), Some(Category(2000)));
         // An unknown leaf still resolves to the right group.
         assert_eq!(category_from_label("Books / EBooks"), Some(Category(7000)));
@@ -413,10 +424,22 @@ mod tests {
     #[test]
     fn scoping_keeps_the_right_group_and_never_drops_the_unlabelled() {
         let movies = [Category(2000)];
-        assert!(in_scope(&movies, &[Category(2040)]), "same group, finer leaf");
-        assert!(!in_scope(&movies, &[Category(4050)]), "PC/Games in a movie search");
-        assert!(in_scope(&movies, &[]), "unmapped label is not evidence of a wrong one");
-        assert!(in_scope(&[], &[Category(4050)]), "no scope configured ⇒ no filtering");
+        assert!(
+            in_scope(&movies, &[Category(2040)]),
+            "same group, finer leaf"
+        );
+        assert!(
+            !in_scope(&movies, &[Category(4050)]),
+            "PC/Games in a movie search"
+        );
+        assert!(
+            in_scope(&movies, &[]),
+            "unmapped label is not evidence of a wrong one"
+        );
+        assert!(
+            in_scope(&[], &[Category(4050)]),
+            "no scope configured ⇒ no filtering"
+        );
         // A TV+audiobook indexer keeps both, and still rejects software.
         let tv_books = [Category(5000), Category(3030)];
         assert!(in_scope(&tv_books, &[Category(5040)]));
@@ -523,7 +546,13 @@ mod tests {
             vec![Category(2000)],
             http(),
         );
-        let titles: Vec<String> = ix.rss().await.unwrap().into_iter().map(|r| r.title).collect();
+        let titles: Vec<String> = ix
+            .rss()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.title)
+            .collect();
         assert_eq!(
             titles,
             vec!["Godzilla 2014 1080p BluRay", "Godzilla Singular Point"],
@@ -536,7 +565,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1"))
-            .and(body_partial_json(serde_json::json!({"size": 1, "query": ""})))
+            .and(body_partial_json(
+                serde_json::json!({"size": 1, "query": ""}),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"hits":[]}"#))
             .mount(&server)
             .await;

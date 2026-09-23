@@ -12,8 +12,8 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use skadi_store::ConfigSource;
 use skadi_store::ConfigRepo;
+use skadi_store::ConfigSource;
 use tower::ServiceExt;
 
 use skadi_api::{AppState, Config};
@@ -257,7 +257,10 @@ async fn completing_early_is_refused_and_nothing_is_published() {
                 .collect()
         })
         .unwrap_or_default();
-    assert!(published.is_empty(), "nothing should be published: {published:?}");
+    assert!(
+        published.is_empty(),
+        "nothing should be published: {published:?}"
+    );
 }
 
 #[tokio::test]
@@ -412,7 +415,10 @@ async fn a_file_that_is_not_media_is_refused_at_completion_and_leaves_nothing() 
     .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
     assert!(
-        v["message"].as_str().unwrap().contains("does not read as media"),
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("does not read as media"),
         "{v}"
     );
 
@@ -566,7 +572,10 @@ fn the_sweep_removes_a_session_nothing_has_touched() {
     // comparison is what matters, so drive it with a zero-hour TTL clamped to
     // one and a backdated file instead.
     let removed = skadi_api::uploads::sweep_sessions(tmp.path(), 1);
-    assert!(removed.is_empty(), "a fresh session must survive: {removed:?}");
+    assert!(
+        removed.is_empty(),
+        "a fresh session must survive: {removed:?}"
+    );
     assert!(stale.exists());
 }
 
@@ -621,7 +630,14 @@ async fn a_contributor_can_upload_but_a_read_only_member_is_refused() {
         "filename": "a.mkv", "size_bytes": 10, "kind": "movie"
     });
 
-    let (st, v) = call_as(&state, &contributor, "POST", "/api/v1/uploads", Some(body.clone())).await;
+    let (st, v) = call_as(
+        &state,
+        &contributor,
+        "POST",
+        "/api/v1/uploads",
+        Some(body.clone()),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "{v}");
 
     let (st, _) = call_as(&state, &reader, "POST", "/api/v1/uploads", Some(body)).await;
@@ -658,7 +674,14 @@ async fn one_contributor_cannot_touch_another_contributors_upload() {
     }
 
     // And Alice's session is untouched.
-    let (st, v) = call_as(&state, &alice, "GET", &format!("/api/v1/uploads/{id}"), None).await;
+    let (st, v) = call_as(
+        &state,
+        &alice,
+        "GET",
+        &format!("/api/v1/uploads/{id}"),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "{v}");
 }
 
@@ -829,7 +852,11 @@ async fn an_abandoned_upload_stays_staged_rather_than_half_imported() {
     .await;
 
     // Staged and whole. Nothing has touched the library folders.
-    let staged = root.path().join("incoming").join(&id).join("Left Alone.wav");
+    let staged = root
+        .path()
+        .join("incoming")
+        .join(&id)
+        .join("Left Alone.wav");
     assert_eq!(std::fs::read(&staged).unwrap(), payload);
     for domain in ["movie", "television", "audiobook"] {
         assert!(

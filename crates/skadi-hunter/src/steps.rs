@@ -228,7 +228,11 @@ fn search_error_retry() -> chrono::Duration {
 /// [`search_error_retry`], attempts left where they were. On prod, one slow
 /// indexer timing out had marched 151 aired episodes up to the 3-day backoff —
 /// the same penalty as "nothing acceptable exists", for a transient fault.
-fn failed_after_search_error(prior_attempts: u32, message: String, now: chrono::DateTime<Utc>) -> AcquisitionStatus {
+fn failed_after_search_error(
+    prior_attempts: u32,
+    message: String,
+    now: chrono::DateTime<Utc>,
+) -> AcquisitionStatus {
     AcquisitionStatus::Failed {
         reason: FailureReason::Other(message),
         retry_at: Some(now + search_error_retry()),
@@ -1733,14 +1737,21 @@ mod tests {
     fn search_error_keeps_the_not_found_ladder_where_it_was() {
         let now = Utc::now();
         match failed_after_search_error(6, "search: boom".into(), now) {
-            AcquisitionStatus::Failed { reason, retry_at, attempts } => {
+            AcquisitionStatus::Failed {
+                reason,
+                retry_at,
+                attempts,
+            } => {
                 assert_eq!(attempts, 6, "an error is not a not-found attempt");
                 assert_eq!(retry_at, Some(now + search_error_retry()));
                 assert!(matches!(reason, FailureReason::Other(m) if m == "search: boom"));
             }
             other => panic!("expected Failed, got {other:?}"),
         }
-        assert!(search_error_retry() < not_found_backoff(1), "flat and shorter than the first rung");
+        assert!(
+            search_error_retry() < not_found_backoff(1),
+            "flat and shorter than the first rung"
+        );
     }
 
     #[test]

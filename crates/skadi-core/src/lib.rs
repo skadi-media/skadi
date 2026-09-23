@@ -5,7 +5,6 @@
 //! only. Dependency direction across the workspace is strictly downward onto
 //! this crate.
 
-pub mod rating;
 pub mod errors;
 pub mod external;
 pub mod folder;
@@ -15,6 +14,7 @@ pub mod media;
 pub mod module;
 pub mod nfo;
 pub mod protocol;
+pub mod rating;
 pub mod status;
 pub mod streaming;
 

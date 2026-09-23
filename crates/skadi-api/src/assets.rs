@@ -14,7 +14,6 @@
 //! built-in placeholder is served at `/` instead, and the binary needs no
 //! `dist/` to compile.
 
-
 use axum::Router;
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};

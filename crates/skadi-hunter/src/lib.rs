@@ -55,9 +55,9 @@ pub use worker::{
 pub use breaker::CircuitBreaker;
 pub use pipeline::{
     ReachabilityPolicy, ReleaseExplanation, Scoring, Verdict, decide, decide_with, evaluate,
-    explain, floor_for_height, import, monitor, notify, notify_failed, notify_grabbed,
-    reachability_policy, search, seeder_band, set_reachability_policy, snatch,
-    tv_episode_rejection, tv_wrong_show_rejection, identity_rejection,
+    explain, floor_for_height, identity_rejection, import, monitor, notify, notify_failed,
+    notify_grabbed, reachability_policy, search, seeder_band, set_reachability_policy, snatch,
+    tv_episode_rejection, tv_wrong_show_rejection,
 };
 pub use services::{
     AudiobookScoring, HunterServices, ImporterFactory, ScoringConfig, services_for, set_services,

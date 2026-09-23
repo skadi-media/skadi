@@ -258,7 +258,11 @@ impl MovieResource {
                         .map(|c| c.certification.clone())
                 })
                 .map(|c| c.trim().to_string())
-                .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("Not Rated") && !c.eq_ignore_ascii_case("NR")),
+                .filter(|c| {
+                    !c.is_empty()
+                        && !c.eq_ignore_ascii_case("Not Rated")
+                        && !c.eq_ignore_ascii_case("NR")
+                }),
             ..Default::default()
         }
     }

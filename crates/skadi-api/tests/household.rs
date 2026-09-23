@@ -94,9 +94,24 @@ async fn admin_is_created_from_api_token_and_members_get_their_own() {
     assert_eq!(me["name"], "Sam");
 
     // Using the token records last_seen_at (the page's "seen <date>").
-    let (_, members) = call(&state, "GET", "/api/v1/members", Some("operator-token"), None).await;
-    let kid_row = members.as_array().unwrap().iter().find(|m| m["id"] == kid_id.as_str()).unwrap();
-    assert!(kid_row["last_seen_at"].is_string(), "kid was seen: {kid_row}");
+    let (_, members) = call(
+        &state,
+        "GET",
+        "/api/v1/members",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    let kid_row = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == kid_id.as_str())
+        .unwrap();
+    assert!(
+        kid_row["last_seen_at"].is_string(),
+        "kid was seen: {kid_row}"
+    );
 
     // The kid cannot manage members.
     let (st, body) = call(&state, "GET", "/api/v1/members", Some(&kid_token), None).await;
@@ -282,7 +297,10 @@ async fn logging_in_issues_a_device_token_and_failures_are_indistinguishable() {
     .await;
     assert_eq!(st_wrong, StatusCode::UNAUTHORIZED);
     assert_eq!(st_unknown, StatusCode::UNAUTHORIZED);
-    assert_eq!(wrong, unknown, "a failure must not say which half was wrong");
+    assert_eq!(
+        wrong, unknown,
+        "a failure must not say which half was wrong"
+    );
 
     // A member with no password cannot log in, and says no more than that.
     let (st, sam) = call(
@@ -409,7 +427,11 @@ async fn a_password_change_signs_the_right_devices_out() {
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = call(&state, "GET", "/api/v1/me", Some(&phone), None).await;
-    assert_eq!(st, StatusCode::OK, "the device in your hand stays signed in");
+    assert_eq!(
+        st,
+        StatusCode::OK,
+        "the device in your hand stays signed in"
+    );
     let (st, _) = call(&state, "GET", "/api/v1/me", Some(&tablet), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED, "the other one does not");
 
@@ -466,7 +488,11 @@ async fn usernames_are_unique_across_the_household() {
     let (st, _) = make("Robin").await;
     assert_eq!(st, StatusCode::CREATED);
     let (st, body) = make("robin").await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "case must not buy a second seat: {body}");
+    assert_eq!(
+        st,
+        StatusCode::BAD_REQUEST,
+        "case must not buy a second seat: {body}"
+    );
 }
 
 /// The deploy that adds a login page must not lock the operator out of their
@@ -479,7 +505,14 @@ async fn the_operator_can_sign_in_with_the_api_token_until_they_set_a_password()
     state.refresh_members().await;
 
     // Migration gives the admin a login name without anyone doing anything.
-    let (_, members) = call(&state, "GET", "/api/v1/members", Some("operator-token"), None).await;
+    let (_, members) = call(
+        &state,
+        "GET",
+        "/api/v1/members",
+        Some("operator-token"),
+        None,
+    )
+    .await;
     assert_eq!(members[0]["username"], "Operator");
     assert_eq!(members[0]["has_password"], false);
 
@@ -526,7 +559,11 @@ async fn the_operator_can_sign_in_with_the_api_token_until_they_set_a_password()
         Some(serde_json::json!({"username": "Operator", "password": "operator-token"})),
     )
     .await;
-    assert_eq!(st, StatusCode::UNAUTHORIZED, "the token stops being a password");
+    assert_eq!(
+        st,
+        StatusCode::UNAUTHORIZED,
+        "the token stops being a password"
+    );
     let (st, _) = call(
         &state,
         "POST",
@@ -538,7 +575,14 @@ async fn the_operator_can_sign_in_with_the_api_token_until_they_set_a_password()
     assert_eq!(st, StatusCode::OK);
 
     // And `api_token` never stopped being the machine credential the CLI uses.
-    let (st, _) = call(&state, "GET", "/api/v1/members", Some("operator-token"), None).await;
+    let (st, _) = call(
+        &state,
+        "GET",
+        "/api/v1/members",
+        Some("operator-token"),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
 }
 
@@ -570,7 +614,10 @@ async fn renaming_a_member_renames_what_they_sign_in_as() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(view["name"], "Robbie");
-    assert_eq!(view["username"], "Robbie", "the login name follows the rename");
+    assert_eq!(
+        view["username"], "Robbie",
+        "the login name follows the rename"
+    );
 
     // And the new name is what actually signs in.
     let (st, _) = call(
@@ -603,5 +650,8 @@ async fn renaming_a_member_renames_what_they_sign_in_as() {
     )
     .await;
     assert_eq!(view["name"], "Robin Cauthon");
-    assert_eq!(view["username"], "mat-the-kaiju-fan", "a deliberate one stands");
+    assert_eq!(
+        view["username"], "mat-the-kaiju-fan",
+        "a deliberate one stands"
+    );
 }

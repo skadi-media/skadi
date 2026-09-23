@@ -1146,7 +1146,11 @@ pub fn show_title_coverage(wanted_titles: &[String], release_title: &str, tv: bo
         .iter()
         .map(|w| {
             let wt = toks(w);
-            if wt.is_empty() { 0.0 } else { wt.intersection(&rt).count() as f32 / wt.len() as f32 }
+            if wt.is_empty() {
+                0.0
+            } else {
+                wt.intersection(&rt).count() as f32 / wt.len() as f32
+            }
         })
         .fold(0.0_f32, f32::max)
 }
@@ -1170,7 +1174,10 @@ pub fn identity_rejection(
     // that contains the word, and the adult and software categories are full
     // of them. `decide` drops these before it ever looks at the title.
     if !release.categories.is_empty()
-        && !release.categories.iter().any(|c| category_group_ok(kind, *c))
+        && !release
+            .categories
+            .iter()
+            .any(|c| category_group_ok(kind, *c))
     {
         return Some("off-category for this kind".into());
     }
@@ -1223,14 +1230,41 @@ fn strip_site_prefix(title: &str) -> String {
 fn tv_extra_title_tokens(wanted_titles: &[String], release_title: &str) -> Option<Vec<String>> {
     const STOPWORDS: &[&str] = &["the", "a", "an", "of", "and", "by", "to", "in", "for"];
     const HARMLESS: &[&str] = &[
-        "us", "uk", "au", "ca", "nz", "usa", "gb", "tv", "complete", "internal", "proper",
-        "repack", "uncut", "extended", "remastered", "restored", "dual", "multi", "final",
-        "season", "series", "part", "vol", "ep", "episode", "sub", "subbed", "dubbed",
+        "us",
+        "uk",
+        "au",
+        "ca",
+        "nz",
+        "usa",
+        "gb",
+        "tv",
+        "complete",
+        "internal",
+        "proper",
+        "repack",
+        "uncut",
+        "extended",
+        "remastered",
+        "restored",
+        "dual",
+        "multi",
+        "final",
+        "season",
+        "series",
+        "part",
+        "vol",
+        "ep",
+        "episode",
+        "sub",
+        "subbed",
+        "dubbed",
     ];
     fn toks(s: &str) -> Vec<String> {
         s.to_ascii_lowercase()
             .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|t| t.len() >= 2 && !t.bytes().all(|b| b.is_ascii_digit()) && !STOPWORDS.contains(t))
+            .filter(|t| {
+                t.len() >= 2 && !t.bytes().all(|b| b.is_ascii_digit()) && !STOPWORDS.contains(t)
+            })
             .map(str::to_string)
             .collect()
     }
@@ -1450,24 +1484,24 @@ pub fn decide_with(
                         continue;
                     }
                     match tv_scope_match(&release.title, scope) {
-                    // Sonarr parity (SKADI-T-0402): a whole-season (or complete
-                    // series) pack is only a candidate for a **season-scoped**
-                    // search. On a single-episode search it is rejected — grabbing
-                    // a 65 GB pack for one missing episode is never what the
-                    // operator asked for, and because every missing episode of a
-                    // season raised its own run, the same pack was snatched once
-                    // per episode. The TV wanted query already emits a dedicated
-                    // season-pack seed once enough of a season is missing.
-                    Some(TvMatch::Pack) if scope.episode.is_some() => {
-                        tally.reject(RejectReason::Episode);
-                        continue;
-                    }
-                    Some(TvMatch::Pack) => PACK_BUCKET,
-                    Some(TvMatch::Episode) => (r.precision * 4.0).round() as u8,
-                    None => {
-                        tally.reject(RejectReason::Episode);
-                        continue;
-                    }
+                        // Sonarr parity (SKADI-T-0402): a whole-season (or complete
+                        // series) pack is only a candidate for a **season-scoped**
+                        // search. On a single-episode search it is rejected — grabbing
+                        // a 65 GB pack for one missing episode is never what the
+                        // operator asked for, and because every missing episode of a
+                        // season raised its own run, the same pack was snatched once
+                        // per episode. The TV wanted query already emits a dedicated
+                        // season-pack seed once enough of a season is missing.
+                        Some(TvMatch::Pack) if scope.episode.is_some() => {
+                            tally.reject(RejectReason::Episode);
+                            continue;
+                        }
+                        Some(TvMatch::Pack) => PACK_BUCKET,
+                        Some(TvMatch::Episode) => (r.precision * 4.0).round() as u8,
+                        None => {
+                            tally.reject(RejectReason::Episode);
+                            continue;
+                        }
                     }
                 }
                 None if kind == skadi_core::MediaKind::Movie => {
@@ -4380,48 +4414,222 @@ mod tests {
         use skadi_core::MediaKind::{Movie, Series};
         let w = |t: &str| vec![t.to_string()];
         let rel = |t: &str| release(t, 5);
-        assert!(identity_rejection(Movie, &w("The Guest"), Some(2014), None, &rel("The.Adam.Project.2022.1080p.NF.WEBRip.DDP5.1.Atmos.x264-TEPES")).is_some());
-        assert!(identity_rejection(Movie, &w("The Guest"), Some(2014), None, &rel("The.Guest.2014.1080p.BluRay.x264-GRP")).is_none());
-        assert_eq!(identity_rejection(Movie, &w("The Guest"), Some(2014), None, &rel("The.Guest.1992.DVDRip")).as_deref(), Some("names a different year"));
-        assert!(identity_rejection(Movie, &w("101 Dalmatians"), Some(1996), None, &rel("101.Dalmatians.II.Patchs.London.Adventure.2003")).is_some());
+        assert!(
+            identity_rejection(
+                Movie,
+                &w("The Guest"),
+                Some(2014),
+                None,
+                &rel("The.Adam.Project.2022.1080p.NF.WEBRip.DDP5.1.Atmos.x264-TEPES")
+            )
+            .is_some()
+        );
+        assert!(
+            identity_rejection(
+                Movie,
+                &w("The Guest"),
+                Some(2014),
+                None,
+                &rel("The.Guest.2014.1080p.BluRay.x264-GRP")
+            )
+            .is_none()
+        );
+        assert_eq!(
+            identity_rejection(
+                Movie,
+                &w("The Guest"),
+                Some(2014),
+                None,
+                &rel("The.Guest.1992.DVDRip")
+            )
+            .as_deref(),
+            Some("names a different year")
+        );
+        assert!(
+            identity_rejection(
+                Movie,
+                &w("101 Dalmatians"),
+                Some(1996),
+                None,
+                &rel("101.Dalmatians.II.Patchs.London.Adventure.2003")
+            )
+            .is_some()
+        );
         // An adult-category release that happens to contain the word: off-category, before the title is even read.
         let mut xxx = rel("Entertaining the Guest [MP4 1080p]");
         xxx.categories = vec![skadi_indexers::Category(6000)];
-        assert_eq!(identity_rejection(Movie, &w("The Guest"), Some(2014), None, &xxx).as_deref(), Some("off-category for this kind"));
-        let scope = TvScope { season: 1, episode: Some(1), absolute: None, air_date: None };
-        assert!(identity_rejection(Series, &w("Mystery Science Theater 3000"), None, Some(scope), &rel("Mystery.Science.Theater.3000.The.Return.S01E01.XviD-AFG")).is_some());
-        assert!(identity_rejection(Series, &w("Mystery Science Theater 3000"), None, Some(scope), &rel("Mystery.Science.Theater.3000.S01E01.XviD")).is_none());
-        assert!(identity_rejection(Series, &w("Firefly"), None, Some(scope), &rel("Some.Other.Show.S01E01.720p")).is_some());
+        assert_eq!(
+            identity_rejection(Movie, &w("The Guest"), Some(2014), None, &xxx).as_deref(),
+            Some("off-category for this kind")
+        );
+        let scope = TvScope {
+            season: 1,
+            episode: Some(1),
+            absolute: None,
+            air_date: None,
+        };
+        assert!(
+            identity_rejection(
+                Series,
+                &w("Mystery Science Theater 3000"),
+                None,
+                Some(scope),
+                &rel("Mystery.Science.Theater.3000.The.Return.S01E01.XviD-AFG")
+            )
+            .is_some()
+        );
+        assert!(
+            identity_rejection(
+                Series,
+                &w("Mystery Science Theater 3000"),
+                None,
+                Some(scope),
+                &rel("Mystery.Science.Theater.3000.S01E01.XviD")
+            )
+            .is_none()
+        );
+        assert!(
+            identity_rejection(
+                Series,
+                &w("Firefly"),
+                None,
+                Some(scope),
+                &rel("Some.Other.Show.S01E01.720p")
+            )
+            .is_some()
+        );
         // A release group's tag is not the show, and the number in the name counts.
-        let s1e3 = TvScope { season: 1, episode: Some(3), absolute: None, air_date: None };
-        assert_eq!(identity_rejection(Series, &w("Dimension 20"), None, Some(s1e3), &rel("11 22 63 S01E03 720p HDTV X264-DIMENSION[ettv]")).as_deref(), Some("does not name the wanted title"));
-        assert!(identity_rejection(Series, &w("Dimension 20"), None, Some(s1e3), &rel("Dimension.20.S01E03.720p.WEB.h264-GRP")).is_none());
-        assert!(identity_rejection(Series, &w("The 100"), None, Some(scope), &rel("The.100.S01E01.1080p.WEB.H264-GRP")).is_none());
-        assert!(identity_rejection(Series, &w("Doctor Who (2005)"), None, Some(scope), &rel("Doctor.Who.S01E01.720p")).is_none());
-        assert!(identity_rejection(Movie, &w("2012"), Some(2009), None, &rel("2012.2009.1080p.BluRay.x264")).is_none());
+        let s1e3 = TvScope {
+            season: 1,
+            episode: Some(3),
+            absolute: None,
+            air_date: None,
+        };
+        assert_eq!(
+            identity_rejection(
+                Series,
+                &w("Dimension 20"),
+                None,
+                Some(s1e3),
+                &rel("11 22 63 S01E03 720p HDTV X264-DIMENSION[ettv]")
+            )
+            .as_deref(),
+            Some("does not name the wanted title")
+        );
+        assert!(
+            identity_rejection(
+                Series,
+                &w("Dimension 20"),
+                None,
+                Some(s1e3),
+                &rel("Dimension.20.S01E03.720p.WEB.h264-GRP")
+            )
+            .is_none()
+        );
+        assert!(
+            identity_rejection(
+                Series,
+                &w("The 100"),
+                None,
+                Some(scope),
+                &rel("The.100.S01E01.1080p.WEB.H264-GRP")
+            )
+            .is_none()
+        );
+        assert!(
+            identity_rejection(
+                Series,
+                &w("Doctor Who (2005)"),
+                None,
+                Some(scope),
+                &rel("Doctor.Who.S01E01.720p")
+            )
+            .is_none()
+        );
+        assert!(
+            identity_rejection(
+                Movie,
+                &w("2012"),
+                Some(2009),
+                None,
+                &rel("2012.2009.1080p.BluRay.x264")
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn tv_extra_title_tokens_flags_spin_offs_but_not_markers() {
         let w = |t: &str| vec![t.to_string()];
         assert_eq!(
-            tv_extra_title_tokens(&w("Mystery Science Theater 3000"), "Mystery.Science.Theater.3000.The.Return.S01E01.XviD-AFG"),
+            tv_extra_title_tokens(
+                &w("Mystery Science Theater 3000"),
+                "Mystery.Science.Theater.3000.The.Return.S01E01.XviD-AFG"
+            ),
             Some(vec!["return".to_string()])
         );
         assert_eq!(
-            tv_extra_title_tokens(&w("LEGO Star Wars"), "LEGO Star Wars Rebuild the Galaxy S01E01 1080p WEB h264-DOLORES"),
+            tv_extra_title_tokens(
+                &w("LEGO Star Wars"),
+                "LEGO Star Wars Rebuild the Galaxy S01E01 1080p WEB h264-DOLORES"
+            ),
             Some(vec!["rebuild".to_string(), "galaxy".to_string()])
         );
-        assert!(tv_extra_title_tokens(&w("Critical Role"), "Critical Role Cooldown S02E012 C4 E012 720p WEB-DL").is_some());
-        assert!(tv_extra_title_tokens(&w("Critical Role"), "Critical Role S03E011 Chasing Nightmares 720p WEB-DL AAC2 0 H 264-Kitsune").is_none());
-        assert!(tv_extra_title_tokens(&w("The Office (US)"), "The.Office.US.S05E01.720p.HDTV").is_none());
-        assert!(tv_extra_title_tokens(&w("Doctor Who (2005)"), "Doctor.Who.2005.S01E01.1080p.BluRay").is_none());
-        assert!(tv_extra_title_tokens(&w("Spider-Man: The New Animated Series"), "Spider-Man.The.New.Animated.Series.S01E01.DVDRip.XviD").is_none());
+        assert!(
+            tv_extra_title_tokens(
+                &w("Critical Role"),
+                "Critical Role Cooldown S02E012 C4 E012 720p WEB-DL"
+            )
+            .is_some()
+        );
+        assert!(
+            tv_extra_title_tokens(
+                &w("Critical Role"),
+                "Critical Role S03E011 Chasing Nightmares 720p WEB-DL AAC2 0 H 264-Kitsune"
+            )
+            .is_none()
+        );
+        assert!(
+            tv_extra_title_tokens(&w("The Office (US)"), "The.Office.US.S05E01.720p.HDTV")
+                .is_none()
+        );
+        assert!(
+            tv_extra_title_tokens(
+                &w("Doctor Who (2005)"),
+                "Doctor.Who.2005.S01E01.1080p.BluRay"
+            )
+            .is_none()
+        );
+        assert!(
+            tv_extra_title_tokens(
+                &w("Spider-Man: The New Animated Series"),
+                "Spider-Man.The.New.Animated.Series.S01E01.DVDRip.XviD"
+            )
+            .is_none()
+        );
         // An indexer's site stamp is not part of the show's name.
-        assert!(tv_extra_title_tokens(&w("Critical Role"), "Www UIndex org Critical Role S03E018 Hungry Jungle 720p WEB DL AAC2 264 Kitsune").is_none());
-        assert!(tv_extra_title_tokens(&w("Critical Role"), "www.torrenting.com - Critical Role S03E018 720p WEB-DL").is_none());
+        assert!(
+            tv_extra_title_tokens(
+                &w("Critical Role"),
+                "Www UIndex org Critical Role S03E018 Hungry Jungle 720p WEB DL AAC2 264 Kitsune"
+            )
+            .is_none()
+        );
+        assert!(
+            tv_extra_title_tokens(
+                &w("Critical Role"),
+                "www.torrenting.com - Critical Role S03E018 720p WEB-DL"
+            )
+            .is_none()
+        );
         // Aliases count as wanted words too.
-        assert!(tv_extra_title_tokens(&["MST3K".into(), "Mystery Science Theater 3000".into()], "MST3K.S05E01.XviD").is_none());
+        assert!(
+            tv_extra_title_tokens(
+                &["MST3K".into(), "Mystery Science Theater 3000".into()],
+                "MST3K.S05E01.XviD"
+            )
+            .is_none()
+        );
     }
 
     #[test]

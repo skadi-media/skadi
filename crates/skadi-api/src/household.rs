@@ -226,7 +226,9 @@ impl DeviceToken {
     pub fn new(label: Option<String>) -> Self {
         Self {
             token: generate_token(),
-            label: label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty()),
+            label: label
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty()),
             created_at: Utc::now(),
         }
     }
@@ -537,10 +539,7 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
             .split('/')
             .filter(|s| !s.is_empty())
             .collect();
-        let adding = matches!(
-            seg.as_slice(),
-            ["movies"] | ["series"] | ["books"]
-        );
+        let adding = matches!(seg.as_slice(), ["movies"] | ["series"] | ["books"]);
         let searching = matches!(
             seg.as_slice(),
             ["movies", _, "editions", _, "acquire"]
@@ -562,10 +561,7 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         // member reach catalog search in SKADI-T-0625.
         let uploading = matches!(
             seg.as_slice(),
-            ["uploads"]
-                | ["uploads", _, "chunk"]
-                | ["uploads", _, "complete"]
-                | ["uploads", _]
+            ["uploads"] | ["uploads", _, "chunk"] | ["uploads", _, "complete"] | ["uploads", _]
         );
         if uploading {
             return true;
@@ -579,7 +575,7 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    let ok = match seg.as_slice() {
+    match seg.as_slice() {
         ["me"] | ["health"] | ["health", "ready"] => true,
         // These MUST precede the `["movies", _]` style arms below: a match arm
         // wins by order, and `["movies", _]` happily matches `/movies/lookup`
@@ -600,8 +596,7 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         ["library", "genres"] => true,
         ["authors"] | ["audiobooks", "series"] | ["audiobooks", "works"] => role != Role::Kid,
         _ => false,
-    };
-    ok
+    }
 }
 
 /// Middleware: after `bearer_auth` has named the member, refuse anything off
@@ -1031,17 +1026,15 @@ async fn login(
     };
     let ok = admin_bootstrap
         || match &found {
-        Some(m) => verify_password(&req.password, m.password_hash.as_deref()),
-        None => {
-            let _ = verify_password(&req.password, Some(dummy_hash()));
-            false
-        }
+            Some(m) => verify_password(&req.password, m.password_hash.as_deref()),
+            None => {
+                let _ = verify_password(&req.password, Some(dummy_hash()));
+                false
+            }
         };
     let Some(mut member) = found.filter(|_| ok) else {
         state.login_throttle.record_failure(&key);
-        return Ok(bad_credentials(
-            "that username and password do not match",
-        ));
+        return Ok(bad_credentials("that username and password do not match"));
     };
     state.login_throttle.clear(&key);
 
@@ -1227,7 +1220,10 @@ mod tests {
     fn passwords_round_trip_and_a_wrong_one_fails() {
         let hash = hash_password("correct horse").unwrap();
         assert!(verify_password("correct horse", Some(&hash)));
-        assert!(!verify_password("Correct Horse", Some(&hash)), "case matters");
+        assert!(
+            !verify_password("Correct Horse", Some(&hash)),
+            "case matters"
+        );
         assert!(!verify_password("wrong", Some(&hash)));
         // The hash is never the password, and a member without one cannot pass.
         assert!(!hash.contains("correct horse"));
@@ -1356,7 +1352,10 @@ mod tests {
         assert!(!p.permits(Role::Contributor, Movie, "m2", Some("R"), &g("Action")));
         // What the role changes is the unrated default and the audiobook rule:
         // an adult sees unrated and un-allow-listed books, a kid does not.
-        assert!(p.permits(Role::Contributor, Movie, "m3", None, &g("Family")), "unrated visible");
+        assert!(
+            p.permits(Role::Contributor, Movie, "m3", None, &g("Family")),
+            "unrated visible"
+        );
         assert!(p.permits(Role::Contributor, Audiobook, "book-no", None, &[]));
         // An adult with no ceiling set sees everything.
         let open = Policy::default();
@@ -1424,16 +1423,32 @@ mod tests {
             path_allowed(c, &Method::GET, "/settings/profiles"),
             "the add flow needs a profile to add against"
         );
-        assert!(path_allowed(c, &Method::POST, "/movies/abc/editions/def/acquire"));
-        assert!(path_allowed(c, &Method::POST, "/series/abc/episodes/def/acquire"));
+        assert!(path_allowed(
+            c,
+            &Method::POST,
+            "/movies/abc/editions/def/acquire"
+        ));
+        assert!(path_allowed(
+            c,
+            &Method::POST,
+            "/series/abc/episodes/def/acquire"
+        ));
 
         // Everything that changes how skadi works, or removes something, stays
         // the operator's — including picking a release by hand, which is where
         // a wrong grab comes from.
         assert!(!path_allowed(c, &Method::DELETE, "/movies/abc"));
         assert!(!path_allowed(c, &Method::PATCH, "/movies/abc"));
-        assert!(!path_allowed(c, &Method::GET, "/movies/abc/editions/def/releases"));
-        assert!(!path_allowed(c, &Method::POST, "/movies/abc/editions/def/grab"));
+        assert!(!path_allowed(
+            c,
+            &Method::GET,
+            "/movies/abc/editions/def/releases"
+        ));
+        assert!(!path_allowed(
+            c,
+            &Method::POST,
+            "/movies/abc/editions/def/grab"
+        ));
         assert!(!path_allowed(c, &Method::POST, "/settings/profiles"));
         assert!(!path_allowed(c, &Method::GET, "/downloads"));
         assert!(!path_allowed(c, &Method::GET, "/members"));
@@ -1443,10 +1458,18 @@ mod tests {
         // plays everything.
         let m = Role::Member;
         assert!(!path_allowed(m, &Method::POST, "/movies"));
-        assert!(!path_allowed(m, &Method::POST, "/movies/abc/editions/def/acquire"));
+        assert!(!path_allowed(
+            m,
+            &Method::POST,
+            "/movies/abc/editions/def/acquire"
+        ));
         assert!(!path_allowed(m, &Method::GET, "/wanted"));
         assert!(path_allowed(m, &Method::GET, "/movies"));
-        assert!(path_allowed(m, &Method::GET, "/movies/abc/editions/def/video"));
+        assert!(path_allowed(
+            m,
+            &Method::GET,
+            "/movies/abc/editions/def/video"
+        ));
         // Arm order matters here: `["movies", _]` matches "/movies/lookup" too,
         // so without the specific arm first a read-only member reached the
         // catalog search. Caught live, not by the first version of this test.
@@ -1459,7 +1482,10 @@ mod tests {
         assert!(!path_allowed(k, &Method::GET, "/movies/lookup"));
         assert!(!path_allowed(k, &Method::POST, "/movies"));
         assert!(!path_allowed(k, &Method::GET, "/wanted"));
-        assert!(!path_allowed(k, &Method::GET, "/authors"), "rollups would name hidden books");
+        assert!(
+            !path_allowed(k, &Method::GET, "/authors"),
+            "rollups would name hidden books"
+        );
     }
 
     #[test]
@@ -1500,12 +1526,7 @@ mod tests {
     #[test]
     fn a_contributor_may_upload_and_a_read_only_member_may_not() {
         use axum::http::Method;
-        let (post, put, del, get) = (
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::GET,
-        );
+        let (post, put, del, get) = (Method::POST, Method::PUT, Method::DELETE, Method::GET);
         for (m, p) in [
             (&post, "/uploads"),
             (&get, "/uploads"),

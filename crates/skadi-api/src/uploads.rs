@@ -53,8 +53,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::routing::{get, post, put};
-use futures::StreamExt;
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -179,9 +179,7 @@ pub fn safe_filename(raw: &str) -> Result<String, AppError> {
 fn safe_id(raw: &str) -> Result<&str, AppError> {
     let ok = !raw.is_empty()
         && raw.len() <= 64
-        && raw
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-');
+        && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
     if ok {
         Ok(raw)
     } else {
@@ -400,7 +398,7 @@ fn check_extension(kind: &str, filename: &str, override_csv: Option<&str>) -> Re
     let allowed = allowed_extensions(kind, override_csv);
     let ext = extension_of(filename)
         .ok_or_else(|| AppError::Validation(format!("{filename:?} has no extension")))?;
-    if allowed.iter().any(|a| *a == ext) {
+    if allowed.contains(&ext) {
         return Ok(());
     }
     Err(AppError::Validation(format!(
@@ -776,10 +774,7 @@ pub fn sweep_sessions(sessions: &FsPath, ttl_hours: i64) -> Vec<String> {
 ///
 /// Modelled on `backup::recycle_sweep_loop`, including running the blocking
 /// filesystem work off the async runtime.
-pub async fn session_sweep_loop(
-    state: Arc<AppState>,
-    cancel: tokio_util::sync::CancellationToken,
-) {
+pub async fn session_sweep_loop(state: Arc<AppState>, cancel: tokio_util::sync::CancellationToken) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
     ticker.tick().await;
     loop {
@@ -810,7 +805,10 @@ mod tests {
 
     #[test]
     fn a_filename_keeps_its_extension_and_loses_its_path() {
-        assert_eq!(safe_filename("/tmp/Movie (2024).mkv").unwrap(), "Movie (2024).mkv");
+        assert_eq!(
+            safe_filename("/tmp/Movie (2024).mkv").unwrap(),
+            "Movie (2024).mkv"
+        );
         assert_eq!(safe_filename("C:\\rips\\Movie.mkv").unwrap(), "Movie.mkv");
     }
 
@@ -853,8 +851,19 @@ mod tests {
             assert!(
                 matches!(
                     *ext,
-                    "mkv" | "webm" | "mp4" | "m4v" | "mov" | "m4b" | "m4a" | "mp3" | "flac"
-                        | "ogg" | "opus" | "aac" | "wav"
+                    "mkv"
+                        | "webm"
+                        | "mp4"
+                        | "m4v"
+                        | "mov"
+                        | "m4b"
+                        | "m4a"
+                        | "mp3"
+                        | "flac"
+                        | "ogg"
+                        | "opus"
+                        | "aac"
+                        | "wav"
                 ),
                 "{ext} is accepted but skadi-media-probe has no in-process reader for it"
             );
@@ -888,7 +897,10 @@ mod tests {
         // have to reason about what else they just re-enabled.
         let csv = Some("avi, .VOB");
         assert!(check_extension("movie", "old.avi", csv).is_ok());
-        assert!(check_extension("movie", "old.vob", csv).is_ok(), "case and dot are tolerated");
+        assert!(
+            check_extension("movie", "old.vob", csv).is_ok(),
+            "case and dot are tolerated"
+        );
         assert!(
             check_extension("movie", "new.mkv", csv).is_err(),
             "an override replaces the built-in set"
@@ -947,6 +959,9 @@ mod tests {
         // No library-import flow exists for anything else, so accepting one
         // would open a session that could never be finished.
         let err = check_kind("music").unwrap_err();
-        assert!(format!("{err}").contains("movie, series or audiobook"), "{err}");
+        assert!(
+            format!("{err}").contains("movie, series or audiobook"),
+            "{err}"
+        );
     }
 }

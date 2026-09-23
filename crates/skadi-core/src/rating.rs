@@ -53,10 +53,11 @@ pub fn parse_rating(kind: MediaKind, label: &str) -> Option<Rating> {
         Scale::Mpaa => (MPAA, Scale::Mpaa),
         Scale::TvParental => (TV, Scale::TvParental),
     };
-    ladder
-        .iter()
-        .position(|r| key(r) == k)
-        .map(|i| Rating { scale, rank: i as u8, label: ladder[i] })
+    ladder.iter().position(|r| key(r) == k).map(|i| Rating {
+        scale,
+        rank: i as u8,
+        label: ladder[i],
+    })
 }
 
 /// Every label on a kind's scale, mildest first — for policy editors.
@@ -84,13 +85,25 @@ mod tests {
 
     #[test]
     fn parses_both_scales_forgivingly() {
-        assert_eq!(parse_rating(MediaKind::Movie, "PG-13").unwrap().label, "PG-13");
+        assert_eq!(
+            parse_rating(MediaKind::Movie, "PG-13").unwrap().label,
+            "PG-13"
+        );
         assert_eq!(parse_rating(MediaKind::Movie, "pg13").unwrap().rank, 2);
         assert_eq!(parse_rating(MediaKind::Series, "TV-PG").unwrap().rank, 3);
-        assert_eq!(parse_rating(MediaKind::Series, "tv pg").unwrap().label, "TV-PG");
-        assert_eq!(parse_rating(MediaKind::Series, "TVMA").unwrap().label, "TV-MA");
+        assert_eq!(
+            parse_rating(MediaKind::Series, "tv pg").unwrap().label,
+            "TV-PG"
+        );
+        assert_eq!(
+            parse_rating(MediaKind::Series, "TVMA").unwrap().label,
+            "TV-MA"
+        );
         assert!(parse_rating(MediaKind::Movie, "Not Rated").is_none());
-        assert!(parse_rating(MediaKind::Movie, "TV-14").is_none(), "wrong scale is unrated");
+        assert!(
+            parse_rating(MediaKind::Movie, "TV-14").is_none(),
+            "wrong scale is unrated"
+        );
         assert!(parse_rating(MediaKind::Audiobook, "PG").is_none());
     }
 

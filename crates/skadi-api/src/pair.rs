@@ -210,7 +210,10 @@ mod tests {
     #[test]
     fn app_uri_encoding_survives_host_and_token() {
         // Host colon + a token byte outside the unreserved set are encoded.
-        assert_eq!(urlencoding_encode("203.0.113.27:8090"), "203.0.113.27%3A8090");
+        assert_eq!(
+            urlencoding_encode("203.0.113.27:8090"),
+            "203.0.113.27%3A8090"
+        );
         assert_eq!(urlencoding_encode("ab/cd+ef"), "ab%2Fcd%2Bef");
     }
 }

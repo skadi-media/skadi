@@ -3279,15 +3279,32 @@ pub struct UploadDone {
     pub kind: String,
 }
 
+/// The `POST /uploads` body.
+///
+/// **`size_bytes` must serialise as an integer.** A browser reports a file's
+/// size as `f64` (`web_sys::File::size`), and handing that straight to
+/// `serde_json` writes `16044.0`, which the daemon rejects outright:
+/// `invalid type: floating point, expected u64`. Every upload from the UI
+/// failed on this and nothing caught it — the integration tests speak JSON
+/// directly and naturally send an integer, so only a real browser ever
+/// produced the broken shape (SKADI-I-0062, found 2026-09-23).
+///
+/// Split out from the request purely so a test can assert the wire shape.
+fn open_upload_body(filename: &str, size_bytes: f64, kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "filename": filename,
+        "size_bytes": size_bytes as u64,
+        "kind": kind,
+    })
+}
+
 /// Open a session. `kind` is `movie` | `series` | `audiobook`.
 pub async fn open_upload(
     filename: &str,
     size_bytes: f64,
     kind: &str,
 ) -> Result<UploadSession, ApiError> {
-    let body = serde_json::json!({
-        "filename": filename, "size_bytes": size_bytes, "kind": kind
-    });
+    let body = open_upload_body(filename, size_bytes, kind);
     let resp = post(&format!("{API_BASE}/uploads"))
         .header("content-type", "application/json")
         .body(body.to_string())?
@@ -3322,6 +3339,9 @@ pub async fn put_upload_chunk(
     offset: f64,
     blob: &web_sys::Blob,
 ) -> Result<UploadSession, ApiError> {
+    // `as u64` for the same reason as the body above: an offset is a byte
+    // count, and a query string carrying `offset=8022.5` is nonsense.
+    let offset = offset as u64;
     let resp = put(&format!("{API_BASE}/uploads/{id}/chunk?offset={offset}"))
         .header("content-type", "application/octet-stream")
         .body(blob.clone())?
@@ -3347,4 +3367,36 @@ pub async fn delete_upload(id: &str) -> Result<(), ApiError> {
         .await
         .noted()?;
     write_ok("cancel upload", resp).await
+}
+
+#[cfg(test)]
+mod upload_wire_tests {
+    use super::*;
+
+    #[test]
+    fn the_upload_body_sends_a_whole_number_of_bytes() {
+        // The bug this pins: a browser reports file size as f64, and passing
+        // it through unchanged wrote `16044.0`, which the daemon refuses with
+        // "invalid type: floating point, expected u64". Every upload from the
+        // UI failed; no server test could see it, because JSON written by hand
+        // naturally carries an integer.
+        let body = open_upload_body("tone.wav", 16044.0, "audiobook");
+        assert_eq!(body["size_bytes"], serde_json::json!(16044u64));
+        assert!(
+            body["size_bytes"].is_u64(),
+            "size_bytes must be an integer, got {}",
+            body["size_bytes"]
+        );
+        assert!(!body["size_bytes"].to_string().contains('.'));
+        assert_eq!(body["filename"], "tone.wav");
+        assert_eq!(body["kind"], "audiobook");
+    }
+
+    #[test]
+    fn a_large_file_size_survives_the_conversion() {
+        // 40 GB is the size this feature exists for; f64 holds it exactly.
+        let big = 40.0 * 1024.0 * 1024.0 * 1024.0;
+        let body = open_upload_body("film.mkv", big, "movie");
+        assert_eq!(body["size_bytes"], serde_json::json!(42_949_672_960u64));
+    }
 }

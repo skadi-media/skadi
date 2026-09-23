@@ -990,16 +990,13 @@ fn statvfs_available(path: &Path) -> Option<u64> {
     }
     // Available blocks to an unprivileged process × fragment size.
     //
-    // The casts are platform-dependent and there is no spelling that satisfies
-    // clippy on both. `libc::statvfs` widths differ: on Linux both fields are
-    // already `u64`, so `as u64` is an `unnecessary_cast`; on macOS `f_bavail`
-    // is narrower and the widening is required, while `f_frsize` is not, so
-    // `u64::from` is a `useless_conversion` there. Either spelling is green on
-    // one platform and red on the other — which is exactly how this reached
-    // CI: clean on the developer's Mac, failing on the Linux runner.
-    //
-    // Keep the cast, which is correct everywhere, and silence the lint that
-    // only fires where the cast happens to be a no-op.
+    // `libc::statvfs` field widths differ by platform: on Linux — the only
+    // place skadi actually runs, since it ships as a container — these are
+    // already `u64` and the cast is a no-op, so clippy calls it unnecessary.
+    // On macOS, where this is developed, `f_bavail` is narrower and the
+    // widening is required to compile at all. No single spelling is clean on
+    // both: `u64::from` trades this lint for `useless_conversion` on macOS.
+    // The cast is correct everywhere; only the lint is platform-specific.
     #[allow(clippy::unnecessary_cast)]
     Some((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
 }

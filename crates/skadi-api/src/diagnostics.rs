@@ -552,6 +552,13 @@ async fn library_root_path(store: &Store) -> Result<String, ApiError> {
 /// `(free_bytes, total_bytes)` for the filesystem backing `path`, via `statvfs`.
 /// `None` if the path is missing or the platform has no `statvfs`.
 #[cfg(unix)]
+// `libc::statvfs` field widths differ by platform: on Linux — the only place
+// skadi actually runs, since it ships as a container — these are already
+// `u64` and the casts below are no-ops, so clippy calls them unnecessary. On
+// macOS, where this is developed, some are narrower and the widening is
+// required to compile at all. The cast is correct on both; only the lint is
+// platform-specific. Same reasoning as `skadi_importer::statvfs_available`.
+#[allow(clippy::unnecessary_cast)]
 pub(crate) fn disk_space(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
 

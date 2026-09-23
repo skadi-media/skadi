@@ -1818,7 +1818,11 @@ fn genre_counts_orders_by_count_then_name_and_dedups_within_an_item() {
     let got = skadi_web::genre_counts(items.iter().map(Vec::as_slice));
     assert_eq!(
         got,
-        vec![("Crime".to_string(), 2), ("Drama".to_string(), 1), ("Thriller".to_string(), 1)]
+        vec![
+            ("Crime".to_string(), 2),
+            ("Drama".to_string(), 1),
+            ("Thriller".to_string(), 1)
+        ]
     );
 }
 
@@ -1830,7 +1834,10 @@ fn policy_form_round_trips_json() {
     use skadi_web::household::PolicyForm;
     let p = Policy {
         kinds: vec!["movie".into(), "series".into()],
-        max_rating: MaxRating { movie: Some("PG-13".into()), series: None },
+        max_rating: MaxRating {
+            movie: Some("PG-13".into()),
+            series: None,
+        },
         blocked_genres: vec!["Horror".into(), "War".into()],
         blocked_items: vec!["m-1".into()],
         allowed_items: vec!["s-2".into()],
@@ -1844,7 +1851,10 @@ fn policy_form_round_trips_json() {
     let j = form.to_json();
     assert_eq!(j["kinds"], json!(["movie", "series"]));
     assert_eq!(j["max_rating"]["movie"], "PG-13");
-    assert!(j["max_rating"]["series"].is_null(), "an empty select is no ceiling");
+    assert!(
+        j["max_rating"]["series"].is_null(),
+        "an empty select is no ceiling"
+    );
     assert_eq!(j["blocked_genres"], json!(["Horror", "War"]));
     assert_eq!(j["allowed_books"], json!(["b-3"]));
     // A blank ceiling with spaces is still no ceiling.
@@ -1858,12 +1868,24 @@ fn policy_form_round_trips_json() {
 fn policy_summary_reads_like_the_rules() {
     use skadi_web::api::{MaxRating, Policy};
     use skadi_web::household::{policy_summary, rating_options, role_label};
-    assert_eq!(policy_summary("admin", &Policy::default()), vec!["Everything, and the controls"]);
-    assert_eq!(policy_summary("member", &Policy::default()), vec!["Sees everything"]);
-    assert_eq!(policy_summary("kid", &Policy::default()), vec!["No audiobooks"]);
+    assert_eq!(
+        policy_summary("admin", &Policy::default()),
+        vec!["Everything, and the controls"]
+    );
+    assert_eq!(
+        policy_summary("member", &Policy::default()),
+        vec!["Sees everything"]
+    );
+    assert_eq!(
+        policy_summary("kid", &Policy::default()),
+        vec!["No audiobooks"]
+    );
     let p = Policy {
         kinds: vec!["movie".into(), "series".into()],
-        max_rating: MaxRating { movie: Some("PG".into()), series: Some("TV-Y7".into()) },
+        max_rating: MaxRating {
+            movie: Some("PG".into()),
+            series: Some("TV-Y7".into()),
+        },
         blocked_genres: vec!["Horror".into()],
         blocked_items: vec!["a".into(), "b".into()],
         allowed_items: vec![],
@@ -1871,7 +1893,14 @@ fn policy_summary_reads_like_the_rules() {
     };
     assert_eq!(
         policy_summary("kid", &p),
-        vec!["No audiobooks", "Movies up to PG", "TV up to TV-Y7", "No Horror", "2 title(s) blocked", "1 audiobook(s)"]
+        vec![
+            "No audiobooks",
+            "Movies up to PG",
+            "TV up to TV-Y7",
+            "No Horror",
+            "2 title(s) blocked",
+            "1 audiobook(s)"
+        ]
     );
     assert_eq!(rating_options("movie").last(), Some(&"NC-17"));
     assert_eq!(rating_options("series").first(), Some(&"TV-Y"));
@@ -1883,15 +1912,36 @@ fn policy_summary_reads_like_the_rules() {
 fn search_titles_is_case_insensitive_and_skips_picked() {
     use skadi_web::household::{TitleRef, search_titles};
     let items = vec![
-        TitleRef { id: "1".into(), label: "The Matrix (1999)".into(), kind: "movie" },
-        TitleRef { id: "2".into(), label: "Matrix Reloaded (2003)".into(), kind: "movie" },
-        TitleRef { id: "3".into(), label: "Adventure Time (2010)".into(), kind: "series" },
+        TitleRef {
+            id: "1".into(),
+            label: "The Matrix (1999)".into(),
+            kind: "movie",
+        },
+        TitleRef {
+            id: "2".into(),
+            label: "Matrix Reloaded (2003)".into(),
+            kind: "movie",
+        },
+        TitleRef {
+            id: "3".into(),
+            label: "Adventure Time (2010)".into(),
+            kind: "series",
+        },
     ];
-    assert!(search_titles("", &items, &[], 10).is_empty(), "empty query finds nothing");
+    assert!(
+        search_titles("", &items, &[], 10).is_empty(),
+        "empty query finds nothing"
+    );
     let hits = search_titles("matrix", &items, &[], 10);
-    assert_eq!(hits.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["1", "2"]);
+    assert_eq!(
+        hits.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["1", "2"]
+    );
     let hits = search_titles("MATRIX", &items, &["1".to_string()], 10);
-    assert_eq!(hits.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["2"]);
+    assert_eq!(
+        hits.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["2"]
+    );
     assert_eq!(search_titles("a", &items, &[], 1).len(), 1, "limit applies");
 }
 
@@ -1903,7 +1953,10 @@ fn search_titles_is_case_insensitive_and_skips_picked() {
 #[wasm_bindgen_test]
 fn the_login_gate_tracks_the_auth_flag_not_the_stored_token() {
     skadi_web::api::clear_auth_expired();
-    assert!(!skadi_web::api::auth_expired(), "open mode stays out of the way");
+    assert!(
+        !skadi_web::api::auth_expired(),
+        "open mode stays out of the way"
+    );
 
     skadi_web::api::note_auth_expired_for_test();
     assert!(skadi_web::api::auth_expired(), "a 401 asks for a sign-in");
@@ -1925,7 +1978,9 @@ fn the_login_gate_tracks_the_auth_flag_not_the_stored_token() {
 fn the_page_carries_no_injected_token() {
     let doc = web_sys::window().unwrap().document().unwrap();
     assert!(
-        doc.query_selector("meta[name=\"skadi-api-token\"]").unwrap().is_none(),
+        doc.query_selector("meta[name=\"skadi-api-token\"]")
+            .unwrap()
+            .is_none(),
         "index.html must not carry a token meta tag"
     );
 }
@@ -1940,7 +1995,10 @@ fn changing_your_own_password_is_a_plain_authenticated_post() {
     let body = serde_json::json!({ "current": "old one", "new": "a new one" });
     assert_eq!(body["current"], "old one");
     assert_eq!(body["new"], "a new one");
-    assert!(body.get("password").is_none(), "the field is `new`, not `password`");
+    assert!(
+        body.get("password").is_none(),
+        "the field is `new`, not `password`"
+    );
 }
 
 // --- section strips (SKADI-T-0627) ------------------------------------------
@@ -1954,13 +2012,19 @@ fn subnav_hrefs(
     role: Option<&str>,
     sections: &'static [skadi_web::subnav::Section],
 ) -> Vec<&'static str> {
-    skadi_web::subnav::visible(role, sections).into_iter().map(|(h, _)| h).collect()
+    skadi_web::subnav::visible(role, sections)
+        .into_iter()
+        .map(|(h, _)| h)
+        .collect()
 }
 
 #[wasm_bindgen_test]
 fn an_admin_sees_every_section() {
     use skadi_web::subnav::{ACTIVITY_SECTIONS, SETTINGS_SECTIONS, visible};
-    assert_eq!(visible(Some("admin"), SETTINGS_SECTIONS).len(), SETTINGS_SECTIONS.len());
+    assert_eq!(
+        visible(Some("admin"), SETTINGS_SECTIONS).len(),
+        SETTINGS_SECTIONS.len()
+    );
     assert_eq!(
         visible(Some("admin"), ACTIVITY_SECTIONS).len(),
         ACTIVITY_SECTIONS.len()
@@ -1982,15 +2046,24 @@ fn a_contributor_gets_wanted_but_not_the_hunters_internals() {
 fn a_member_or_a_kid_gets_no_strip_at_all() {
     use skadi_web::subnav::{ACTIVITY_SECTIONS, SETTINGS_SECTIONS};
     for role in ["member", "kid"] {
-        assert!(subnav_hrefs(Some(role), ACTIVITY_SECTIONS).is_empty(), "{role}");
-        assert!(subnav_hrefs(Some(role), SETTINGS_SECTIONS).is_empty(), "{role}");
+        assert!(
+            subnav_hrefs(Some(role), ACTIVITY_SECTIONS).is_empty(),
+            "{role}"
+        );
+        assert!(
+            subnav_hrefs(Some(role), SETTINGS_SECTIONS).is_empty(),
+            "{role}"
+        );
     }
 }
 
 #[wasm_bindgen_test]
 fn an_unknown_role_shows_everything_rather_than_flashing_a_short_strip() {
     use skadi_web::subnav::{SETTINGS_SECTIONS, visible};
-    assert_eq!(visible(None, SETTINGS_SECTIONS).len(), SETTINGS_SECTIONS.len());
+    assert_eq!(
+        visible(None, SETTINGS_SECTIONS).len(),
+        SETTINGS_SECTIONS.len()
+    );
 }
 
 #[wasm_bindgen_test]
@@ -2006,8 +2079,16 @@ fn listen_is_a_settings_section_not_an_audiobook_one() {
 fn setting_a_player_up_is_a_different_pill_from_this_browsers_shelf() {
     // They shared one page and were two unrelated jobs (operator, 2026-09-23).
     use skadi_web::subnav::SETTINGS_SECTIONS;
-    assert!(SETTINGS_SECTIONS.iter().any(|(h, l)| *h == "/players" && *l == "Players"));
-    assert!(SETTINGS_SECTIONS.iter().any(|(h, l)| *h == "/listen" && *l == "Device"));
+    assert!(
+        SETTINGS_SECTIONS
+            .iter()
+            .any(|(h, l)| *h == "/players" && *l == "Players")
+    );
+    assert!(
+        SETTINGS_SECTIONS
+            .iter()
+            .any(|(h, l)| *h == "/listen" && *l == "Device")
+    );
 }
 
 #[wasm_bindgen_test]
@@ -2016,7 +2097,10 @@ fn every_pill_label_is_one_word() {
     // read as prose next to Indexers, Naming and Household.
     use skadi_web::subnav::{ACTIVITY_SECTIONS, SETTINGS_SECTIONS};
     for (href, label) in SETTINGS_SECTIONS.iter().chain(ACTIVITY_SECTIONS) {
-        assert!(!label.contains(' '), "{href} is labelled {label:?}, which is not one word");
+        assert!(
+            !label.contains(' '),
+            "{href} is labelled {label:?}, which is not one word"
+        );
     }
 }
 
@@ -2037,7 +2121,14 @@ fn a_page_gets_the_strip_its_own_route_is_listed_in() {
 #[wasm_bindgen_test]
 fn a_page_in_no_section_draws_no_strip() {
     use skadi_web::subnav::table_for;
-    for path in ["/", "/movies", "/tv", "/add", "/audiobooks", "/listen/abc/def"] {
+    for path in [
+        "/",
+        "/movies",
+        "/tv",
+        "/add",
+        "/audiobooks",
+        "/listen/abc/def",
+    ] {
         assert!(table_for(path).is_none(), "{path}");
     }
 }
@@ -2056,7 +2147,10 @@ fn the_apk_install_carries_a_url_to_link_to() {
     }))
     .unwrap();
     assert!(a.available);
-    assert_eq!(a.url.as_deref(), Some("http://skadi.example:8080/app/skadi-28.apk"));
+    assert_eq!(
+        a.url.as_deref(),
+        Some("http://skadi.example:8080/app/skadi-28.apk")
+    );
 
     // Nothing published yet: no link to draw, and the page must not invent one.
     let none: skadi_web::api::ApkInstall =
@@ -2125,7 +2219,11 @@ fn an_upload_hands_its_path_to_the_import_page_intact() {
     ] {
         let href = import_href("movie", path);
         let query = href.split_once('?').unwrap().1;
-        assert_eq!(staged_path_from_query(query).as_deref(), Some(path), "{path}");
+        assert_eq!(
+            staged_path_from_query(query).as_deref(),
+            Some(path),
+            "{path}"
+        );
     }
 }
 

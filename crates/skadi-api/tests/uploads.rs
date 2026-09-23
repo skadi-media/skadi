@@ -824,6 +824,21 @@ async fn a_completed_upload_answers_a_path_the_import_scan_can_take() {
     assert!(path.starts_with(root.path()), "{path:?}");
     // The filename survives, because the importer and the matcher both read it.
     assert_eq!(path.file_name().unwrap(), "Handed Over.wav");
+
+    // And the hand-off points at the **directory**, which is what
+    // library-import's scan walks. Pointed at the file it fails with
+    // "Not a directory (os error 20)" — which is exactly what happened in a
+    // browser before this field existed.
+    let scan = std::path::PathBuf::from(done["scan_path"].as_str().unwrap());
+    assert!(scan.is_dir(), "scan_path must be a directory, got {scan:?}");
+    assert_eq!(scan, path.parent().unwrap());
+    assert!(
+        std::fs::read_dir(&scan)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name() == "Handed Over.wav"),
+        "the uploaded file must be inside the directory handed to import"
+    );
     // And the kind comes back, so the UI knows which import page to open.
     assert_eq!(done["kind"], "audiobook");
 

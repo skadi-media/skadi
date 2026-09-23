@@ -3276,6 +3276,9 @@ pub struct UploadSession {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct UploadDone {
     pub path: String,
+    /// The directory to hand library-import — its scan walks a directory and
+    /// refuses a file. Server-decided; see `uploads::CompleteResponse`.
+    pub scan_path: String,
     pub kind: String,
 }
 

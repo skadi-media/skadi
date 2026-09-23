@@ -235,7 +235,11 @@ where
     let busy = RwSignal::new(false);
 
     let submit = move || {
-        let (c, n, k) = (current.get_untracked(), next.get_untracked(), confirm.get_untracked());
+        let (c, n, k) = (
+            current.get_untracked(),
+            next.get_untracked(),
+            confirm.get_untracked(),
+        );
         if n != k {
             error.set(Some("Those two do not match.".into()));
             return;

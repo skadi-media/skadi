@@ -73,7 +73,11 @@ pub fn MoviesPage() -> impl IntoView {
             .into_iter()
             .filter(|m| f == "all" || movie_lib_status(m) == f)
             .filter(|m| q.is_empty() || m.title.to_lowercase().contains(&q))
-            .filter(|m| genre_filter.get().is_none_or(|g| m.genres.iter().any(|x| x == &g)))
+            .filter(|m| {
+                genre_filter
+                    .get()
+                    .is_none_or(|g| m.genres.iter().any(|x| x == &g))
+            })
             .map(poster_tile)
             .collect_view()
     };

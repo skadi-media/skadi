@@ -86,7 +86,11 @@ pub fn TvPage() -> impl IntoView {
             .into_iter()
             .filter(|s| f == "all" || series_lib_status(s) == f)
             .filter(|s| q.is_empty() || s.title.to_lowercase().contains(&q))
-            .filter(|s| genre_filter.get().is_none_or(|g| s.genres.iter().any(|x| x == &g)))
+            .filter(|s| {
+                genre_filter
+                    .get()
+                    .is_none_or(|g| s.genres.iter().any(|x| x == &g))
+            })
             .map(series_tile)
             .collect_view()
     };

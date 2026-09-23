@@ -79,8 +79,10 @@ pub fn visible(role: Option<&str>, sections: &'static [Section]) -> Vec<Section>
 }
 
 /// Every strip, in the order they are searched.
-const TABLES: &[(&str, &[Section])] =
-    &[("Settings", SETTINGS_SECTIONS), ("Activity", ACTIVITY_SECTIONS)];
+const TABLES: &[(&str, &[Section])] = &[
+    ("Settings", SETTINGS_SECTIONS),
+    ("Activity", ACTIVITY_SECTIONS),
+];
 
 /// The strip the page at `path` belongs to, or `None` if it is in no section.
 ///
@@ -143,16 +145,22 @@ mod tests {
     use super::*;
 
     fn hrefs(role: Option<&str>, sections: &'static [Section]) -> Vec<&'static str> {
-        visible(role, sections).into_iter().map(|(h, _)| h).collect()
+        visible(role, sections)
+            .into_iter()
+            .map(|(h, _)| h)
+            .collect()
     }
 
     #[test]
     fn an_admin_sees_every_section() {
-        assert_eq!(visible(Some("admin"), SETTINGS_SECTIONS).len(), SETTINGS_SECTIONS.len());
         assert_eq!(
-        visible(Some("admin"), ACTIVITY_SECTIONS).len(),
-        ACTIVITY_SECTIONS.len()
-    );
+            visible(Some("admin"), SETTINGS_SECTIONS).len(),
+            SETTINGS_SECTIONS.len()
+        );
+        assert_eq!(
+            visible(Some("admin"), ACTIVITY_SECTIONS).len(),
+            ACTIVITY_SECTIONS.len()
+        );
     }
 
     #[test]
@@ -176,7 +184,10 @@ mod tests {
     #[test]
     fn an_unknown_role_shows_everything_rather_than_flashing_a_short_strip() {
         // `/me` has not answered yet, or this is open mode with no household.
-        assert_eq!(visible(None, SETTINGS_SECTIONS).len(), SETTINGS_SECTIONS.len());
+        assert_eq!(
+            visible(None, SETTINGS_SECTIONS).len(),
+            SETTINGS_SECTIONS.len()
+        );
     }
 
     #[test]
@@ -192,7 +203,14 @@ mod tests {
 
     #[test]
     fn a_page_in_no_section_draws_no_strip() {
-        for path in ["/", "/movies", "/tv", "/add", "/audiobooks", "/listen/abc/def"] {
+        for path in [
+            "/",
+            "/movies",
+            "/tv",
+            "/add",
+            "/audiobooks",
+            "/listen/abc/def",
+        ] {
             assert!(table_for(path).is_none(), "{path}");
         }
     }

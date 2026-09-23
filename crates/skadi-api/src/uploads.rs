@@ -126,9 +126,18 @@ pub struct SessionView {
 /// `POST /uploads/{id}/complete` response.
 #[derive(Debug, Serialize)]
 pub struct CompleteResponse {
-    /// Where the finished file now sits — a server path, ready to be handed to
-    /// library-import.
+    /// Where the finished file now sits.
     pub path: String,
+    /// What to point library-import at — the **directory** holding the file,
+    /// not the file itself.
+    ///
+    /// Its scan walks a directory; handed a file it fails with
+    /// `Not a directory (os error 20)`. This is the whole reason each upload
+    /// gets its own directory, and the first cut still handed over the file
+    /// path and broke at exactly this step (found in a browser, 2026-09-23).
+    /// The server decides it rather than leaving the client to strip a path
+    /// component and get it subtly wrong.
+    pub scan_path: String,
     pub kind: String,
     pub size_bytes: u64,
 }
@@ -685,6 +694,7 @@ async fn complete_session(
 
     Ok(Json(CompleteResponse {
         path: dest.to_string_lossy().into_owned(),
+        scan_path: dest_dir.to_string_lossy().into_owned(),
         kind: m.kind,
         size_bytes: m.size_bytes,
     }))

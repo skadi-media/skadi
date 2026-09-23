@@ -150,7 +150,8 @@ async fn run(job: Job, kind: String) {
     job.state.set(JobState::Finishing);
     match api::complete_upload(&id).await {
         Ok(done) => {
-            job.done_path.set(Some(done.path));
+            // The directory, not the file: library-import scans directories.
+            job.done_path.set(Some(done.scan_path));
             job.state.set(JobState::Done);
         }
         Err(e) => {

@@ -285,7 +285,10 @@ pub fn HouseholdPage() -> impl IntoView {
                 });
             }
             lib.books.sort_by(|a, b| a.label.cmp(&b.label));
-            lib.genres = crate::genre_counts(genres).into_iter().map(|(g, _)| g).collect();
+            lib.genres = crate::genre_counts(genres)
+                .into_iter()
+                .map(|(g, _)| g)
+                .collect();
             lib.genres.sort();
             library.set(lib);
         });
@@ -701,19 +704,23 @@ pub fn HouseholdPage() -> impl IntoView {
 
 /// The policy editor: kinds, ceilings, blocked genres and the three pickers.
 fn policy_editor(policy: RwSignal<PolicyForm>, library: RwSignal<Library>) -> AnyView {
-    let kind_check = |label: &'static str, get: fn(&PolicyForm) -> bool, set: fn(&mut PolicyForm, bool)| {
-        view! {
-            <label class="check">
-                <input
-                    r#type="checkbox"
-                    prop:checked=move || get(&policy.get())
-                    on:change=move |ev| policy.update(|p| set(p, event_target_checked(&ev)))
-                />
-                {label}
-            </label>
-        }
-    };
-    let ceiling = |label: &'static str, kind: &'static str, get: fn(&PolicyForm) -> String, set: fn(&mut PolicyForm, String)| {
+    let kind_check =
+        |label: &'static str, get: fn(&PolicyForm) -> bool, set: fn(&mut PolicyForm, bool)| {
+            view! {
+                <label class="check">
+                    <input
+                        r#type="checkbox"
+                        prop:checked=move || get(&policy.get())
+                        on:change=move |ev| policy.update(|p| set(p, event_target_checked(&ev)))
+                    />
+                    {label}
+                </label>
+            }
+        };
+    let ceiling = |label: &'static str,
+                   kind: &'static str,
+                   get: fn(&PolicyForm) -> String,
+                   set: fn(&mut PolicyForm, String)| {
         let options = rating_options(kind);
         view! {
             <div class="field">

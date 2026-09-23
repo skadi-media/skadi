@@ -30,9 +30,9 @@ pub mod path_picker;
 pub mod persist;
 pub mod player;
 mod settings;
+mod setup;
 pub mod subnav;
 pub mod upload;
-mod setup;
 
 pub use app::App;
 

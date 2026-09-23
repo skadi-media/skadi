@@ -61,6 +61,17 @@ jobs:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
     needs: build
+    # GitHub Pages is not available for a **private** repository on a Free
+    # plan, and this org is Free while the repo is private — the deploy step
+    # answers `404 … Ensure GitHub Pages has been enabled` and the whole
+    # workflow goes red on every push (SKADI-T-0482, 2026-09-23).
+    #
+    # The docs still *build* above, which is the part that catches a broken
+    # mkdocs config or a dead link. Only the publish is skipped, and only
+    # while private: the moment the repo goes public this starts deploying on
+    # its own with no edit needed. A workflow that is permanently red is a
+    # workflow people stop reading.
+    if: github.event.repository.visibility == 'public'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

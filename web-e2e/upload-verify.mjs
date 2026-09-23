@@ -65,6 +65,19 @@ if (await link.count()) {
   console.log("import h2:" + await page.locator("h2").first().textContent().catch(() => "?"));
   const pathField = await page.locator('input.path-field, input[type="text"]').first().inputValue().catch(() => "");
   console.log("path box: " + (pathField || "(empty)"));
+
+  // "No error" is not "it found the file". Wait for the scan to produce a row
+  // naming what was uploaded — that is the actual end of the hand-off.
+  let found = "";
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(500);
+    const text = await page.locator("main, body").first().innerText().catch(() => "");
+    if (text.includes("tone")) { found = "yes"; break; }
+    if (/no .*(candidates|files)|nothing to import/i.test(text)) { found = "scan found nothing"; break; }
+  }
+  console.log("scanned:  " + (found || "no row appeared within 15s"));
+  const rows = await page.locator("tbody tr").count().catch(() => 0);
+  console.log("rows:     " + rows);
 } else {
   console.log("hand-off: MISSING");
   const err = await page.locator(".upload-job .bad").first().textContent().catch(() => "");

@@ -25,8 +25,15 @@
 # exist in the image. SKADI-T-0139 (MP3→M4B) stays a separate, unmade decision.
 FROM debian:bookworm-slim AS ffprobe-build
 ARG FFMPEG_VERSION=7.1.1
+# `nasm` is needed on x86 only: ffmpeg's configure refuses to build its x86
+# assembly without it ("nasm/yasm not found or too old"). arm64 has no x86asm
+# to assemble, which is why the first multi-arch run built arm64 cleanly and
+# failed amd64 — the local Mac builds are arm64, so nobody had ever hit it
+# (SKADI-T-0482, 2026-09-24). Installing it unconditionally keeps one command
+# for both arches; it is a build-stage package and costs the final image
+# nothing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential curl ca-certificates xz-utils pkg-config \
+        build-essential curl ca-certificates xz-utils pkg-config nasm \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /ff
 RUN curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o ff.tar.xz \

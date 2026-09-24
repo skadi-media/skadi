@@ -327,6 +327,15 @@ fn Sidebar() -> impl IntoView {
     let series_count = RwSignal::new(None::<usize>);
     let book_count = RwSignal::new(None::<usize>);
     let roots = RwSignal::new(Vec::<api::RootFolder>::new());
+
+    // Read before the fetches below, because it gates them. The API has
+    // enforced these since SKADI-T-0625; the sidebar was still *asking*, so a
+    // read-only member's console fired a 403 on every page load
+    // (operator report, 2026-09-24).
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let role = move || role_ctx.and_then(|r| r.get());
+    let is_admin = move || role().as_deref() == Some("admin");
+    let can_contribute = move || matches!(role().as_deref(), Some("admin") | Some("contributor"));
     // Re-fetch on mount and whenever the shared version bumps (a domain toggle in
     // Config), so the nav reflects enable/disable without a reload.
     let version = use_context::<DomainsVersion>();
@@ -352,7 +361,11 @@ fn Sidebar() -> impl IntoView {
             if let Ok(b) = api::list_books(None, None).await {
                 book_count.set(Some(b.len()));
             }
-            if let Ok(r) = api::root_folders().await {
+            // `/root-folders` is admin-only. Asking as anyone else is a
+            // guaranteed 403 in the console and an empty meter either way.
+            if is_admin()
+                && let Ok(r) = api::root_folders().await
+            {
                 roots.set(r);
             }
         });
@@ -432,8 +445,11 @@ fn Sidebar() -> impl IntoView {
             .collect_view()
     };
 
+    // A `Callback` rather than a bare closure: the Add button now renders
+    // inside a reactive closure, and a plain closure that moves `navigate`
+    // would make the enclosing view `FnOnce`.
     let navigate = use_navigate();
-    let go_add = move |_| navigate("/add", Default::default());
+    let go_add = Callback::new(move |()| navigate("/add", Default::default()));
 
     // Which areas this account can actually reach (SKADI-T-0627). The API has
     // gated these since SKADI-T-0625, but the sidebar offered them to everyone
@@ -441,10 +457,6 @@ fn Sidebar() -> impl IntoView {
     // one is conspicuous, so ask first. The role comes from the shell, which
     // sits above the router and so can hand the same answer to the section
     // strips on the pages.
-    let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
-    let role = move || role.and_then(|r| r.get());
-    let is_admin = move || role().as_deref() == Some("admin");
-    let can_contribute = move || matches!(role().as_deref(), Some("admin") | Some("contributor"));
 
     view! {
         <nav class="nav">
@@ -453,7 +465,11 @@ fn Sidebar() -> impl IntoView {
                 <span class="brand-name">"Skadi"</span>
             </div>
             <HealthBadge/>
-            <button class="add-media" on:click=go_add>"+ Add media"</button>
+            {move || can_contribute().then(|| view! {
+                <button class="add-media" on:click=move |_| go_add.run(())>
+                    "+ Add media"
+                </button>
+            })}
 
             <div class="nav-main">
                 // One entry per *area*, not per page (SKADI-T-0627). Wanted and

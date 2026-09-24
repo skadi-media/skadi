@@ -437,7 +437,22 @@ pub fn Dashboard() -> impl IntoView {
     };
 
     let navigate = use_navigate();
-    let go_add = move |_| navigate("/add", Default::default());
+    let go_add = Callback::new(move |()| navigate("/add", Default::default()));
+
+    // "Search or add anything" is the *catalog* search — the first step of
+    // adding, which needs `can_contribute()`. A read-only member who clicked
+    // it landed on a page that answered 403 to every query (operator report,
+    // 2026-09-24). Searching your own library is a local filter on each
+    // library page and is unaffected.
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let can_contribute = move || {
+        matches!(
+            role_ctx.and_then(|r| r.get()).as_deref(),
+            // `None` while `/me` is in flight: show it rather than flash it
+            // away under an operator who can use it.
+            None | Some("admin") | Some("contributor")
+        )
+    };
 
     view! {
         <div class="ov-head">
@@ -445,10 +460,12 @@ pub fn Dashboard() -> impl IntoView {
                 <h2 class="page-title">"Overview"</h2>
                 <p class="page-sub mono">"all media"</p>
             </div>
-            <button class="ov-search" on:click=go_add>
-                <span class="ov-search-icon">"⌕"</span>
-                "Search or add anything…"
-            </button>
+            {move || can_contribute().then(|| view! {
+                <button class="ov-search" on:click=move |_| go_add.run(())>
+                    <span class="ov-search-icon">"⌕"</span>
+                    "Search or add anything…"
+                </button>
+            })}
         </div>
 
         <div class="metrics-row">

@@ -2236,3 +2236,24 @@ fn an_import_page_opened_directly_has_no_staged_path() {
     assert_eq!(staged_path_from_query("?other=1"), None);
     assert_eq!(staged_path_from_query("?path="), None);
 }
+
+#[wasm_bindgen_test]
+fn only_a_contributor_is_offered_the_catalog_search() {
+    // A read-only member was shown "Search or add anything" on Overview and a
+    // "+ Add media" button in the sidebar, both of which lead to the catalog
+    // search — `/books/search`, `/movies/lookup` — which `path_allowed` gates
+    // to `can_contribute()`. He clicked, and got 403 (operator, 2026-09-24).
+    //
+    // Searching your own *library* is a local filter and is unaffected; these
+    // are the add flow wearing the same word.
+    fn offered(role: Option<&str>) -> bool {
+        matches!(role, None | Some("admin") | Some("contributor"))
+    }
+    assert!(offered(Some("admin")));
+    assert!(offered(Some("contributor")));
+    assert!(!offered(Some("member")), "a read-only member must not be offered it");
+    assert!(!offered(Some("kid")));
+    // Unknown role means `/me` has not answered yet. Showing it beats flashing
+    // it away under an operator who can use it.
+    assert!(offered(None));
+}

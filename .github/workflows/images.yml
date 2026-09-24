@@ -39,10 +39,20 @@ jobs:
       fail-fast: false
       matrix:
         image: [skadi, skadi-downloader-worker]
+        # `arch` must be a real matrix dimension. Listing the two
+        # architectures under `include:` alone does NOT make a cross product —
+        # include *merges into* existing combinations, so both jobs took the
+        # last matching entry and the workflow silently built **arm64 twice
+        # and amd64 never** (first real run, 2026-09-24). The manifest job then
+        # failed for want of an amd64 digest, which is the only reason anyone
+        # noticed.
+        arch: [amd64, arm64]
         # Native runners per architecture rather than one QEMU build
         # (SKADI-T-0482). Emulating arm64 to compile a Rust workspace takes
         # hours — the Mac measured 11 minutes for the *worker* alone under
         # Rosetta, and the daemon additionally builds the wasm UI.
+        # These includes now only *map* a value onto each combination, which
+        # is what include is for.
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -92,7 +102,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          # Arch first, image last, separated by `--`. With the image name
+          # first, `digests-skadi-*` also matched
+          # `digests-skadi-downloader-worker-*`, so the `skadi` manifest job
+          # collected the worker's digests and tried to build a manifest from
+          # a digest that does not exist under that name.
+          name: digests--${{ matrix.arch }}--${{ matrix.image }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -109,7 +124,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-${{ matrix.image }}-*
+          pattern: digests--*--${{ matrix.image }}
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3

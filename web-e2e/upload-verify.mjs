@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 
 const BASE = "http://127.0.0.1:8090";
 const TOKEN = process.env.SKADI_TOKEN;
-const FIXTURE = "../crates/skadi-api/tests/fixtures/tone.wav";
+// Which kind to exercise. Both matter: they take different probe paths on the
+// server and land on different import pages.
+const KIND = process.env.KIND || "audiobook";
+const FIXTURE = process.env.FIXTURE || (KIND === "audiobook"
+  ? "../crates/skadi-api/tests/fixtures/tone.wav"
+  : "../crates/skadi-media-probe/tests/fixtures/tiny.mp4");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -38,9 +43,12 @@ console.log("heading:  " + await page.locator("h2").first().textContent().catch(
 console.log("strip:    " + (await page.locator(".subnav-link").allTextContents()).join(" | "));
 
 // Choose the kind, then the file.
-await page.selectOption("select", "audiobook").catch(e => console.log("kind select: " + e.message.slice(0, 80)));
+await page.selectOption("select", KIND).catch(e => console.log("kind select: " + e.message.slice(0, 80)));
 await page.waitForTimeout(400);
-console.log("asin note:" + (await page.locator(".pending").count() ? " shown" : " MISSING"));
+const note = await page.locator(".pending").count();
+console.log("asin note:" + (KIND === "audiobook"
+  ? (note ? " shown" : " MISSING")
+  : (note ? " WRONGLY SHOWN for " + KIND : " correctly absent for " + KIND)));
 
 await page.setInputFiles('input[type="file"]', FIXTURE);
 console.log("picked:   " + FIXTURE);
@@ -68,16 +76,21 @@ if (await link.count()) {
 
   // "No error" is not "it found the file". Wait for the scan to produce a row
   // naming what was uploaded — that is the actual end of the hand-off.
+  // Look for the uploaded file's own name. The three import pages render
+  // results differently — the TV one groups by show rather than using a plain
+  // table — so counting `tbody tr` reported zero for a scan that had in fact
+  // found the episode. Match on the name, and give the scan long enough: it
+  // resolves metadata over the network.
+  const stem = FIXTURE.split("/").pop().replace(/\.[^.]+$/, "");
+  const needle = stem.split(/[ .]/)[0];
   let found = "";
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     await page.waitForTimeout(500);
-    const text = await page.locator("main, body").first().innerText().catch(() => "");
-    if (text.includes("tone")) { found = "yes"; break; }
+    const text = await page.locator("body").first().innerText().catch(() => "");
+    if (text.includes(needle)) { found = "yes"; break; }
     if (/no .*(candidates|files)|nothing to import/i.test(text)) { found = "scan found nothing"; break; }
   }
-  console.log("scanned:  " + (found || "no row appeared within 15s"));
-  const rows = await page.locator("tbody tr").count().catch(() => 0);
-  console.log("rows:     " + rows);
+  console.log(`scanned:  ${found || "nothing matching " + JSON.stringify(needle) + " within 30s"}`);
 } else {
   console.log("hand-off: MISSING");
   const err = await page.locator(".upload-job .bad").first().textContent().catch(() => "");

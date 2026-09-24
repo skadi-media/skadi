@@ -79,3 +79,10 @@ deploy/.backups/
 # so against a real one they contain real titles and covers — never committed.
 clients/skadi-android/build/shots/
 .claude/metis-ralph-active.yaml
+
+# Any .env sidecar, not just the bare name. A cut-over backup called
+# deploy/.env.before-cutover was committed and pushed to a PUBLIC repo on
+# 2026-09-24 because the ignore rule matched `deploy/.env` exactly and a
+# `git add -A` swept the backup up. Every credential in it was rotated.
+deploy/.env.*
+!deploy/.env.*.example

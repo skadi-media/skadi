@@ -372,7 +372,14 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: skadi:latest
+    # Local build by default — unchanged behaviour, and what development wants.
+    #
+    # Set `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in deploy/.env to run the
+    # images CI publishes instead, then `docker compose pull && up -d`
+    # (or `angreal deploy pull`). The `-` form rather than `:-` is deliberate,
+    # matching the NAS overlay: an explicitly *empty* prefix means "local
+    # images", which is a thing an operator may want to say.
+    image: ${SKADI_IMAGE_PREFIX-}skadi:${SKADI_IMAGE_TAG:-latest}
     # PUID/PGID for LSIO parity (SKADI-T-0487). Only the removed qbittorrent
     # service honoured these; skadi and the worker ran as the image's fixed uid,
     # which is why the NAS overlay had to override `user:` by hand.
@@ -516,7 +523,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/worker.Dockerfile
-    image: skadi-downloader-worker:latest
+    image: ${SKADI_IMAGE_PREFIX-}skadi-downloader-worker:${SKADI_IMAGE_TAG:-latest}
     # Memory fuse (SKADI-T-0566). SKADI-T-0392 was a worker that reached ~9 GB;
     # the fix landed and it now sits at ~535 MiB with a full 371-torrent library
     # (measured 2026-09-10). The cap is not tuning — it turns a regression of that

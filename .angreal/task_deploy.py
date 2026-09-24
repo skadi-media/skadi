@@ -302,6 +302,50 @@ def logs(service=None):
 
 
 @deploy()
+@angreal.command(
+    name="pull",
+    about="pull the published images from GHCR (needs SKADI_IMAGE_PREFIX set)",
+    tool=angreal.ToolDescription(
+        """
+        Fetch the container images CI publishes, instead of building locally.
+
+        ## Notes
+        - Needs `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in `deploy/.env`.
+          Without it the compose file names local images and there is nothing
+          to pull — the task says so rather than silently doing nothing.
+        - `SKADI_IMAGE_TAG` picks a version (`0.1.0`); it defaults to `latest`.
+        - Follow with `angreal deploy up` (or `redeploy`) to actually roll it
+          out. Pulling on its own changes nothing that is running.
+        """,
+        risk_level="safe",
+    ),
+)
+def pull():
+    env_file = os.path.join(cwd, "deploy", ".env")
+    prefix = ""
+    if os.path.exists(env_file):
+        for line in open(env_file):
+            if line.startswith("SKADI_IMAGE_PREFIX="):
+                prefix = line.split("=", 1)[1].strip()
+    if not prefix:
+        print(
+            "SKADI_IMAGE_PREFIX is not set in deploy/.env, so the compose file\n"
+            "names local images and there is nothing to pull.\n\n"
+            "  SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/\n\n"
+            "The images are private to the org, so `docker login ghcr.io` once\n"
+            "with a token carrying read:packages.",
+            flush=True,
+        )
+        # `raise SystemExit` rather than `return 1`, matching the other tasks:
+        # returning a non-zero code exits by a path that does not flush stdout,
+        # so the explanation above was written and then swallowed — the task
+        # just failed silently, which is the opposite of the point.
+        raise SystemExit(1)
+    print(f"pulling {prefix}skadi and {prefix}skadi-downloader-worker …", flush=True)
+    raise SystemExit(_DEP_compose(["pull", "skadi", "skadi-downloader-worker"]).returncode)
+
+
+@deploy()
 @angreal.command(name="status", about="show stack container status + skadi readiness")
 def status():
     _DEP_compose(["ps"])

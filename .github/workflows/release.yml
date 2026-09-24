@@ -12,8 +12,32 @@ permissions:
   contents: write
 
 jobs:
+  # The tag and the crate version must agree, because the version is compiled
+  # in via `CARGO_PKG_VERSION` and surfaces in `/health`, `/system/status` and
+  # the outgoing user-agent. Nothing checked this: tagging `v0.2.0` on a tree
+  # that says `0.0.1` would publish `skadi-0.2.0.tar.gz` full of binaries
+  # reporting `0.0.1`, and container images tagged `0.2.0` doing the same.
+  # Cheap to check, and the mismatch is invisible afterwards.
+  version:
+    name: Tag matches the crate version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag=$tag crate=$crate"
+          test -n "$crate"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag v$tag does not match the workspace version $crate — bump Cargo.toml or retag"
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.target }})
+    needs: version
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:

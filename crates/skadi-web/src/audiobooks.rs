@@ -1264,6 +1264,36 @@ pub fn BookDetailPage() -> impl IntoView {
                 // so people can actually get to the book (SKADI-T-0147).
                 let fid_loc = f.id.clone();
                 let label_loc = label.clone();
+                // Save the file itself (SKADI-T-0635). Reactive on `locations`
+                // because that is the only place the container comes from:
+                // audiobooks are not probed, so `media_info` is null and the
+                // library scan never fills it in. Until the location loads the
+                // link still works, just without an extension — which is the
+                // honest fallback rather than guessing `.m4b` onto an `.mp3`.
+                let save_bid = book_id.clone();
+                let save_fid = file_id.clone();
+                let save_label = label.clone();
+                let save_title = b.title.clone();
+                let save_author = b.authors.first().cloned().unwrap_or_default();
+                let save_view = move || {
+                    if save_label != "imported" && save_label != "cutoff" {
+                        return ().into_any();
+                    }
+                    let ext = locations.with(|m| m.get(&save_fid).map(|l| l.format.clone()));
+                    let stem = if save_author.is_empty() {
+                        save_title.clone()
+                    } else {
+                        format!("{save_author} - {save_title}")
+                    };
+                    let name = api::download_filename(&stem, ext.as_deref());
+                    let href = api::book_audio_download_url(&save_bid, &save_fid);
+                    view! {
+                        <a href=href download=name class="btn-link"
+                           title="Save this audiobook to your computer">"⇩ Save"</a>
+                    }
+                    .into_any()
+                };
+
                 let location_view = move || {
                     if label_loc != "imported" && label_loc != "cutoff" {
                         return ().into_any();
@@ -1315,6 +1345,7 @@ pub fn BookDetailPage() -> impl IntoView {
                                 let href = format!("/listen/{book_id}/{file_id}");
                                 view! { <A href=href attr:class="btn-link listen-link">"▶ Listen"</A> }
                             })}
+                            {save_view}
                             <BookFileActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
                             {acq_view}
                         </div>

@@ -2454,6 +2454,16 @@ pub fn book_audio_url(id: &str, fid: &str) -> String {
     format!("{API_BASE}/books/{id}/files/{fid}/audio")
 }
 
+/// The same bytes, as a URL a plain `<a download>` can fetch (SKADI-T-0635).
+///
+/// The offline player uses [`book_audio_url`] with an `Authorization` header
+/// because it goes through XHR. An anchor cannot set a header, so this carries
+/// the key in the query the way the video routes do.
+#[must_use]
+pub fn book_audio_download_url(id: &str, fid: &str) -> String {
+    with_api_key(book_audio_url(id, fid))
+}
+
 /// The injected bearer token, for requests that can't go through the normal
 /// builder (XHR downloads with progress events). `None` in open mode.
 pub fn auth_token() -> Option<String> {

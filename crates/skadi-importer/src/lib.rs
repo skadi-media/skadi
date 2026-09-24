@@ -1208,7 +1208,58 @@ pub fn sweep_recycle_bin(bin: &Path, retention_days: u64) -> Vec<PathBuf> {
 /// gone is a separate problem, and it must not stop a scan.
 #[must_use]
 pub fn file_identities(files: &[PathBuf]) -> std::collections::HashSet<(u64, u64)> {
-    files.iter().filter_map(|p| file_identity(p)).collect()
+    identities_with_concurrency(files, stat_concurrency())
+}
+
+/// How many `stat` calls to have in flight at once.
+///
+/// This is latency-bound, not CPU-bound: each call is a network round trip to
+/// the NFS server and the thread spends all of it asleep. So the useful number
+/// is far above the core count, and is capped only to avoid burying the server.
+fn stat_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| (n.get() * 8).clamp(8, 64))
+        .unwrap_or(16)
+}
+
+/// The parallel sweep, with the width exposed so a test can pin the behaviour.
+///
+/// **Serial `metadata()` over a network mount is the whole problem.** Each call
+/// costs a round trip — 5–50 ms on the operator's NFS share — and the library
+/// import filter stats *every file in the library* to find hardlinks by inode.
+/// At 18,600 episodes that is over three minutes, and the TV scan endpoint
+/// simply never returned; movies took 91 s and audiobooks 10 s, tracking
+/// library size exactly (measured 2026-09-24, SKADI-T-0634).
+///
+/// A naive benchmark says this work is cheap, and it lies: walking the tree
+/// with `find` warms the kernel's attribute cache and batches the syscalls, so
+/// it finishes in seconds. Cold, serial, one at a time is a different animal.
+///
+/// The stats are independent, so they overlap.
+fn identities_with_concurrency(
+    files: &[PathBuf],
+    width: usize,
+) -> std::collections::HashSet<(u64, u64)> {
+    if files.len() < 2 || width < 2 {
+        return files.iter().filter_map(|p| file_identity(p)).collect();
+    }
+    let width = width.min(files.len());
+    let chunk = files.len().div_ceil(width);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = files
+            .chunks(chunk)
+            .map(|slice| {
+                scope.spawn(move || -> Vec<(u64, u64)> {
+                    slice.iter().filter_map(|p| file_identity(p)).collect()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().ok())
+            .flatten()
+            .collect()
+    })
 }
 
 /// One file's `(device, inode)`, or `None` when it cannot be stat'd.
@@ -2229,5 +2280,81 @@ mod tests {
         assert!(!dest.with_extension("skadi-partial").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod identity_sweep_tests {
+    use super::*;
+
+    /// Build `n` real files and return their directory and paths.
+    ///
+    /// Uses the crate's own `unique_temp_path` convention rather than pulling
+    /// in `tempfile` as a dev-dependency for five tests.
+    fn scratch(n: usize) -> (PathBuf, Vec<PathBuf>) {
+        let dir = skadi_core::unique_temp_path("ident-sweep");
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = (0..n)
+            .map(|i| {
+                let p = dir.join(format!("f{i}.mkv"));
+                std::fs::write(&p, b"x").unwrap();
+                p
+            })
+            .collect();
+        (dir, paths)
+    }
+
+    #[test]
+    fn the_parallel_sweep_finds_exactly_what_the_serial_one_does() {
+        // The only thing that must not change. Concurrency here is an
+        // optimisation, and an optimisation that alters the answer is a bug.
+        let (_d, paths) = scratch(50);
+        let serial: std::collections::HashSet<_> =
+            paths.iter().filter_map(|p| file_identity(p)).collect();
+        for width in [1, 2, 7, 64, 500] {
+            assert_eq!(
+                identities_with_concurrency(&paths, width),
+                serial,
+                "width {width} disagreed with the serial sweep"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hardlink_is_the_same_identity_as_its_original() {
+        // The property the filter exists for: import hardlinks into the
+        // library, so the held copy and the scanned one are one inode under
+        // two names and a path comparison would miss every one.
+        let dir = skadi_core::unique_temp_path("ident-link");
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("original.mkv");
+        let b = dir.join("linked.mkv");
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::hard_link(&a, &b).unwrap();
+        assert_eq!(file_identity(&a), file_identity(&b));
+        assert_eq!(identities_with_concurrency(&[a, b], 8).len(), 1);
+    }
+
+    #[test]
+    fn paths_that_cannot_be_stat_are_skipped_not_fatal() {
+        // A library row can outlive its file. Losing the whole sweep over one
+        // missing path would hide every genuinely-imported file.
+        let (_d, mut paths) = scratch(4);
+        paths.push(PathBuf::from("/definitely/not/here.mkv"));
+        assert_eq!(identities_with_concurrency(&paths, 8).len(), 4);
+    }
+
+    #[test]
+    fn an_empty_or_single_input_is_handled_without_spawning() {
+        assert!(identities_with_concurrency(&[], 16).is_empty());
+        let (_d, one) = scratch(1);
+        assert_eq!(identities_with_concurrency(&one, 16).len(), 1);
+    }
+
+    #[test]
+    fn the_width_is_bounded_on_both_ends() {
+        // Unbounded would bury the NFS server; one would be the bug being fixed.
+        let w = stat_concurrency();
+        assert!((8..=64).contains(&w), "width {w} out of range");
     }
 }

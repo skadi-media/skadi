@@ -3403,3 +3403,85 @@ mod upload_wire_tests {
         assert_eq!(body["size_bytes"], serde_json::json!(42_949_672_960u64));
     }
 }
+
+// --- saving a file to your own machine (SKADI-T-0635) -----------------------
+
+/// A filename for a downloaded media file.
+///
+/// Built from the library's own metadata rather than the path on disk: the
+/// stored name is slugged for the filesystem (`batteries-not-included_(1987)`),
+/// which is right for a library and wrong for something landing in someone's
+/// Downloads folder.
+///
+/// `container` is the extension the scanner found. When the scan has not run
+/// there is nothing honest to guess, so the extension is omitted and the
+/// browser keeps whatever the response implies — better than confidently
+/// writing `.mkv` onto an `.m4v`.
+#[must_use]
+pub fn download_filename(stem: &str, container: Option<&str>) -> String {
+    let mut name = sanitise_filename(stem);
+    if name.is_empty() {
+        name = "download".into();
+    }
+    match container.map(str::trim).filter(|c| !c.is_empty()) {
+        Some(ext) => format!("{name}.{}", ext.trim_start_matches('.').to_ascii_lowercase()),
+        None => name,
+    }
+}
+
+/// Strip what a filesystem will not take, and collapse the gaps.
+///
+/// The browser sanitises a `download` attribute itself, but it does so
+/// silently and differently per platform; doing it here means the name is the
+/// one we intended on every machine.
+fn sanitise_filename(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => ' ',
+            c if (c as u32) < 0x20 => ' ',
+            c => c,
+        })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod download_name_tests {
+    use super::*;
+
+    #[test]
+    fn a_title_and_year_become_a_readable_filename() {
+        assert_eq!(
+            download_filename("The Matrix (1999)", Some("mkv")),
+            "The Matrix (1999).mkv"
+        );
+    }
+
+    #[test]
+    fn path_separators_and_reserved_characters_cannot_survive() {
+        // A title is arbitrary text from a metadata provider. "9 1/2 Weeks"
+        // and "Face/Off" are real films.
+        assert_eq!(download_filename("Face/Off (1997)", Some("mp4")), "Face Off (1997).mp4");
+        assert_eq!(download_filename("A: B? C*", Some("mkv")), "A B C.mkv");
+        assert!(!download_filename("../../etc/passwd", Some("mkv")).contains('/'));
+    }
+
+    #[test]
+    fn an_unknown_container_leaves_the_extension_off() {
+        // Guessing would put the wrong extension on the file, which is worse
+        // than none: the operating system would open it with the wrong thing.
+        assert_eq!(download_filename("Some Film", None), "Some Film");
+        assert_eq!(download_filename("Some Film", Some("  ")), "Some Film");
+    }
+
+    #[test]
+    fn the_extension_is_normalised() {
+        assert_eq!(download_filename("X", Some(".MKV")), "X.mkv");
+    }
+
+    #[test]
+    fn a_title_that_sanitises_to_nothing_still_names_the_file() {
+        assert_eq!(download_filename("///", Some("mkv")), "download.mkv");
+    }
+}

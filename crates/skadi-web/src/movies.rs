@@ -439,6 +439,24 @@ pub fn MovieDetailPage() -> impl IntoView {
                     })
                 };
                 let watch_href = (!show_diag).then(|| format!("/watch/movie/{movie_id}/{edition_id}"));
+                // Save the file itself (SKADI-T-0635). A plain anchor, not an
+                // XHR into a blob: the video route already takes `apikey` in
+                // the query (that is how `<video>` authenticates) and already
+                // answers Range, so the browser streams straight to disk and
+                // can resume. Fetching a 40 GB film into memory to hand it
+                // back would be the obvious implementation and a terrible one.
+                let save = (!show_diag).then(|| {
+                    let stem = match m.year {
+                        Some(y) => format!("{} ({y})", m.title),
+                        None => m.title.clone(),
+                    };
+                    let container = e
+                        .media_info
+                        .as_ref()
+                        .and_then(|mi| mi.container.clone());
+                    let name = api::download_filename(&stem, container.as_deref());
+                    (api::movie_video_url(&movie_id, &edition_id), name)
+                });
                 view! {
                     <div class="edition-block">
                         <div class="edition-row">
@@ -446,6 +464,10 @@ pub fn MovieDetailPage() -> impl IntoView {
                             <span class=cls>{label}{progress}</span>
                             {watch_href.map(|h| view! {
                                 <A href=h attr:class="btn-link listen-link" attr:title="Play in this browser">"▶ Watch"</A>
+                            })}
+                            {save.map(|(href, name)| view! {
+                                <a href=href download=name class="btn-link"
+                                   title="Save this file to your computer">"⇩ Save"</a>
                             })}
                             <EditionActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
                             {acq_view}

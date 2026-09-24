@@ -432,6 +432,7 @@ fn season_block(
     open_episodes: RwSignal<std::collections::HashSet<String>>,
 ) -> AnyView {
     let sid = s.id.clone();
+    let series_title = s.title.clone();
     let num = sea.number;
     let label = if num == 0 {
         "Specials".to_string()
@@ -460,7 +461,7 @@ fn season_block(
     let complete = total > 0 && collected == total;
     let rows = eps
         .into_iter()
-        .map(|e| episode_row(&sid, e, reload, open_episodes))
+        .map(|e| episode_row(&sid, &series_title, e, reload, open_episodes))
         .collect_view();
 
     // Collapsed by default — long shows stay scannable; open the seasons you want.
@@ -503,6 +504,9 @@ fn season_block(
 /// One episode row: SxxEyy + title + air date + status, with a monitor toggle.
 fn episode_row(
     series_id: &str,
+    // Only for naming a saved file (SKADI-T-0635). "S01E02 - Pilot.mkv"
+    // landing in someone's Downloads beside three other shows is not a name.
+    series_title: &str,
     e: api::Episode,
     reload: Callback<()>,
     open_episodes: RwSignal<std::collections::HashSet<String>>,
@@ -515,6 +519,20 @@ fn episode_row(
     let cls = status_class(&label);
     let show_diag = !matches!(label.as_str(), "imported" | "cutoff");
     let watch_href = (!show_diag).then(|| format!("/watch/tv/{series_id}/{}", e.id));
+    // Save the file itself (SKADI-T-0635) — a plain anchor against the same
+    // route the player uses, which already takes `apikey` and answers Range.
+    let save = (!show_diag).then(|| {
+        let stem = if title.is_empty() {
+            format!("{series_title} - {code}")
+        } else {
+            format!("{series_title} - {code} - {title}")
+        };
+        let container = e.media_info.as_ref().and_then(|mi| mi.container.clone());
+        (
+            api::episode_video_url(series_id, &e.id),
+            api::download_filename(&stem, container.as_deref()),
+        )
+    });
     let monitored = e.monitored;
     let eid = e.id.clone();
     let eid_hist = e.id.clone();
@@ -592,6 +610,10 @@ fn episode_row(
                 <span class=cls>{label}</span>
                 {watch_href.map(|h| view! {
                     <A href=h attr:class="btn-link" attr:title="Play in this browser">"▶"</A>
+                })}
+                {save.map(|(href, name)| view! {
+                    <a href=href download=name class="btn-link"
+                       title="Save this episode to your computer">"⇩"</a>
                 })}
                 <button class="btn-link" on:click=toggle title="Toggle monitoring">
                     {if monitored { "●" } else { "○" }}

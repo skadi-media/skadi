@@ -541,17 +541,33 @@ pub fn AudiobooksPage() -> impl IntoView {
     });
     // Supporting catalog data for Watch + completeness (re-loaded on reload too, so a
     // watch toggle or add refreshes owned/total counts and watch badges).
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
     Effect::new(move |_| {
         reload.track();
+        // Read in the effect body, not the async block below: an async block
+        // is outside the reactive scope, so the effect would not re-run when
+        // `/me` answers and an operator would lose this data entirely.
+        //
+        // These three are gated server-side and were being fetched for
+        // everyone: authors and series rollups are refused to a kid, and the
+        // watch list is admin-only, so an audiobooks page fired up to three
+        // 403s per visit for anyone else (SKADI-T-0639).
+        let role = role_signal.and_then(|r| r.get());
+        let is_admin = role.as_deref() == Some("admin");
+        let is_kid = role.as_deref() == Some("kid");
         spawn_local(async move {
-            if let Ok(list) = api::list_authors(None).await {
+            if !is_kid
+                && let Ok(list) = api::list_authors(None).await
+            {
                 authors_asin.set(
                     list.into_iter()
                         .filter_map(|a| a.asin.map(|x| (author_key(&a.name), x)))
                         .collect(),
                 );
             }
-            if let Ok(rolls) = api::list_book_series().await {
+            if !is_kid
+                && let Ok(rolls) = api::list_book_series().await
+            {
                 series_roll.set(
                     rolls
                         .into_iter()
@@ -559,7 +575,9 @@ pub fn AudiobooksPage() -> impl IntoView {
                         .collect(),
                 );
             }
-            if let Ok(ws) = api::list_watchers().await {
+            if is_admin
+                && let Ok(ws) = api::list_watchers().await
+            {
                 watchers.set(ws.into_iter().map(|w| (w.scope, w.key)).collect());
             }
         });

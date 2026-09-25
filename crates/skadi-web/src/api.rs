@@ -3434,7 +3434,10 @@ pub fn download_filename(stem: &str, container: Option<&str>) -> String {
         name = "download".into();
     }
     match container.map(str::trim).filter(|c| !c.is_empty()) {
-        Some(ext) => format!("{name}.{}", ext.trim_start_matches('.').to_ascii_lowercase()),
+        Some(ext) => format!(
+            "{name}.{}",
+            ext.trim_start_matches('.').to_ascii_lowercase()
+        ),
         None => name,
     }
 }
@@ -3472,7 +3475,10 @@ mod download_name_tests {
     fn path_separators_and_reserved_characters_cannot_survive() {
         // A title is arbitrary text from a metadata provider. "9 1/2 Weeks"
         // and "Face/Off" are real films.
-        assert_eq!(download_filename("Face/Off (1997)", Some("mp4")), "Face Off (1997).mp4");
+        assert_eq!(
+            download_filename("Face/Off (1997)", Some("mp4")),
+            "Face Off (1997).mp4"
+        );
         assert_eq!(download_filename("A: B? C*", Some("mkv")), "A B C.mkv");
         assert!(!download_filename("../../etc/passwd", Some("mkv")).contains('/'));
     }

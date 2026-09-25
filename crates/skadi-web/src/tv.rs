@@ -53,6 +53,12 @@ pub fn TvPage() -> impl IntoView {
     // Genre facet (SKADI-T-0605): one chip per genre the loaded items carry,
     // most common first; empty until the server has refreshed metadata.
     let genre_filter = RwSignal::new(None::<String>);
+    // Import and the settings gear are operator surfaces, and were offered to
+    // every role — the per-role sweep walks the nav strips and never saw these
+    // in-page links (SKADI-T-0639). Gate on a *known* admin so an unresolved
+    // role offers nothing.
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let is_admin = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
 
     Effect::new(move |_| {
         spawn_local(async move {
@@ -147,7 +153,9 @@ pub fn TvPage() -> impl IntoView {
                     <h2>"TV"</h2>
                 </div>
                 <div class="lib-head-right">
-                    <A href="/tv/import" attr:class="btn-link" attr:title="Import an existing TV library">"Import"</A>
+                    {move || is_admin().then(|| view! {
+                        <A href="/tv/import" attr:class="btn-link" attr:title="Import an existing TV library">"Import"</A>
+                    })}
                 </div>
             </div>
             <div class="filter-bar">

@@ -37,6 +37,12 @@ pub fn MoviesPage() -> impl IntoView {
     // Genre facet (SKADI-T-0605): one chip per genre the loaded items carry,
     // most common first; empty until the server has refreshed metadata.
     let genre_filter = RwSignal::new(None::<String>);
+    // Import and the settings gear are operator surfaces, and were offered to
+    // every role — the per-role sweep walks the nav strips and never saw these
+    // in-page links (SKADI-T-0639). Gate on a *known* admin so an unresolved
+    // role offers nothing.
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let is_admin = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
 
     // Adding lives in the unified `/add` view (SKADI-T-0248); this page is purely
     // the library wall now.
@@ -135,8 +141,10 @@ pub fn MoviesPage() -> impl IntoView {
                     <h2>"Movies"</h2>
                 </div>
                 <div class="lib-head-right">
-                    <A href="/movies/import" attr:class="btn-link" attr:title="Import existing media in place">"Import"</A>
-                    <A href="/movies/config" attr:class="gear" attr:title="Movies settings">"⚙"</A>
+                    {move || is_admin().then(|| view! {
+                        <A href="/movies/import" attr:class="btn-link" attr:title="Import existing media in place">"Import"</A>
+                        <A href="/movies/config" attr:class="gear" attr:title="Movies settings">"⚙"</A>
+                    })}
                 </div>
             </div>
             <div class="filter-bar">
@@ -563,12 +571,22 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
     let collapsed = crate::persist::persisted(format!("history:{acquirable}:collapsed"), !open);
     let acq = StoredValue::new(acquirable);
 
+    // Both `/history?acquirable=` and `/traces?acquirable=` are operator
+    // diagnostics that no non-admin may read. This panel is shared by the
+    // movies, TV and audiobooks detail pages, so gating it here fixes all
+    // three: a contributor opening a film fired two 403s per item
+    // (SKADI-T-0639). Gate on a *known* admin so an unresolved role fetches
+    // nothing.
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let is_admin = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
+
     let reload = move || {
+        let admin = is_admin();
         spawn_local(async move {
             // try_set: this fetch can land after the page is gone (fast
             // navigation into the player) — a plain set on a disposed signal
             // panics the whole wasm app (SKADI-T-0331 verification).
-            if let Ok(h) = api::item_history(&acq.get_value(), 50).await {
+            if admin && let Ok(h) = api::item_history(&acq.get_value(), 50).await {
                 let _ = rows.try_set(h);
             }
             let _ = loaded.try_set(true);
@@ -643,7 +661,7 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
     };
 
     view! {
-        <div class="history-panel">
+        <div class="history-panel" class:hidden=move || !is_admin()>
             <button class="hist-head" on:click=move |_| collapsed.update(|c| *c = !*c)>
                 <span class="cluster-chevron">
                     {move || if collapsed.get() { "▸" } else { "▾" }}
@@ -683,12 +701,18 @@ pub fn DiagnosticsPanel(acquirable: String) -> impl IntoView {
     let collapsed = crate::persist::persisted(format!("diag:{acquirable}:collapsed"), true);
     let acq = StoredValue::new(acquirable);
 
+    // Same operator-only rule as HistoryPanel above, and shared by the same
+    // three detail pages (SKADI-T-0639).
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let is_admin = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
+
     Effect::new(move |_| {
+        let admin = is_admin();
         spawn_local(async move {
             // try_set throughout: this can land after a fast navigation away,
             // and a plain set on a disposed signal takes down the wasm app
             // (same hazard HistoryPanel documents).
-            if let Ok(rows) = api::item_traces(&acq.get_value()).await {
+            if admin && let Ok(rows) = api::item_traces(&acq.get_value()).await {
                 let _ = diag.try_set(Some(crate::activity::diagnose(&rows)));
             }
             let _ = loaded.try_set(true);

@@ -79,18 +79,40 @@ async function sweep(browser, label, token) {
     .filter(p => !ADMIN_ONLY_DEEPLINKS.includes(p));
 
   const seen = {};
-  for (const path of pages) {
+  // Phase 2 targets: every in-page link the role is *shown*, not just the nav.
+  // The nav-only walk missed a whole class — Import, the settings gear and
+  // Discover are buttons in a library page's header, and an author name is a
+  // link to a detail page. All of them fired 403s for non-admins while this
+  // harness reported clean (SKADI-T-0639). A rendered link is an offer, so it
+  // is in scope exactly like a nav entry: no ADMIN_ONLY_DEEPLINKS filter here,
+  // because a member being *shown* /movies/import is the bug itself.
+  const discovered = new Set();
+  const visit = async (path) => {
     await page.goto(BASE + path, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2500);
-    seen[path] = {
+    for (const h of await page.evaluate(() =>
+      [...document.querySelectorAll("a[href^='/']")].map(a => a.getAttribute("href")))) {
+      // Never follow sign-out: it would invalidate the token mid-sweep and
+      // every later page would 401, masking whatever we came to find.
+      if (h && !/logout|signout/i.test(h)) discovered.add(h);
+    }
+    return {
       addMedia: await page.locator("button.add-media").count(),
       ovSearch: await page.locator("button.ov-search").count(),
       storage: await page.locator(".storage-row").count(),
       subnav: (await page.locator(".subnav-link").allTextContents()).join("|"),
     };
-  }
+  };
+
+  for (const path of pages) seen[path] = await visit(path);
+
+  // One hop past the nav. Capped so a library of a few hundred items does not
+  // turn this into a crawl — a handful of detail pages exercises the same code.
+  const extra = [...discovered].filter(p => !pages.includes(p)).slice(0, 30);
+  for (const path of extra) seen[path] = await visit(path);
+
   await page.close();
-  return { denied: [...new Set(denied)], seen, pages };
+  return { denied: [...new Set(denied)], seen, pages, extra };
 }
 
 const browser = await chromium.launch();
@@ -100,9 +122,10 @@ try {
   for (const role of ROLES) subjects.push([role, await tokenFor(await ensure(role))]);
 
   for (const [label, token] of subjects) {
-    const { denied, seen, pages } = await sweep(browser, label, token);
+    const { denied, seen, pages, extra } = await sweep(browser, label, token);
     console.log(`\n=== ${label} ===`);
     console.log(`  reachable pages:      ${pages.join(" ")}`);
+    console.log(`  followed in-page:     ${extra.join(" ") || "(none)"}`);
     console.log(`  add-media button on:  ${Object.entries(seen).filter(([, v]) => v.addMedia).map(([k]) => k).join(" ") || "(none)"}`);
     console.log(`  overview search:      ${seen["/"]?.ovSearch ? "shown" : "hidden"}`);
     console.log(`  storage meter:        ${seen["/"]?.storage ? "shown" : "hidden"}`);

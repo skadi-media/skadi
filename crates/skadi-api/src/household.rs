@@ -600,7 +600,24 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         // links at all**, in the one role that exists purely to browse and
         // play. Found by the per-role UI sweep (SKADI-T-0639, 2026-09-25).
         ["domains"] => true,
-        ["authors"] | ["audiobooks", "series"] | ["audiobooks", "works"] => role != Role::Kid,
+        // The edition-kind registry is a **label lookup** — "Theatrical",
+        // "Director's Cut" — that the movie detail page needs to render an
+        // edition's name instead of its UUID. Not sensitive, and gating it meant
+        // a non-admin read raw ids where the operator read names. Writes to it
+        // are still refused by the method check above (SKADI-T-0639).
+        ["edition-kinds"] => true,
+        // Every other list/detail pair above is written `["x"] | ["x", _]`.
+        // `["authors"]` was the one that never got its detail arm, so the
+        // author list was readable but tapping a name 403'd — and the author
+        // page is linked straight off the audiobooks library. `discover` is
+        // the same read surface (unowned works by authors already in the
+        // library), reached by a button on that page. Both found by extending
+        // the per-role sweep to follow in-page links (SKADI-T-0639).
+        ["authors"]
+        | ["authors", _]
+        | ["audiobooks", "series"]
+        | ["audiobooks", "works"]
+        | ["audiobooks", "discover"] => role != Role::Kid,
         _ => false,
     }
 }
@@ -1527,6 +1544,68 @@ mod tests {
             "rollups would name hidden books"
         );
         assert!(path_allowed(Role::Admin, &post, "/movies"));
+    }
+
+    /// Every list/detail pair on the read surface is written `["x"] | ["x", _]`.
+    /// `["authors"]` was the one missing its detail arm, so the author list was
+    /// readable while tapping a name 403'd — and the author page is linked
+    /// straight off the audiobooks library (SKADI-T-0639).
+    #[test]
+    fn a_readable_list_and_its_detail_page_agree() {
+        use axum::http::Method;
+        let get = Method::GET;
+        for (list, detail) in [
+            ("/movies", "/movies/abc"),
+            ("/series", "/series/abc"),
+            ("/books", "/books/abc"),
+            ("/authors", "/authors/abc"),
+        ] {
+            for role in [Role::Member, Role::Contributor, Role::Kid] {
+                assert_eq!(
+                    path_allowed(role, &get, list),
+                    path_allowed(role, &get, detail),
+                    "{role:?}: {list} and {detail} disagree — the UI links one to \
+                     the other, so a readable list with a refused detail page is \
+                     a 403 one tap away"
+                );
+            }
+        }
+    }
+
+    /// A label registry, not an operator surface: without it a movie detail page
+    /// shows an edition's UUID where the operator sees "Theatrical"
+    /// (SKADI-T-0639).
+    #[test]
+    fn every_role_can_read_the_edition_kind_labels() {
+        use axum::http::Method;
+        for role in [Role::Member, Role::Contributor, Role::Kid] {
+            assert!(path_allowed(role, &Method::GET, "/edition-kinds"));
+            // Reading the labels is not a way to edit the registry.
+            assert!(!path_allowed(role, &Method::POST, "/edition-kinds"));
+            assert!(!path_allowed(role, &Method::DELETE, "/edition-kinds/abc"));
+        }
+    }
+
+    /// Reached by a button in the audiobooks library header, not by the nav —
+    /// which is why the per-role sweep missed it until it followed in-page
+    /// links (SKADI-T-0639).
+    #[test]
+    fn discover_follows_the_same_rule_as_the_other_rollups() {
+        use axum::http::Method;
+        let get = Method::GET;
+        for role in [Role::Member, Role::Contributor] {
+            assert!(path_allowed(role, &get, "/audiobooks/discover"));
+        }
+        assert!(
+            !path_allowed(Role::Kid, &get, "/audiobooks/discover"),
+            "recommendations are drawn from the works store a kid may not read"
+        );
+        // Still not a way in to anything that changes state.
+        assert!(!path_allowed(
+            Role::Member,
+            &Method::POST,
+            "/audiobooks/discover"
+        ));
     }
 
     #[test]

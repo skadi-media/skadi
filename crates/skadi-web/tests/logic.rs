@@ -2251,7 +2251,10 @@ fn only_a_contributor_is_offered_the_catalog_search() {
     }
     assert!(offered(Some("admin")));
     assert!(offered(Some("contributor")));
-    assert!(!offered(Some("member")), "a read-only member must not be offered it");
+    assert!(
+        !offered(Some("member")),
+        "a read-only member must not be offered it"
+    );
     assert!(!offered(Some("kid")));
     // Unknown role means `/me` has not answered yet. Showing it beats flashing
     // it away under an operator who can use it.

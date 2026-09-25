@@ -179,6 +179,11 @@ pub fn Dashboard() -> impl IntoView {
     let titles = RwSignal::new(HashMap::<String, (String, &'static str)>::new());
 
     let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    // The two "Activity" links below were rendered for every role. The sidebar
+    // entry is already admin-gated, so these were the only way a member or kid
+    // reached /activity — where three admin-only fetches 403'd on arrival. Found
+    // by teaching the sweep to follow in-page links (SKADI-T-0639).
+    let is_admin_view = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
 
     // Each metric loads independently — a slow/failed one never blanks the rest.
     Effect::new(move |_| {
@@ -239,16 +244,12 @@ pub fn Dashboard() -> impl IntoView {
             }
         });
         spawn_local(async move {
-            if is_admin
-                && let Ok(d) = api::list_downloads().await
-            {
+            if is_admin && let Ok(d) = api::list_downloads().await {
                 downloads.set(d);
             }
         });
         spawn_local(async move {
-            if is_admin
-                && let Ok(h) = api::history(25).await
-            {
+            if is_admin && let Ok(h) = api::history(25).await {
                 history.set(h);
             }
         });
@@ -520,12 +521,20 @@ pub fn Dashboard() -> impl IntoView {
             <section class="ov-left">
                 <div class="ov-sec-head">
                     <h3>"Active hunt"</h3>
-                    <A href="/activity" attr:class="ov-sec-link mono">
-                        // Count the transfers actually shown below (downloading), not
-                        // the acquisition-in-flight count — they were inconsistent
-                        // (e.g. "0 in flight" above two active download bars).
-                        {move || format!("{} in flight", downloading())}
-                    </A>
+                    // Count the transfers actually shown below (downloading), not
+                    // the acquisition-in-flight count — they were inconsistent
+                    // (e.g. "0 in flight" above two active download bars).
+                    {move || if is_admin_view() {
+                        view! {
+                            <A href="/activity" attr:class="ov-sec-link mono">
+                                {move || format!("{} in flight", downloading())}
+                            </A>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <span class="ov-sec-link mono">{move || format!("{} in flight", downloading())}</span>
+                        }.into_any()
+                    }}
                 </div>
                 {hunt_rows}
                 <div class="rollups">{rollups}</div>
@@ -534,7 +543,9 @@ pub fn Dashboard() -> impl IntoView {
             <section class="ov-right">
                 <div class="ov-sec-head">
                     <h3>"Recently imported"</h3>
-                    <A href="/activity" attr:class="ov-sec-link mono">"View all"</A>
+                    {move || is_admin_view().then(|| view! {
+                        <A href="/activity" attr:class="ov-sec-link mono">"View all"</A>
+                    })}
                 </div>
                 {imported_rows}
             </section>

@@ -90,7 +90,17 @@ if (await link.count()) {
     if (text.includes(needle)) { found = "yes"; break; }
     if (/no .*(candidates|files)|nothing to import/i.test(text)) { found = "scan found nothing"; break; }
   }
+  // The video domains refuse anything under a sample/junk floor — 50 MiB for
+  // movies, 10 MiB for TV — and `tiny.mp4` is 6 KB, so "scan found nothing" is
+  // the *correct* answer there, not a failure. Audiobooks have no such floor
+  // (a chapter is legitimately tiny), so that one must find the file. Without
+  // this distinction the run looked like a regression every time.
+  const floored = KIND !== "audiobook";
+  const ok = floored ? found !== "yes" : found === "yes";
   console.log(`scanned:  ${found || "nothing matching " + JSON.stringify(needle) + " within 30s"}`);
+  console.log(`scan verdict: ${ok ? "as expected" : "UNEXPECTED"}`
+    + (floored ? " (below the video size floor — nothing to import is correct)" : " (audiobook: the file must be found)"));
+  if (!ok) process.exitCode = 1;
 } else {
   console.log("hand-off: MISSING");
   const err = await page.locator(".upload-job .bad").first().textContent().catch(() => "");

@@ -542,6 +542,12 @@ pub fn AudiobooksPage() -> impl IntoView {
     // Supporting catalog data for Watch + completeness (re-loaded on reload too, so a
     // watch toggle or add refreshes owned/total counts and watch badges).
     let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    // Reactive accessors for the view. Same rule as the effect below: gate on a
+    // role we actually know, so an unresolved role offers nothing rather than
+    // everything.
+    let is_admin_view = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
+    let not_kid =
+        move || matches!(role_signal.and_then(|r| r.get()).as_deref(), Some(r) if r != "kid");
     Effect::new(move |_| {
         reload.track();
         // Read in the effect body, not the async block below: an async block
@@ -554,20 +560,20 @@ pub fn AudiobooksPage() -> impl IntoView {
         // 403s per visit for anyone else (SKADI-T-0639).
         let role = role_signal.and_then(|r| r.get());
         let is_admin = role.as_deref() == Some("admin");
-        let is_kid = role.as_deref() == Some("kid");
+        // Wait for the role before fetching, rather than assuming. Negating
+        // the kid check meant this was true while `/me` was still in flight,
+        // so the first pass fetched anyway and a kid ate two 403s before the
+        // effect re-ran. Default to *not* asking; a known role opts in.
+        let may_read_rollups = matches!(role.as_deref(), Some(r) if r != "kid");
         spawn_local(async move {
-            if !is_kid
-                && let Ok(list) = api::list_authors(None).await
-            {
+            if may_read_rollups && let Ok(list) = api::list_authors(None).await {
                 authors_asin.set(
                     list.into_iter()
                         .filter_map(|a| a.asin.map(|x| (author_key(&a.name), x)))
                         .collect(),
                 );
             }
-            if !is_kid
-                && let Ok(rolls) = api::list_book_series().await
-            {
+            if may_read_rollups && let Ok(rolls) = api::list_book_series().await {
                 series_roll.set(
                     rolls
                         .into_iter()
@@ -575,9 +581,7 @@ pub fn AudiobooksPage() -> impl IntoView {
                         .collect(),
                 );
             }
-            if is_admin
-                && let Ok(ws) = api::list_watchers().await
-            {
+            if is_admin && let Ok(ws) = api::list_watchers().await {
                 watchers.set(ws.into_iter().map(|w| (w.scope, w.key)).collect());
             }
         });
@@ -748,9 +752,18 @@ pub fn AudiobooksPage() -> impl IntoView {
                     // "Listen" entry did not read as "phone setup". Players is
                     // its own named Settings section now (SKADI-T-0627), so the
                     // signpost was pointing at a door that already has a sign.
-                    <A href="/audiobooks/discover" attr:class="btn-link" attr:title="Discover unowned titles from your authors & series">"Discover"</A>
-                    <A href="/audiobooks/import" attr:class="btn-link" attr:title="Import an existing audiobook library">"Import"</A>
-                    <A href="/audiobooks/config" attr:class="gear" attr:title="Audiobooks settings">"⚙"</A>
+                    // These three were offered to everyone. Discover reads the
+                    // works store, which a kid may not; Import and the gear are
+                    // operator surfaces outright. The per-role sweep walks the
+                    // nav strips, so it never saw them — they are in-page links
+                    // (SKADI-T-0639).
+                    {move || not_kid().then(|| view! {
+                        <A href="/audiobooks/discover" attr:class="btn-link" attr:title="Discover unowned titles from your authors & series">"Discover"</A>
+                    })}
+                    {move || is_admin_view().then(|| view! {
+                        <A href="/audiobooks/import" attr:class="btn-link" attr:title="Import an existing audiobook library">"Import"</A>
+                        <A href="/audiobooks/config" attr:class="gear" attr:title="Audiobooks settings">"⚙"</A>
+                    })}
                 </div>
             </div>
             <div class="filter-bar">
@@ -1457,12 +1470,18 @@ pub fn AuthorDetailPage() -> impl IntoView {
     let author_watched = RwSignal::new(false);
     let busy = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let is_admin_view = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
 
     let load = move || {
         let id = params.read().get("id").unwrap_or_default();
         if id.is_empty() {
             return;
         }
+        // Read in the effect body, not the async block — see the library page
+        // above. `/watchers` is admin-only, so gate on a *known* admin: an
+        // unresolved role must fetch nothing (SKADI-T-0639).
+        let is_admin = role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
         spawn_local(async move {
             let mut author_asin = None;
             match api::get_author(&id).await {
@@ -1481,10 +1500,14 @@ pub fn AuthorDetailPage() -> impl IntoView {
                 if let Ok(w) = api::list_works_by_author(&asin).await {
                     works.set(w);
                 }
-                let watched = api::list_watchers()
-                    .await
-                    .map(|ws| ws.iter().any(|w| w.scope == "author" && w.key == asin))
-                    .unwrap_or(false);
+                let watched = if is_admin {
+                    api::list_watchers()
+                        .await
+                        .map(|ws| ws.iter().any(|w| w.scope == "author" && w.key == asin))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
                 author_watched.set(watched);
             } else {
                 works.set(Vec::new());
@@ -1503,6 +1526,11 @@ pub fn AuthorDetailPage() -> impl IntoView {
         let monitored = a.monitored;
         let description = a.description.clone().filter(|d| !d.is_empty());
         let image = a.image_url.clone().filter(|u| !u.is_empty());
+        // Read here rather than in a closure further down: this whole body is a
+        // reactive closure, so reading the role at this level re-renders it when
+        // `/me` answers, and the handlers below (created fresh on each run) can
+        // then be consumed by a plain `if`.
+        let show_actions = is_admin_view();
 
         // Watch-author toggle (author-scope watcher): acquire the whole catalog's
         // unowned works. Only when we know the author's ASIN.
@@ -1572,13 +1600,22 @@ pub fn AuthorDetailPage() -> impl IntoView {
                     }}
                     <div class="detail-info">
                         <h2>{a.name.clone()}</h2>
-                        <div class="card-actions">
-                            {watch_btn}
-                            <button on:click=toggle_monitor disabled=move || busy.get()>
-                                {if monitored { "Unmonitor" } else { "Monitor" }}
-                            </button>
-                            <button class="danger" on:click=on_delete disabled=move || busy.get()>"Delete"</button>
-                        </div>
+                        // Watch, Monitor and Delete are all writes to
+                        // `/authors/{id}` or `/watchers`, which no non-admin may
+                        // make. They were rendered for every role, so a
+                        // read-only member was shown a **Delete** button that
+                        // silently 403'd on click (SKADI-T-0639). The sweep
+                        // records 403s from page loads, not clicks, so it could
+                        // not have caught these.
+                        {show_actions.then(|| view! {
+                            <div class="card-actions">
+                                {watch_btn}
+                                <button on:click=toggle_monitor disabled=move || busy.get()>
+                                    {if monitored { "Unmonitor" } else { "Monitor" }}
+                                </button>
+                                <button class="danger" on:click=on_delete disabled=move || busy.get()>"Delete"</button>
+                            </div>
+                        })}
                         {description.map(|d| clean_overview(&d)
                             .into_iter()
                             .map(|p| view! { <p class="overview">{p}</p> })

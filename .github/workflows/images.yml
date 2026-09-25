@@ -9,8 +9,10 @@
 #
 # `latest` tracks main. deploy/docker-compose.nas.yml consumes these; a plain
 # `docker compose pull && up -d` (or Container Manager's project update) on the
-# NAS rolls a new build out. The repo is private, so the packages are too — the
-# NAS logs in once with a read:packages token (deploy/README "Running on the NAS").
+# NAS rolls a new build out. The repo and both packages are public, so a pull
+# needs no credentials at all — verified anonymously against the GHCR token
+# endpoint. (A bare manifest GET returns 401 even for a public image, which
+# is what made this look like an auth problem; fetch a token first.)
 #
 # **Called from ci.yml, not triggered directly** (SKADI-T-0482). Publishing an
 # image that has not passed the test suite is how a broken `latest` reaches the

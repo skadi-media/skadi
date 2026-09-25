@@ -332,8 +332,7 @@ def pull():
             "SKADI_IMAGE_PREFIX is not set in deploy/.env, so the compose file\n"
             "names local images and there is nothing to pull.\n\n"
             "  SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/\n\n"
-            "The images are private to the org, so `docker login ghcr.io` once\n"
-            "with a token carrying read:packages.",
+            "Both packages are public, so no `docker login` is needed.",
             flush=True,
         )
         # `raise SystemExit` rather than `return 1`, matching the other tasks:

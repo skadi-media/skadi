@@ -218,6 +218,20 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    # Coverage is a report, not a gate. It failed every run for months while
+    # every test job passed, which made red the resting state of this workflow —
+    # so a real regression looked exactly like the standing failure, and telling
+    # them apart cost a per-job inspection every time (twice while cutting
+    # 0.1.1). Nothing has ever depended on it: `images` deliberately omits it
+    # from its `needs:`, which is why sha- tags exist for commits whose run is
+    # red. Making that explicit here means the run's conclusion reports the
+    # tests, and red means something again.
+    #
+    # This does not fix the job — it still dies with its step left in_progress
+    # and no retrievable log, the signature of the runner agent going down
+    # rather than cargo reporting a failure. SKADI-T-0644 holds the decision
+    # about whether to scope it down so it fits, or drop it.
+    continue-on-error: true
     needs:
       [
         test-unit,

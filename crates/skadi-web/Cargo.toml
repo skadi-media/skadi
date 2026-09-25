@@ -9,7 +9,7 @@
 # Dev:     trunk serve --proxy-backend=http://127.0.0.1:8080/api
 [package]
 name = "skadi-web"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"

@@ -1,6 +1,6 @@
 {
   "name": "skadi-web-e2e",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "private": true,
   "description": "Playwright end-to-end browser tests for the Skadi web UI (SKADI-T-0120)",
   "scripts": {

@@ -144,6 +144,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # This job builds TWO full debug trees: the workspace, then the worker,
+      # which is in the workspace `exclude` list and so has its own `target/`
+      # and rebuilds librqbit plus a from-source jemalloc. Together they do not
+      # fit a stock runner — 0.1.1 was blocked twice by
+      # `ar: ... No space left on device` surfacing as a tikv-jemalloc-sys
+      # build-script panic (SKADI-T-0643). Reclaiming the preinstalled
+      # toolchains nothing here uses buys ~30 GB, which is more headroom than
+      # both builds need. NOT `cargo clean` between the steps: that fixes the
+      # disk by defeating rust-cache and makes every BDD run a cold build.
+      - name: Free disk (preinstalled toolchains this repo does not use)
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
       - name: Install Rust 1.93
         uses: dtolnay/rust-toolchain@master
         with:
@@ -154,8 +170,17 @@ jobs:
       - name: Workspace BDD suites
         run: cargo test --workspace --test bdd
 
+      # `df` after each build so a future disk failure reads as a disk failure
+      # instead of as a jemalloc build-script backtrace three screens down.
+      - name: Disk after the workspace build
+        run: df -h /
+
       - name: Worker BDD suite
         run: cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml --test bdd
+
+      - name: Disk after the worker build
+        if: always()
+        run: df -h /
 
   compose-config:
     name: Compose renders (base, +lab, +nas)

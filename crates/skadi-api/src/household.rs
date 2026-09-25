@@ -594,6 +594,12 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         ["books"] | ["books", _] => true,
         ["books", _, "files", _, "audio"] | ["books", _, "files", _, "chapters"] => true,
         ["library", "genres"] => true,
+        // Which media kinds exist and are enabled. Not sensitive, and the
+        // sidebar builds its library links from it — so gating this to the
+        // admin meant a read-only member saw **no Movies, TV or Audiobooks
+        // links at all**, in the one role that exists purely to browse and
+        // play. Found by the per-role UI sweep (SKADI-T-0639, 2026-09-25).
+        ["domains"] => true,
         ["authors"] | ["audiobooks", "series"] | ["audiobooks", "works"] => role != Role::Kid,
         _ => false,
     }
@@ -1521,6 +1527,24 @@ mod tests {
             "rollups would name hidden books"
         );
         assert!(path_allowed(Role::Admin, &post, "/movies"));
+    }
+
+    #[test]
+    fn every_role_can_read_the_domain_list() {
+        // The sidebar builds its library links from `/domains`. Gating it to
+        // the admin left a read-only member with no Movies, TV or Audiobooks
+        // links at all — in the role that exists purely to browse and play
+        // (found by the per-role UI sweep, SKADI-T-0639).
+        use axum::http::Method;
+        for role in [Role::Admin, Role::Contributor, Role::Member, Role::Kid] {
+            assert!(
+                path_allowed(role, &Method::GET, "/domains"),
+                "{role:?} must be able to see which media kinds exist"
+            );
+        }
+        // Still not writable by anyone but the admin.
+        assert!(!path_allowed(Role::Contributor, &Method::POST, "/domains"));
+        assert!(!path_allowed(Role::Member, &Method::POST, "/domains"));
     }
 
     #[test]

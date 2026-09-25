@@ -178,16 +178,30 @@ pub fn Dashboard() -> impl IntoView {
     // acquirable-ref → (title, kind) so Active-hunt rows show a name + media tag.
     let titles = RwSignal::new(HashMap::<String, (String, &'static str)>::new());
 
+    let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+
     // Each metric loads independently — a slow/failed one never blanks the rest.
     Effect::new(move |_| {
+        // Read the role **here**, in the effect body, not inside the async
+        // blocks below: an async block is outside the reactive scope, so a
+        // read in there would not be tracked and the effect would never re-run
+        // when `/me` answers — leaving the operator's own panels permanently
+        // empty. Reading it here also makes the effect re-run once the role
+        // resolves, which is exactly what is wanted.
+        let is_admin = role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
         spawn_local(async move {
             if let Ok(h) = api::health().await {
                 version.set(Some(h.version));
             }
         });
+        // Operator-only panels. `path_allowed` refuses these to every other
+        // role, so fetching them unconditionally meant a member's Overview
+        // fired four 403s before they touched anything (SKADI-T-0639).
         spawn_local(async move {
-            if let Ok(c) = api::health_checks().await {
-                checks.set(c);
+            if is_admin {
+                if let Ok(c) = api::health_checks().await {
+                    checks.set(c);
+                }
             }
             checks_loaded.set(true);
         });
@@ -225,12 +239,16 @@ pub fn Dashboard() -> impl IntoView {
             }
         });
         spawn_local(async move {
-            if let Ok(d) = api::list_downloads().await {
+            if is_admin
+                && let Ok(d) = api::list_downloads().await
+            {
                 downloads.set(d);
             }
         });
         spawn_local(async move {
-            if let Ok(h) = api::history(25).await {
+            if is_admin
+                && let Ok(h) = api::history(25).await
+            {
                 history.set(h);
             }
         });

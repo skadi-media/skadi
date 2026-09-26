@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.skadi.core.Book
+import com.skadi.core.BookActionPolicy
 import com.skadi.core.OfflineBook
 import com.skadi.core.OfflineStore
 import com.skadi.core.SkadiApi
@@ -141,16 +142,17 @@ fun LibraryScreen(
     actionsFor?.let { b ->
         val fid = b.importedFileId
         val onDevice = fid?.takeIf { f -> shelf.any { it.fileId == f } }
-        if (isAdmin() || onDevice != null) {
+        if (BookActionPolicy.sheetIsUseful(isAdmin(), onDevice != null)) {
             BookActionsSheet(
                 book = b,
                 api = api,
                 downloadedFid = onDevice,
-                // Not in the Downloaded view: that list is about this phone, so
-                // the destructive action reachable from it is scoped to this
-                // phone. Library management is not a phone-first job.
-                offerLibraryDelete = isAdmin() && mode != "downloaded",
-                offerWatchControls = isAdmin(),
+                // The rule lives in BookActionPolicy so it can be tested: the
+                // admin path cannot be driven on an emulator (the API refuses a
+                // second admin), which left the most important case — an
+                // operator in the Downloaded view — unprovable from the UI.
+                offerLibraryDelete = BookActionPolicy.offersLibraryDelete(isAdmin(), mode),
+                offerWatchControls = BookActionPolicy.offersWatchControls(isAdmin()),
                 onRemoveDownload = { f ->
                     sheetScope.launch {
                         withContext(Dispatchers.IO) { store.delete(f) }

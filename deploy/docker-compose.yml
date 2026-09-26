@@ -514,8 +514,33 @@ services:
       # shared namespace, so inbound tailnet traffic reaches it directly.
       TS_USERSPACE: "false"
       TS_EXTRA_ARGS: ${TAILSCALE_EXTRA_ARGS:-}
+      # Serve skadi on the tailnet name with no port, so
+      # `https://<host>.<tailnet>.ts.net/` works instead of needing `:8090`
+      # (2026-09-26). tailscaled terminates TLS and proxies to 127.0.0.1:8080,
+      # which reaches skadi because this sidecar shares its network namespace.
+      #
+      # Declared here rather than left to a one-off `tailscale serve` command:
+      # that persists in the state volume and so survives restarts, but a fresh
+      # deploy or the NAS would silently not have it.
+      #
+      # **serve, not funnel** — `tailscale serve status` must keep saying
+      # "tailnet only". Funnel would publish this to the public internet.
+      #
+      # **HTTPS on 443, and deliberately no port-80 handler.** Plain HTTP on a
+      # non-localhost origin is not a secure context, and both the service
+      # worker and OPFS are gated behind that — measured: on an insecure origin
+      # `"serviceWorker" in navigator` is false and `navigator.storage` does not
+      # exist at all. So an http:// door would still render the app while
+      # silently disabling offline audiobook downloads, which is worse than no
+      # door. Modern browsers try HTTPS for a bare hostname anyway.
+      #
+      # Requires "HTTPS Certificates" enabled for the tailnet, which is also
+      # what makes `${TS_CERT_DOMAIN}` in serve.json resolve — with certs off it
+      # substitutes the literal string `no-https` and nothing matches.
+      TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - tailscale-state:/var/lib/tailscale
+      - ./tailscale:/config:ro
     restart: unless-stopped
 
   skadi-downloader-worker:

@@ -25,8 +25,8 @@ android {
         applicationId = "com.skadi.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "0.14.1"
+        versionCode = 29
+        versionName = "0.15.0"
     }
 
     compileOptions {

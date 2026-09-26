@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ import com.skadi.core.SkadiApi
 import com.skadi.core.VideoProgress
 import com.skadi.core.WatchRecord
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -104,14 +106,24 @@ fun HomeScreen(
     var listening by remember { mutableStateOf<List<Listening>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
-    var confirmForget by remember { mutableStateOf<WatchRecord?>(null) }
+    // One dialog for every shelf. Modelled on what the dialog needs — a name, a
+    // line saying what survives, and something to run — rather than on a record
+    // type, because the shelves hold three different ones and a per-type
+    // `confirmForgetX` would have multiplied a near-identical dialog
+    // (SKADI-T-0647).
+    var confirmForget by remember { mutableStateOf<ForgetTarget?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(reload) {
         val records = progress.recent()
         watching = records.filter { it.resumeAtMs != null }
         listening = withContext(Dispatchers.IO) {
             store.list()
-                .filter { !it.finished && it.positionS >= VideoProgress.MIN_RESUME_MS / 1000.0 }
+                .filter {
+                    !it.finished &&
+                        !it.hiddenFromHome &&
+                        it.positionS >= VideoProgress.MIN_RESUME_MS / 1000.0
+                }
                 .map { b ->
                     Listening(
                         book = b,
@@ -172,16 +184,21 @@ fun HomeScreen(
         return
     }
 
-    confirmForget?.let { rec ->
+    confirmForget?.let { target ->
         AlertDialog(
             onDismissRequest = { confirmForget = null },
             title = { Text("Remove from Home?") },
-            text = { Text("“${rec.title}” will start from the beginning next time.") },
+            text = { Text("“${target.title}” ${target.note}") },
             confirmButton = {
                 TextButton(onClick = {
-                    progress.forget(rec.key)
-                    confirmForget = null
-                    reload++
+                    // One of these actions rewrites meta.json, so none of them run
+                    // on the main thread. reload++ only after it lands, or the
+                    // shelf re-reads the file it is still being written.
+                    scope.launch {
+                        withContext(Dispatchers.IO) { target.action() }
+                        confirmForget = null
+                        reload++
+                    }
                 }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmForget = null }) { Text("Cancel") } },
@@ -233,7 +250,12 @@ fun HomeScreen(
                                     progress.start(rec)
                                     onPlayVideo(url, playerTitle(rec), rec.key)
                                 },
-                                onLongClick = { confirmForget = rec },
+                                onLongClick = {
+                                    confirmForget = ForgetTarget(
+                                        title = rec.title,
+                                        note = "will start from the beginning next time.",
+                                    ) { progress.forget(rec.key) }
+                                },
                             )
                         }
                     }
@@ -292,7 +314,18 @@ fun HomeScreen(
                                     ?.let { (l.book.positionS / it).toFloat().coerceIn(0f, 1f) },
                                 square = true,
                                 onClick = { onPlayBook(l.book.fileId) },
-                                onLongClick = null,
+                                onLongClick = {
+                                    confirmForget = ForgetTarget(
+                                        title = l.book.title,
+                                        // Says what survives, not just what goes.
+                                        // The neighbouring gesture in the library's
+                                        // Downloaded view *does* delete the file
+                                        // (SKADI-T-0646), so these two must not feel
+                                        // like the same action.
+                                        note = "comes off Home. The download and your " +
+                                            "place in it stay on your phone.",
+                                    ) { store.setHiddenFromHome(l.book.fileId, true) }
+                                },
                             )
                         }
                     }
@@ -301,6 +334,21 @@ fun HomeScreen(
         }
     }
 }
+
+/**
+ * What the one "Remove from Home?" dialog needs, whichever shelf raised it
+ * (SKADI-T-0647): a name, a line saying what survives, and the work to do.
+ *
+ * `note` is phrased as the second half of a sentence beginning with the title,
+ * and should say what is kept, not only what is removed — the shelves differ on
+ * that, and the difference matters: dismissing a video forgets the position,
+ * dismissing a book keeps both the position and the download.
+ */
+private data class ForgetTarget(
+    val title: String,
+    val note: String,
+    val action: () -> Unit,
+)
 
 private data class Listening(val book: OfflineBook, val durationS: Double, val lastPlayedAt: Long)
 

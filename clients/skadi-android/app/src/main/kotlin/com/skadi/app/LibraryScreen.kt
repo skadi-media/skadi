@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -96,7 +97,12 @@ fun LibraryScreen(
     // Long-pressed book → the management action sheet (Track B). A delete bumps
     // reloadKey to re-fetch the library.
     var actionsFor by remember { mutableStateOf<Book?>(null) }
+    // A device-only book has no library `Book` to hang the sheet on, so it gets
+    // its own confirm (SKADI-T-0646) — these tiles previously had no long-press
+    // at all, making a device-only download unremovable from this screen.
+    var removeShelfOnly by remember { mutableStateOf<OfflineBook?>(null) }
     var reloadKey by remember { mutableStateOf(0) }
+    val sheetScope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     // A tapped book opens its page; Listen / Download live there (SKADI-T-0586).
     var openBook by rememberSaveable { mutableStateOf<String?>(null) }
@@ -127,14 +133,59 @@ fun LibraryScreen(
     var query by rememberSaveable { mutableStateOf("") }
     val expanded = remember { mutableStateListOf<String>() }
 
-    // Long-press management sheet (watch author/series, delete bad grab).
-    // Operator only (SKADI-T-0614): every action on it is a controller call.
-    if (isAdmin()) actionsFor?.let { b ->
-        BookActionsSheet(
-            book = b,
-            api = api,
-            onDismiss = { actionsFor = null },
-            onDeleted = { reloadKey++ },
+    // Long-press management sheet. The controller actions on it — watch
+    // author/series, delete from library — stay operator-only (SKADI-T-0614),
+    // but **removing a download is not a controller action**, so the sheet is no
+    // longer gated on the operator role as a whole: that left a member unable to
+    // reclaim space on their own phone (SKADI-T-0646).
+    actionsFor?.let { b ->
+        val fid = b.importedFileId
+        val onDevice = fid?.takeIf { f -> shelf.any { it.fileId == f } }
+        if (isAdmin() || onDevice != null) {
+            BookActionsSheet(
+                book = b,
+                api = api,
+                downloadedFid = onDevice,
+                // Not in the Downloaded view: that list is about this phone, so
+                // the destructive action reachable from it is scoped to this
+                // phone. Library management is not a phone-first job.
+                offerLibraryDelete = isAdmin() && mode != "downloaded",
+                offerWatchControls = isAdmin(),
+                onRemoveDownload = { f ->
+                    sheetScope.launch {
+                        withContext(Dispatchers.IO) { store.delete(f) }
+                        reloadKey++
+                    }
+                },
+                onDismiss = { actionsFor = null },
+                onDeleted = { reloadKey++ },
+            )
+        }
+    }
+
+    removeShelfOnly?.let { b ->
+        AlertDialog(
+            onDismissRequest = { removeShelfOnly = null },
+            title = { Text("Remove download?") },
+            text = {
+                Text(
+                    "“${b.title}” is removed from this phone. It is not in your " +
+                        "library, so this is the only copy on this device.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val fid = b.fileId
+                    removeShelfOnly = null
+                    sheetScope.launch {
+                        withContext(Dispatchers.IO) { store.delete(fid) }
+                        reloadKey++
+                    }
+                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeShelfOnly = null }) { Text("Cancel") }
+            },
         )
     }
 
@@ -428,7 +479,8 @@ if (mode == "series") {
                         author = b.authors.firstOrNull().orEmpty(),
                         cover = store.coverFile(b.fileId).takeIf { it.isFile },
                         onDevice = true, progress = null,
-                        open = { onPlay(b.fileId) }, more = null,
+                        open = { onPlay(b.fileId) },
+                        more = { removeShelfOnly = b },
                     )
                 }).sortedBy { sortKey(it.title) }
             }

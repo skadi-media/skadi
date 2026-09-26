@@ -40,7 +40,34 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted: () -> Unit) {
+fun BookActionsSheet(
+    book: Book,
+    api: SkadiApi,
+    /**
+     * The on-device file id when this book is downloaded, else null. Passed in
+     * rather than looked up here: the caller already knows, and a sheet that
+     * reaches for its own store starts owning state it cannot keep in step with
+     * the tile behind it.
+     */
+    downloadedFid: String?,
+    /**
+     * Whether to offer `Delete from library…`. False in the library's
+     * **Downloaded** view: that list is about what is on this phone, so the
+     * destructive action reachable there must be scoped to this phone
+     * (SKADI-T-0646). Removing a book from the library is not a phone-first job.
+     */
+    offerLibraryDelete: Boolean,
+    /**
+     * Whether to show the watch-author/series toggles. They are controller calls,
+     * so operator only — but removing a download is not, and gating the whole
+     * sheet on the operator role left a member unable to reclaim space on their
+     * own phone (SKADI-T-0646).
+     */
+    offerWatchControls: Boolean,
+    onRemoveDownload: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val authorName = book.authors.firstOrNull()?.takeIf { it.isNotBlank() }
     val seriesName = book.series?.name?.takeIf { it.isNotBlank() }
@@ -52,9 +79,14 @@ fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted
     var resolved by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    var deleteFiles by remember { mutableStateOf(true) }
+    // Defaults to **false** (SKADI-T-0646). It used to default to true, which
+    // made an irreversible server-side file deletion the thing that happens when
+    // someone confirms a dialog without reading the checkbox. Opt in to that.
+    var deleteFiles by remember { mutableStateOf(false) }
+    var confirmRemoveDownload by remember { mutableStateOf(false) }
 
-    LaunchedEffect(book.id) {
+    LaunchedEffect(book.id, offerWatchControls) {
+        if (!offerWatchControls) return@LaunchedEffect
         runCatching {
             val authors = api.listAuthors()
             val series = if (seriesName != null) api.listBookSeries() else emptyList()
@@ -80,6 +112,31 @@ fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted
             if (!ok) set(now) // revert on failure
             busy = false
         }
+    }
+
+    if (confirmRemoveDownload && downloadedFid != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRemoveDownload = false },
+            title = { Text("Remove download?") },
+            // Names the two things people worry about — the server copy and the
+            // library entry — instead of leaving them to infer it from silence.
+            text = {
+                Text(
+                    "“${book.title}” is removed from this phone. It stays in your " +
+                        "library and on the server, and you can download it again.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemoveDownload = false
+                    onRemoveDownload(downloadedFid)
+                    onDismiss()
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemoveDownload = false }) { Text("Cancel") }
+            },
+        )
     }
 
     if (confirmDelete) {
@@ -131,7 +188,7 @@ fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-            if (authorName != null) {
+            if (offerWatchControls && authorName != null) {
                 WatchRow(
                     label = "Watch author",
                     detail = authorName + if (resolved && authorAsin == null) " — not on Audible" else "",
@@ -140,7 +197,7 @@ fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted
                     onToggle = { toggleWatch("author", authorAsin, watchingAuthor) { watchingAuthor = it } },
                 )
             }
-            if (seriesName != null) {
+            if (offerWatchControls && seriesName != null) {
                 WatchRow(
                     label = "Watch series",
                     detail = seriesName + if (resolved && seriesAsin == null) " — no series match" else "",
@@ -150,11 +207,31 @@ fun BookActionsSheet(book: Book, api: SkadiApi, onDismiss: () -> Unit, onDeleted
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            TextButton(
-                onClick = { confirmDelete = true },
-                modifier = Modifier.padding(vertical = 4.dp),
-            ) { Text("Delete from library…", color = MaterialTheme.colorScheme.error) }
+            // Local first, and separated by its own divider: in a Downloaded list
+            // this is the action people mean, and it is the safe one. Keeping the
+            // two structurally apart — rather than one "Delete…" entry with
+            // options — is deliberate; the combined form is what produced a
+            // pre-checked server-file deletion (SKADI-T-0646).
+            if (downloadedFid != null) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                TextButton(
+                    onClick = { confirmRemoveDownload = true },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) { Text("Remove download") }
+                Text(
+                    "Frees space on this phone. The book stays in your library.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (offerLibraryDelete) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                TextButton(
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) { Text("Delete from library…", color = MaterialTheme.colorScheme.error) }
+            }
         }
     }
 }

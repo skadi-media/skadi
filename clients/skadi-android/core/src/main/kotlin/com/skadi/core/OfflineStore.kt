@@ -24,6 +24,17 @@ data class OfflineBook(
     @SerialName("size_bytes") val sizeBytes: Long = 0,
     @SerialName("finished") val finished: Boolean = false,
     @SerialName("position_s") val positionS: Double = 0.0,
+    /**
+     * Hidden from Home's "Keep listening" shelf (SKADI-T-0647). Deliberately a
+     * flag and not a position reset: "remove from Home" promises tidying, and
+     * someone nine hours into a book should not lose their place to it. The
+     * download and the position both survive, so the book is still in the
+     * library's Downloaded view and resumes where it was.
+     *
+     * Defaults false, so meta.json files written before this existed load
+     * unchanged.
+     */
+    @SerialName("hidden_from_home") val hiddenFromHome: Boolean = false,
 )
 
 class OfflineStore(private val root: File) {
@@ -90,7 +101,21 @@ class OfflineStore(private val root: File) {
     /** Update playback position / finished flag in place (T-0343 uses this). */
     fun updateProgress(fid: String, positionS: Double, finished: Boolean) {
         val m = meta(fid) ?: return
-        saveMeta(m.copy(positionS = positionS, finished = finished))
+        // Listening to it again un-hides it (SKADI-T-0647): actually resuming a
+        // book is a clearer statement of interest than any button, and without
+        // this a book dismissed once could never come back to Home.
+        saveMeta(m.copy(positionS = positionS, finished = finished, hiddenFromHome = false))
+    }
+
+    /**
+     * Drop the book off Home without touching the audio or the position
+     * (SKADI-T-0647). Playing it again clears the flag — asking to resume is a
+     * clearer signal of interest than any button could be.
+     */
+    fun setHiddenFromHome(fid: String, hidden: Boolean) {
+        val m = meta(fid) ?: return
+        if (m.hiddenFromHome == hidden) return
+        saveMeta(m.copy(hiddenFromHome = hidden))
     }
 
     fun delete(fid: String) {

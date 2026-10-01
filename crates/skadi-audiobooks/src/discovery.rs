@@ -69,6 +69,10 @@ pub struct IngestProgress {
     pub resolved: Option<AsinId>,
     /// Pages actually requested.
     pub pages_read: u32,
+    /// Products the name search returned that do **not** credit this author and
+    /// so were not ingested for them (SKADI-T-0653). Audible's `author=` search
+    /// is fuzzy: "George R. R. Martin" also returns George R. Martin III.
+    pub foreign: usize,
     /// `Some(page)` when the catalog has more and the read stopped at its page
     /// allowance; `None` when the author's catalog was read to the end.
     pub next_page: Option<u32>,
@@ -133,6 +137,12 @@ pub async fn ingest_author_pages(
         ..IngestProgress::default()
     };
     let want = name_key(author_name);
+    // For an unregistered target: how often each ASIN is credited under this
+    // name. The *most* credited wins, not the first seen — on a newest-first
+    // list the first match is whatever was published last, which is how a
+    // bio-less duplicate author page became a second George R. R. Martin
+    // (SKADI-T-0653).
+    let mut votes: std::collections::HashMap<AsinId, usize> = std::collections::HashMap::new();
     let mut index = start;
     loop {
         if progress.pages_read >= max_pages {
@@ -145,7 +155,16 @@ pub async fn ingest_author_pages(
 
         let mut works: Vec<Work> = Vec::with_capacity(page.items.len());
         for item in &page.items {
-            let mut w = work_from_catalog(item, author_asin);
+            let Some(attributed) = credited_asin(item, &want, author_asin) else {
+                progress.foreign += 1;
+                continue;
+            };
+            if author_asin.is_none()
+                && let Some(a) = &attributed
+            {
+                *votes.entry(a.clone()).or_insert(0) += 1;
+            }
+            let mut w = work_from_catalog(item, attributed);
             w.language = match &item.language {
                 Some(l) => Some(l.clone()),
                 None => classify_language(store, catalog, &w.asin).await,
@@ -161,28 +180,65 @@ pub async fn ingest_author_pages(
         store.upsert_works(&works).await?;
         progress.upserted += works.len();
 
-        // Resolve the author's own ASIN: prefer the caller's, else the catalog's for
-        // a product whose primary author (authors[0]) is the queried name AND that
-        // carries an ASIN — the SAME author appears both with and without an ASIN
-        // across a catalog (e.g. a translated edition drops it), and only some items
-        // include it, so we must keep scanning past the ASIN-less matches. Name match
-        // is normalized (case/'.'/spacing-insensitive) so "A.G. Riddle" ==
-        // "A. G. Riddle". Kept across pages: first match wins.
-        if progress.resolved.is_none() {
-            progress.resolved = page
-                .items
+        if author_asin.is_none() {
+            progress.resolved = votes
                 .iter()
-                .find(|it| {
-                    it.author_asin.is_some()
-                        && it.authors.first().is_some_and(|a| name_key(a) == want)
-                })
-                .and_then(|it| it.author_asin.clone());
+                .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.0.cmp(&a.0.0)))
+                .map(|(asin, _)| asin.clone());
         }
 
         if last {
             return Ok(progress);
         }
         index += 1;
+    }
+}
+
+/// Whether `item` is really by the author discovery searched for, and if so
+/// which ASIN to attribute it to (SKADI-T-0653).
+///
+/// Audible's `author=` search is fuzzy, so the results include other people:
+/// searching "George R. R. Martin" returns George R. Martin III's books, under a
+/// different ASIN. Attributing every result to the searched author put those
+/// books in his body of work — and, through an author watcher, in line to be
+/// downloaded.
+///
+/// - **Registered author (ASIN known).** Credited when a contributor carries
+///   that ASIN. When a contributor has the matching *name* but **no** ASIN — a
+///   translated edition often drops it — that name match counts too. A matching
+///   name under a *different* ASIN is somebody else, and does not.
+/// - **Unregistered target (no ASIN).** Credited when a contributor's name key
+///   matches; attributed to that contributor's ASIN, if any.
+///
+/// - **A product crediting nobody** keeps the searched author: the search
+///   result is the only evidence there is, and nothing contradicts it.
+///
+/// `None` = not this author's product; it is not ingested for them.
+fn credited_asin(
+    item: &CatalogItem,
+    want_key: &str,
+    author_asin: Option<&AsinId>,
+) -> Option<Option<AsinId>> {
+    if item.authors.is_empty() {
+        return Some(author_asin.cloned());
+    }
+    let mut contributors = item
+        .authors
+        .iter()
+        .zip(item.author_asins.iter().chain(std::iter::repeat(&None)));
+    match author_asin {
+        Some(asin) => {
+            if item.author_asins.iter().flatten().any(|a| a == asin) {
+                return Some(Some(asin.clone()));
+            }
+            contributors
+                .filter(|(name, _)| name_key(name) == want_key)
+                .any(|(_, a)| a.is_none())
+                .then(|| Some(asin.clone()))
+        }
+        None => contributors
+            .find(|(name, _)| name_key(name) == want_key)
+            .map(|(_, a)| a.clone()),
     }
 }
 
@@ -209,7 +265,7 @@ async fn classify_language(
 ///
 /// A known contributor-role suffix is dropped first (SKADI-T-0652), so a name
 /// stored before roles were parsed at ingest still keys as the person.
-fn name_key(name: &str) -> String {
+pub(crate) fn name_key(name: &str) -> String {
     let (name, _) = skadi_metadata::split_role(name);
     name.chars()
         .filter(|c| c.is_ascii_alphanumeric())
@@ -218,12 +274,14 @@ fn name_key(name: &str) -> String {
 }
 
 /// Build a [`Work`] from an Audible [`CatalogItem`] + the owning author's ASIN.
-fn work_from_catalog(item: &CatalogItem, author_asin: Option<&AsinId>) -> Work {
+fn work_from_catalog(item: &CatalogItem, attributed: Option<AsinId>) -> Work {
     let mut w = Work::new(item.asin.clone(), item.title.clone());
     w.authors = item.authors.clone();
-    // Prefer the registered author's ASIN; otherwise adopt the one the catalog
-    // carries so a library-derived author's works are still queryable by author.
-    w.author_asin = author_asin.cloned().or_else(|| item.author_asin.clone());
+    // Attribution is decided by [`credited_asin`], from the product's own
+    // contributors. It used to *prefer the searched author's ASIN* over the
+    // product's, which credited every product a fuzzy name search returned to
+    // whoever was searched (SKADI-T-0653).
+    w.author_asin = attributed;
     w.series_name = item.series_name.clone();
     w.series_asin = item.series_asin.clone();
     w.series_position = item.series_position.clone();
@@ -356,12 +414,18 @@ impl AuthorDiscovery {
             Err(e) => tracing::warn!(error = %e, "catalog ingest: listing authors failed"),
         }
 
+        // A library book's author name is only a *new* target when no target
+        // already covers it under another spelling. Targets used to be keyed by
+        // the exact string, so a book crediting "George R.R. Martin" became a
+        // second search alongside the registered "George R. R. Martin" — the
+        // search that auto-registered a duplicate author for him (SKADI-T-0653).
+        let mut covered: HashSet<String> = targets.keys().map(|n| name_key(n)).collect();
         match self.repo.list_books(BookFilter::default()).await {
             Ok(books) => {
                 for book in books {
                     for name in book.authors {
                         let name = name.trim();
-                        if !name.is_empty() {
+                        if !name.is_empty() && covered.insert(name_key(name)) {
                             targets.entry(name.to_string()).or_insert(None);
                         }
                     }
@@ -421,9 +485,14 @@ impl AuthorDiscovery {
                     // Know-only: monitored=false, no watcher — acquires nothing
                     // until the operator watches. Idempotent via get_by_asin
                     // (upsert conflicts on id, and Author::new mints a fresh id).
+                    // Never auto-register a second author for a name that already
+                    // has one: two Audible pages for one person is how
+                    // B0DNQBC8G7 arrived (SKADI-T-0653). An operator can still add
+                    // an author explicitly; only this automatic path is guarded.
                     if asin.is_none()
                         && let Some(a_asin) = progress.resolved.clone()
                         && matches!(self.repo.get_author_by_asin(&a_asin).await, Ok(None))
+                        && !self.name_already_registered(name).await
                     {
                         let mut author = Author::new(name.clone());
                         author.asin = Some(a_asin);
@@ -459,6 +528,17 @@ impl AuthorDiscovery {
             tracing::info!("catalog ingest: upserted {upserted} work(s) this pass");
         }
         upserted
+    }
+
+    /// Whether a registered author already carries this name (by name key).
+    async fn name_already_registered(&self, name: &str) -> bool {
+        let want = name_key(name);
+        match self.repo.list_authors(AuthorFilter::default()).await {
+            Ok(authors) => authors.iter().any(|a| name_key(&a.name) == want),
+            // Unknown → do not register; a missed registration is retried next
+            // pass, a duplicate author is not undone by anything.
+            Err(_) => true,
+        }
     }
 
     /// Resolve active watchers into acquisitions: for each watcher, find the
@@ -669,6 +749,114 @@ mod discover_tests {
         let mut w = Work::new(AsinId(asin.into()), asin);
         w.release_date = date.map(str::to_string);
         w
+    }
+
+    // --- SKADI-T-0653: attribution comes from the product's own credits ---
+
+    fn item(credits: &[(&str, Option<&str>)]) -> CatalogItem {
+        CatalogItem {
+            asin: AsinId("P1".into()),
+            title: "A Book".into(),
+            release_date: None,
+            authors: credits.iter().map(|(n, _)| (*n).to_string()).collect(),
+            author_asins: credits
+                .iter()
+                .map(|(_, a)| a.map(|x| AsinId(x.into())))
+                .collect(),
+            author_asin: credits
+                .first()
+                .and_then(|(_, a)| a.map(|x| AsinId(x.into()))),
+            cover_url: None,
+            series_asin: None,
+            series_name: None,
+            series_position: None,
+            language: Some("english".into()),
+        }
+    }
+
+    const GRRM: &str = "B000APIGH4";
+
+    fn grrm() -> AsinId {
+        AsinId(GRRM.into())
+    }
+
+    #[test]
+    fn a_product_crediting_the_registered_asin_is_theirs() {
+        let i = item(&[("George R. R. Martin", Some(GRRM))]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), Some(&grrm())),
+            Some(Some(grrm()))
+        );
+    }
+
+    /// The production case: Audible's fuzzy search for "George R. R. Martin"
+    /// returns George R. Martin III's books under his own ASIN.
+    #[test]
+    fn a_different_person_returned_by_the_fuzzy_search_is_not_theirs() {
+        let i = item(&[("George R. Martin III", Some("B00PUVY1AE"))]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), Some(&grrm())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_matching_name_without_an_asin_still_counts() {
+        // Translated and older editions often drop the contributor ASIN.
+        let i = item(&[("George R.R. Martin", None)]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), Some(&grrm())),
+            Some(Some(grrm()))
+        );
+    }
+
+    #[test]
+    fn a_matching_name_under_a_different_asin_is_somebody_else() {
+        let i = item(&[("George R. R. Martin", Some("B0OTHERPAGE"))]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), Some(&grrm())),
+            None,
+            "the ASIN is the identity; a matching name is only a hint"
+        );
+    }
+
+    #[test]
+    fn a_co_author_credit_counts() {
+        let i = item(&[
+            ("Gardner Dozois", None),
+            ("George R. R. Martin", Some(GRRM)),
+        ]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), Some(&grrm())),
+            Some(Some(grrm()))
+        );
+    }
+
+    #[test]
+    fn a_product_crediting_nobody_keeps_the_searched_author() {
+        let i = item(&[]);
+        assert_eq!(
+            credited_asin(&i, &name_key("Andy Weir"), Some(&grrm())),
+            Some(Some(grrm()))
+        );
+        assert_eq!(credited_asin(&i, &name_key("Andy Weir"), None), Some(None));
+    }
+
+    #[test]
+    fn an_unregistered_target_takes_the_matching_contributors_asin() {
+        let i = item(&[
+            ("Gardner Dozois", Some("GD")),
+            ("George R. R. Martin", Some(GRRM)),
+        ]);
+        assert_eq!(
+            credited_asin(&i, &name_key("George R. R. Martin"), None),
+            Some(Some(grrm()))
+        );
+        let other = item(&[("George R. Martin III", Some("B00PUVY1AE"))]);
+        assert_eq!(
+            credited_asin(&other, &name_key("George R. R. Martin"), None),
+            None
+        );
     }
 
     #[test]

@@ -95,6 +95,11 @@ pub trait WorksRepo: Send + Sync {
     /// Upsert many works (idempotent).
     async fn upsert_works(&self, works: &[Work]) -> Result<()>;
     async fn get_work(&self, asin: &AsinId) -> Result<Option<Work>>;
+    /// Clear a work's `author_asin` (SKADI-T-0653). A separate method because
+    /// [`upsert_work`](Self::upsert_work) never writes NULL — its changeset skips
+    /// `None` fields so a sparse re-fetch cannot wipe a known cover or language —
+    /// which also means it can never *remove* a wrong attribution.
+    async fn clear_work_author(&self, asin: &AsinId) -> Result<()>;
     /// All known works for an author (by author ASIN), newest release first.
     async fn list_works_by_author(&self, author_asin: &AsinId) -> Result<Vec<Work>>;
     /// All known works in a series (by series ASIN), title-ordered.
@@ -1026,6 +1031,18 @@ impl WorksRepo for Store {
                 .optional()
                 .map_err(db_err)?;
             Ok(row.map(Work::from))
+        })
+        .await
+    }
+
+    async fn clear_work_author(&self, asin: &AsinId) -> Result<()> {
+        let a = asin.0.clone();
+        self.with_conn(move |conn| {
+            diesel::update(works::table.filter(works::asin.eq(a)))
+                .set(works::author_asin.eq(None::<String>))
+                .execute(conn)
+                .map(|_| ())
+                .map_err(db_err)
         })
         .await
     }

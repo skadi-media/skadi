@@ -55,7 +55,10 @@ pub use refresh::{
     BookRefreshWorker, RefreshServices, reset_refresh_services, set_refresh_services,
 };
 pub use repo::{AudiobooksRepo, AuthorFilter, BookFilter, WatchersRepo, WorksRepo};
-pub use roles::{NormalizeReport, RoleNormalizerWorker, normalize_contributor_roles};
+pub use roles::{
+    AuthorMaintenanceWorker, LinkReport, NormalizeReport, normalize_contributor_roles,
+    repair_author_links,
+};
 pub use status_sink::AudiobookStatusSink;
 pub use wanted::{AudiobookWantedQuery, WantedScoring};
 pub use work::{WatchScope, Watcher, Work};

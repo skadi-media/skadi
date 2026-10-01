@@ -147,6 +147,84 @@ where
     Ok(report)
 }
 
+/// What [`repair_author_links`] changed. All zero on a second run.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LinkReport {
+    /// Known works whose `author_asin` pointed at a registered author the work
+    /// does not credit, now cleared.
+    pub works_unattributed: usize,
+    /// Library books linked to their author record.
+    pub books_linked: usize,
+    /// Books left unlinked because their author's name matches more than one
+    /// registered author.
+    pub books_ambiguous: usize,
+}
+
+/// Repair author links in stored data (SKADI-T-0653). Idempotent.
+///
+/// 1. **Mis-attributed works.** Discovery used to credit every product a fuzzy
+///    `author=` search returned to the searched author, so known works carry an
+///    `author_asin` for an author they do not name — George R. Martin III's books
+///    under George R. R. Martin. A work whose `author_asin` belongs to a
+///    registered author whose name key matches **none** of the work's authors has
+///    that link cleared. A work pointing at an ASIN with no registered author is
+///    left alone: nothing to judge it against.
+/// 2. **Unlinked books.** Library books are linked to an author record by name
+///    key, but only when **exactly one** registered author matches. Two matches
+///    — e.g. two Audible pages for one person — leaves the book unlinked rather
+///    than guessing; clients then group it by name, which is the right row.
+pub async fn repair_author_links<S>(store: &S) -> Result<LinkReport>
+where
+    S: AudiobooksRepo + WorksRepo,
+{
+    use crate::discovery::name_key;
+    let mut report = LinkReport::default();
+    let authors = store.list_authors(AuthorFilter::default()).await?;
+
+    let key_by_asin: HashMap<String, String> = authors
+        .iter()
+        .filter_map(|a| a.asin.as_ref().map(|x| (x.0.clone(), name_key(&a.name))))
+        .collect();
+    for w in store.list_all_works().await? {
+        let Some(asin) = w.author_asin.as_ref() else {
+            continue;
+        };
+        let Some(key) = key_by_asin.get(&asin.0) else {
+            continue;
+        };
+        if !w.authors.iter().any(|n| &name_key(n) == key) {
+            tracing::info!(work = %w.title, credited = ?w.authors, was = %asin.0,
+                "author links: cleared a work's attribution to an author it does not name");
+            // Not `upsert_works`: its changeset skips `None`, so it cannot clear.
+            store.clear_work_author(&w.asin).await?;
+            report.works_unattributed += 1;
+        }
+    }
+
+    let mut by_key: HashMap<String, Vec<&Author>> = HashMap::new();
+    for a in &authors {
+        by_key.entry(name_key(&a.name)).or_default().push(a);
+    }
+    for mut book in store.list_books(BookFilter::default()).await? {
+        if book.author_id.is_some() {
+            continue;
+        }
+        let Some(first) = book.authors.first() else {
+            continue;
+        };
+        match by_key.get(&name_key(first)).map(Vec::as_slice) {
+            Some([only]) => {
+                book.author_id = Some(only.id);
+                store.upsert_book(&book).await?;
+                report.books_linked += 1;
+            }
+            Some(many) if many.len() > 1 => report.books_ambiguous += 1,
+            _ => {}
+        }
+    }
+    Ok(report)
+}
+
 /// Two records may be one person only when nothing says otherwise: matching
 /// ASINs, or at least one record without an ASIN.
 fn same_person(a: &Author, b: &Author) -> bool {
@@ -156,25 +234,27 @@ fn same_person(a: &Author, b: &Author) -> bool {
     }
 }
 
-/// Runs [`normalize_contributor_roles`] once when the audiobooks domain starts,
-/// then exits. Idempotent, so running at every start is cheaper than tracking
-/// whether it already ran.
-pub struct RoleNormalizerWorker<S> {
+/// Startup maintenance of author data: runs [`normalize_contributor_roles`]
+/// (SKADI-T-0652) and then [`repair_author_links`] (SKADI-T-0653) once when the
+/// audiobooks domain starts, then exits. Both are idempotent, so running at
+/// every start is cheaper than tracking whether they already ran. Roles first,
+/// so link repair compares clean names.
+pub struct AuthorMaintenanceWorker<S> {
     store: S,
 }
 
-impl<S> RoleNormalizerWorker<S> {
+impl<S> AuthorMaintenanceWorker<S> {
     pub fn new(store: S) -> Self {
         Self { store }
     }
 }
 
-impl<S> skadi_core::Worker for RoleNormalizerWorker<S>
+impl<S> skadi_core::Worker for AuthorMaintenanceWorker<S>
 where
     S: AudiobooksRepo + WorksRepo + Send + Sync + 'static,
 {
     fn name(&self) -> &str {
-        "audiobooks-role-normalizer"
+        "audiobooks-author-maintenance"
     }
 
     fn run(
@@ -188,6 +268,13 @@ where
                 }
                 Ok(r) => tracing::debug!(report = ?r, "role normalisation: nothing to do"),
                 Err(e) => tracing::warn!(error = %e, "role normalisation: failed"),
+            }
+            match repair_author_links(&self.store).await {
+                Ok(r) if r != LinkReport::default() => {
+                    tracing::info!(report = ?r, "author links: repaired");
+                }
+                Ok(_) => tracing::debug!("author links: nothing to repair"),
+                Err(e) => tracing::warn!(error = %e, "author links: repair failed"),
             }
         })
     }

@@ -60,6 +60,13 @@ pub struct CatalogItem {
     pub release_date: Option<NaiveDate>,
     /// Author display names (may be empty).
     pub authors: Vec<String>,
+    /// Each author's Audible ASIN, aligned index-for-index with [`authors`]
+    /// (`None` where the catalog gave none). Discovery uses this to decide
+    /// whether a product is really by the author it searched for — Audible's
+    /// `author=` search is fuzzy and returns other people's books (SKADI-T-0653).
+    ///
+    /// [`authors`]: Self::authors
+    pub author_asins: Vec<Option<AsinId>>,
     /// The primary (first) author's Audible ASIN, when the `contributors` group
     /// carried it. Aligns with `authors[0]`. Lets an imported library register
     /// author entities so the author-scope browse/Watch works (SKADI-T-0160).
@@ -125,6 +132,7 @@ fn catalog_item(p: CatalogProduct) -> Option<CatalogItem> {
     // The primary author's ASIN, aligned with `authors[0]`. `None` if the
     // primary author carried no ASIN.
     let author_asin = picked.first().and_then(|(_, a)| a.clone()).map(AsinId);
+    let author_asins = picked.iter().map(|(_, a)| a.clone().map(AsinId)).collect();
     let authors = picked.into_iter().map(|(n, _)| n).collect();
     let cover_url = p
         .product_images
@@ -151,6 +159,7 @@ fn catalog_item(p: CatalogProduct) -> Option<CatalogItem> {
             .as_deref()
             .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()),
         authors,
+        author_asins,
         author_asin,
         cover_url,
         series_asin: primary

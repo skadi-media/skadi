@@ -361,6 +361,17 @@ async fn live_george_r_r_martin_ingests_the_english_ice_and_fire_novels() {
         "no translation was stored"
     );
 
+    // SKADI-T-0653: Audible's fuzzy author search also returns George R. Martin
+    // III (B00PUVY1AE). His books must not be ingested as George R. R. Martin's.
+    assert!(
+        !works.iter().any(|w| w.asin.0 == "B08J1D4ZH5"),
+        "The Fat Cat Lotto Method (George R. Martin III) must not be ingested for him"
+    );
+    assert!(
+        works.iter().all(|w| w.author_asin.as_ref() == Some(&grrm)),
+        "every ingested work is attributed to him"
+    );
+
     // SKADI-T-0652: Dangerous Women's editors arrive as plain names.
     if let Some(dw) = works.iter().find(|w| w.asin.0 == "B00GXJN3U6") {
         assert_eq!(dw.authors, vec!["George R. R. Martin", "Gardner Dozois"]);
@@ -371,4 +382,173 @@ async fn live_george_r_r_martin_ingests_the_english_ice_and_fire_novels() {
         .filter(|a| a.contains(" - editor"))
         .collect();
     assert!(suffixed.is_empty(), "role suffixes survived: {suffixed:?}");
+}
+
+// ---------------------------------------------------------------------------
+// SKADI-T-0653: attribution by ASIN, one target per name, no duplicate authors.
+// ---------------------------------------------------------------------------
+
+fn credited(asin: &str, title: &str, credits: &[(&str, Option<&str>)]) -> serde_json::Value {
+    serde_json::json!({
+        "asin": asin, "title": title, "language": "english",
+        "authors": credits.iter().map(|(n, a)| match a {
+            Some(a) => serde_json::json!({ "name": n, "asin": a }),
+            None => serde_json::json!({ "name": n }),
+        }).collect::<Vec<_>>()
+    })
+}
+
+/// The fuzzy search returns another person's book; it is not ingested for the
+/// author searched, and is counted as foreign.
+#[tokio::test]
+async fn a_fuzzy_match_for_someone_else_is_not_ingested_for_the_author() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    let server = MockServer::start().await;
+    mount_author_page(
+        &server,
+        "George R. R. Martin",
+        0,
+        2,
+        vec![
+            credited(
+                "AGOT",
+                "A Game of Thrones",
+                &[("George R. R. Martin", Some("B000APIGH4"))],
+            ),
+            credited(
+                "FATCAT",
+                "The Fat Cat Lotto Method",
+                &[("George R. Martin III", Some("B00PUVY1AE"))],
+            ),
+        ],
+    )
+    .await;
+    let catalog = AudibleCatalogProvider::new(client()).with_base_url(server.uri());
+    let p = skadi_audiobooks::ingest_author_pages(
+        &store,
+        &catalog,
+        "George R. R. Martin",
+        Some(&AsinId("B000APIGH4".into())),
+        0,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!((p.upserted, p.foreign), (1, 1));
+    let works = skadi_audiobooks::WorksRepo::list_all_works(&store)
+        .await
+        .unwrap();
+    assert_eq!(works.len(), 1);
+    assert_eq!(works[0].asin.0, "AGOT");
+    assert_eq!(works[0].author_asin, Some(AsinId("B000APIGH4".into())));
+}
+
+/// An unregistered name resolves to the ASIN credited most often, not to
+/// whatever the newest product happens to carry.
+#[tokio::test]
+async fn an_unregistered_name_resolves_to_its_most_credited_asin() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    let server = MockServer::start().await;
+    mount_author_page(
+        &server,
+        "George R.R. Martin",
+        0,
+        3,
+        vec![
+            // Newest first: a bio-less duplicate page credits the newest product.
+            credited(
+                "NEW",
+                "Newest",
+                &[("George R.R. Martin", Some("B0DNQBC8G7"))],
+            ),
+            credited(
+                "OLD1",
+                "Older one",
+                &[("George R. R. Martin", Some("B000APIGH4"))],
+            ),
+            credited(
+                "OLD2",
+                "Older two",
+                &[("George R. R. Martin", Some("B000APIGH4"))],
+            ),
+        ],
+    )
+    .await;
+    let catalog = AudibleCatalogProvider::new(client()).with_base_url(server.uri());
+    let (_, resolved) =
+        skadi_audiobooks::ingest_author_works(&store, &catalog, "George R.R. Martin", None)
+            .await
+            .unwrap();
+    assert_eq!(resolved, Some(AsinId("B000APIGH4".into())));
+}
+
+/// A library book spelling a registered author differently is not a second
+/// search, and never registers a second author.
+#[tokio::test]
+async fn a_second_spelling_is_not_a_second_target_or_a_second_author() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    let mut grrm = Author::new("George R. R. Martin");
+    grrm.asin = Some(AsinId("B000APIGH4".into()));
+    store.upsert_author(&grrm).await.unwrap();
+    let mut tails = skadi_audiobooks::Book::new(
+        skadi_core::ExternalIds {
+            asin: Some(AsinId("TAILS".into())),
+            ..Default::default()
+        },
+        "Tails of Wonder and Imagination",
+        skadi_core::ProfileId::new(),
+        skadi_core::RootFolder::new("/audiobooks"),
+    );
+    tails.authors = vec!["George R.R. Martin".into()];
+    store.upsert_book(&tails).await.unwrap();
+
+    let server = MockServer::start().await;
+    for who in ["George R. R. Martin", "George R.R. Martin"] {
+        mount_author_page(
+            &server,
+            who,
+            0,
+            1,
+            vec![credited(
+                "NEW",
+                "Newest",
+                &[("George R.R. Martin", Some("B0DNQBC8G7"))],
+            )],
+        )
+        .await;
+    }
+    let repo: Arc<dyn AudiobooksRepo> = Arc::new(store.clone());
+    let catalog = Arc::new(AudibleCatalogProvider::new(client()).with_base_url(server.uri()));
+    let audnexus = MockServer::start().await;
+    let enrich = Arc::new(AudnexusProvider::new(client()).with_base_url(audnexus.uri()));
+    AuthorDiscovery::new(repo, store.clone(), catalog, enrich)
+        .ingest_once(60)
+        .await;
+
+    let searched: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "author")
+                .map(|(_, v)| v.to_string())
+        })
+        .collect();
+    assert_eq!(
+        searched,
+        vec!["George R. R. Martin"],
+        "one search per name key"
+    );
+    let authors = store.list_authors(Default::default()).await.unwrap();
+    assert_eq!(
+        authors.len(),
+        1,
+        "no second George R. R. Martin is registered"
+    );
 }

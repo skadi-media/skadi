@@ -213,3 +213,93 @@ async fn leaves_a_book_alone_rather_than_emptying_its_authors() {
         .remove(0);
     assert_eq!(b.authors, vec!["Joel Martinsen - translator"]);
 }
+
+// --- SKADI-T-0653: repairing stored author links ---
+
+use skadi_audiobooks::repair_author_links;
+
+#[tokio::test]
+async fn clears_a_works_attribution_to_an_author_it_does_not_name() {
+    let db = db().await;
+    let store = db.store.clone();
+    store
+        .upsert_author(&author("George R.R. Martin", Some("B0DNQBC8G7")))
+        .await
+        .unwrap();
+    let mut fat = Work::new(AsinId("B08J1D4ZH5".into()), "The Fat Cat Lotto Method");
+    fat.authors = vec!["George R. Martin III".into()];
+    fat.author_asin = Some(AsinId("B0DNQBC8G7".into()));
+    let mut real = Work::new(AsinId("B09SKXD5DW".into()), "The Rise of the Dragon");
+    real.authors = vec!["George R. R. Martin".into()];
+    real.author_asin = Some(AsinId("B0DNQBC8G7".into()));
+    store.upsert_works(&[fat, real]).await.unwrap();
+
+    let r = repair_author_links(&store).await.unwrap();
+    assert_eq!(r.works_unattributed, 1);
+    let fat = store
+        .get_work(&AsinId("B08J1D4ZH5".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fat.author_asin, None,
+        "Martin III's book no longer counts as his"
+    );
+    let real = store
+        .get_work(&AsinId("B09SKXD5DW".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        real.author_asin.is_some(),
+        "a work that names him keeps its link"
+    );
+
+    assert_eq!(
+        repair_author_links(&store).await.unwrap(),
+        skadi_audiobooks::LinkReport::default(),
+        "idempotent"
+    );
+}
+
+#[tokio::test]
+async fn links_books_only_to_an_unambiguous_author() {
+    let db = db().await;
+    let store = db.store.clone();
+    let king = author("Stephen King", Some("KING"));
+    store.upsert_author(&king).await.unwrap();
+    store
+        .upsert_author(&author("George R. R. Martin", Some("B000APIGH4")))
+        .await
+        .unwrap();
+    store
+        .upsert_author(&author("George R.R. Martin", Some("B0DNQBC8G7")))
+        .await
+        .unwrap();
+    store
+        .upsert_book(&book("IT", &["Stephen King"]))
+        .await
+        .unwrap();
+    store
+        .upsert_book(&book("AGOT", &["George R. R. Martin"]))
+        .await
+        .unwrap();
+
+    let r = repair_author_links(&store).await.unwrap();
+    assert_eq!((r.books_linked, r.books_ambiguous), (1, 1));
+    let it = store
+        .get_book_by_asin(&AsinId("IT".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(it.author_id, Some(king.id));
+    let agot = store
+        .get_book_by_asin(&AsinId("AGOT".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        agot.author_id, None,
+        "two records match: left unlinked, not guessed"
+    );
+}

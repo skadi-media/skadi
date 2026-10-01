@@ -260,7 +260,7 @@ impl DomainModule for AudiobooksModule {
         // concurrently, so this does NOT finish before discovery's first pass; that
         // pass may query one role-suffixed name once. Harmless: `name_key` strips
         // roles, so matching is unaffected, and the next pass sees clean names.
-        workers.push(Box::new(crate::roles::RoleNormalizerWorker::new(
+        workers.push(Box::new(crate::roles::AuthorMaintenanceWorker::new(
             self.store.clone(),
         )));
 
@@ -540,8 +540,8 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["audiobooks-hunter", "audiobooks-role-normalizer"],
-            "one hunter worker plus the role normaliser (refresh and discovery deferred)"
+            vec!["audiobooks-hunter", "audiobooks-author-maintenance"],
+            "one hunter worker plus author maintenance (refresh and discovery deferred)"
         );
         module.runner().shutdown().await.unwrap();
     }

@@ -206,7 +206,11 @@ async fn classify_language(
 /// A normalized key for matching author display names across sources — lowercase,
 /// ASCII-alphanumeric only (drops '.', spacing, punctuation). Lets "A.G. Riddle",
 /// "A. G. Riddle" and "a g riddle" compare equal without over-eager fuzzy matching.
+///
+/// A known contributor-role suffix is dropped first (SKADI-T-0652), so a name
+/// stored before roles were parsed at ingest still keys as the person.
 fn name_key(name: &str) -> String {
+    let (name, _) = skadi_metadata::split_role(name);
     name.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
@@ -676,9 +680,15 @@ mod discover_tests {
             name_key("Brandon Sanderson"),
             name_key("brandon  sanderson")
         );
-        // But genuinely different names stay distinct (no over-eager fuzzy match).
-        assert_ne!(name_key("Jim Butcher"), name_key("Jim Butcher - editor"));
+        // Changed deliberately in SKADI-T-0652. This used to assert the two keyed
+        // DIFFERENTLY — which enshrined the bug: "Jim Butcher - editor" is Jim
+        // Butcher, credited as editor, and the split made him two authors. The
+        // role is a credit, not part of the name.
+        assert_eq!(name_key("Jim Butcher"), name_key("Jim Butcher - editor"));
+        // But genuinely different names stay distinct (no over-eager fuzzy match),
+        // and an unknown suffix is not treated as a role.
         assert_ne!(name_key("Ann Leckie"), name_key("Anne Leckie"));
+        assert_ne!(name_key("Prince"), name_key("Prince - Remastered"));
     }
 
     #[test]

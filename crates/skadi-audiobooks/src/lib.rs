@@ -29,6 +29,7 @@ pub mod module;
 pub mod naming;
 pub mod refresh;
 pub mod repo;
+pub mod roles;
 mod schema;
 pub mod status_sink;
 pub mod wanted;
@@ -54,6 +55,7 @@ pub use refresh::{
     BookRefreshWorker, RefreshServices, reset_refresh_services, set_refresh_services,
 };
 pub use repo::{AudiobooksRepo, AuthorFilter, BookFilter, WatchersRepo, WorksRepo};
+pub use roles::{NormalizeReport, RoleNormalizerWorker, normalize_contributor_roles};
 pub use status_sink::AudiobookStatusSink;
 pub use wanted::{AudiobookWantedQuery, WantedScoring};
 pub use work::{WatchScope, Watcher, Work};

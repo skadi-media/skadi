@@ -254,6 +254,16 @@ impl DomainModule for AudiobooksModule {
             )));
         }
 
+        // Contributor-role normalisation (SKADI-T-0652): rewrites role-suffixed
+        // author strings stored before ingest parsed them. Runs once per start and
+        // exits; idempotent, so there is nothing to track. Workers are spawned
+        // concurrently, so this does NOT finish before discovery's first pass; that
+        // pass may query one role-suffixed name once. Harmless: `name_key` strips
+        // roles, so matching is unaffected, and the next pass sees clean names.
+        workers.push(Box::new(crate::roles::RoleNormalizerWorker::new(
+            self.store.clone(),
+        )));
+
         // Author-discovery worker (SKADI-T-0132): only once both the catalog
         // provider (author → products) and the enrichment provider are wired.
         if let (Some(enrich), Some(catalog)) = (enrich, catalog) {
@@ -520,10 +530,18 @@ mod tests {
         .unwrap();
         assert_eq!(module.name(), "audiobooks");
         assert_eq!(module.kind(), MediaKind::Audiobook);
+        // Asserted by name, not by raw count: the point is "exactly one hunter,
+        // and no provider-dependent workers without providers". The role
+        // normaliser (SKADI-T-0652) is unconditional — it only needs the store.
+        let names: Vec<String> = module
+            .workers()
+            .iter()
+            .map(|w| w.name().to_string())
+            .collect();
         assert_eq!(
-            module.workers().len(),
-            1,
-            "one hunter worker (refresh deferred)"
+            names,
+            vec!["audiobooks-hunter", "audiobooks-role-normalizer"],
+            "one hunter worker plus the role normaliser (refresh and discovery deferred)"
         );
         module.runner().shutdown().await.unwrap();
     }

@@ -15,6 +15,7 @@ use skadi_core::{AsinId, ExternalIds, ImdbId, MediaKind, MusicBrainzId, Result, 
 pub mod arr_list;
 pub mod audible_catalog;
 pub mod audnexus;
+pub mod contributors;
 pub mod import_list;
 pub mod servarr;
 pub mod skyhook;
@@ -23,6 +24,7 @@ pub use audible_catalog::{
     AudibleCatalogProvider, CatalogItem, CatalogPage, MAX_PAGES_PER_AUTHOR, NUM_RESULTS,
 };
 pub use audnexus::{AudnexusAuthor, AudnexusProvider, AuthorMatch};
+pub use contributors::{ContributorRole, select_author_names, select_authors, split_role};
 pub use servarr::ServarrProvider;
 pub use skyhook::SkyhookProvider;
 pub use tmdb::TmdbProvider;

@@ -282,7 +282,11 @@ impl BookResource {
             release_date: date_of(&self.release_date),
             images,
             subtitle: self.subtitle,
-            authors: self.authors.into_iter().map(|a| a.name).collect(),
+            // Role suffixes ("- editor", "- translator") are parsed out here,
+            // and only real authors kept (SKADI-T-0652).
+            authors: crate::contributors::select_author_names(
+                self.authors.into_iter().map(|a| a.name),
+            ),
             narrators: self.narrators.into_iter().map(|n| n.name).collect(),
             series,
             series_position,

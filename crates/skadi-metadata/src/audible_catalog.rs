@@ -114,21 +114,18 @@ fn catalog_item(p: CatalogProduct) -> Option<CatalogItem> {
     if p.asin.is_empty() {
         return None;
     }
-    // The primary author's ASIN (first contributor that has a name), aligned with
-    // `authors[0]`. `None` if the primary author carried no ASIN.
-    let author_asin = p
-        .authors
-        .iter()
-        .find(|c| c.name.as_deref().is_some_and(|n| !n.is_empty()))
-        .and_then(|c| c.asin.clone())
-        .filter(|a| !a.is_empty())
-        .map(AsinId);
-    let authors = p
-        .authors
-        .into_iter()
-        .filter_map(|a| a.name)
-        .filter(|n| !n.is_empty())
-        .collect();
+    // Authors chosen with their ASINs carried alongside, so role parsing cannot
+    // pull them out of step (SKADI-T-0652): if the raw list starts with "X -
+    // editor" and a plain author follows, `authors[0]` is the plain author and
+    // `author_asin` must be *theirs*, not the editor's.
+    let picked = crate::contributors::select_authors(p.authors.into_iter().filter_map(|c| {
+        let name = c.name.filter(|n| !n.is_empty())?;
+        Some((name, c.asin.filter(|a| !a.is_empty())))
+    }));
+    // The primary author's ASIN, aligned with `authors[0]`. `None` if the
+    // primary author carried no ASIN.
+    let author_asin = picked.first().and_then(|(_, a)| a.clone()).map(AsinId);
+    let authors = picked.into_iter().map(|(n, _)| n).collect();
     let cover_url = p
         .product_images
         .get("500")
@@ -675,6 +672,46 @@ mod tests {
             !page(50, None).is_last(4),
             "full page and no total: keep going"
         );
+    }
+
+    /// SKADI-T-0652: role suffixes are parsed out of catalog contributors, and
+    /// `author_asin` stays paired with the author that ends up in `authors[0]`.
+    #[tokio::test]
+    async fn catalog_authors_drop_roles_and_keep_the_asin_aligned() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/1.0/catalog/products"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "products": [
+                    { "asin": "ANTH1", "title": "An Anthology",
+                      "authors": [
+                          { "name": "Ellen Datlow - editor", "asin": "EDITOR" },
+                          { "name": "Stephen King", "asin": "KING" },
+                          { "name": "Joe Hill - introduction", "asin": "HILL" }
+                      ] },
+                    { "asin": "DW", "title": "Dangerous Women",
+                      "authors": [
+                          { "name": "George R. R. Martin - editor", "asin": "GRRM" },
+                          { "name": "Gardner Dozois - editor" }
+                      ] }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let provider = AudibleCatalogProvider::new(client()).with_base_url(server.uri());
+        let items = provider.list_by_author("Anyone").await.unwrap();
+
+        assert_eq!(items[0].authors, vec!["Stephen King"]);
+        assert_eq!(
+            items[0].author_asin,
+            Some(AsinId("KING".into())),
+            "the editor came first in the raw list; the ASIN must still be King's"
+        );
+        assert_eq!(
+            items[1].authors,
+            vec!["George R. R. Martin", "Gardner Dozois"]
+        );
+        assert_eq!(items[1].author_asin, Some(AsinId("GRRM".into())));
     }
 
     #[tokio::test]

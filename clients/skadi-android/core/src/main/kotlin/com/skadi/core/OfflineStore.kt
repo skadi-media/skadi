@@ -35,6 +35,12 @@ data class OfflineBook(
      * unchanged.
      */
     @SerialName("hidden_from_home") val hiddenFromHome: Boolean = false,
+    /**
+     * Playback speed this book was last played at (SKADI-T-0659); null until
+     * the listener changes it, which means "the default speed". Kept per book
+     * because the right speed depends on the narrator.
+     */
+    val speed: Float? = null,
 )
 
 class OfflineStore(private val root: File) {
@@ -105,6 +111,13 @@ class OfflineStore(private val root: File) {
         // book is a clearer statement of interest than any button, and without
         // this a book dismissed once could never come back to Home.
         saveMeta(m.copy(positionS = positionS, finished = finished, hiddenFromHome = false))
+    }
+
+    /** Remember the speed this book is played at (SKADI-T-0659). */
+    fun updateSpeed(fid: String, speed: Float) {
+        val m = meta(fid) ?: return
+        if (m.speed == speed) return
+        saveMeta(m.copy(speed = speed))
     }
 
     /**

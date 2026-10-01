@@ -80,9 +80,13 @@ pub fn next_speed(cur: f64) -> f64 {
     SPEED_STEPS[(i + 1) % SPEED_STEPS.len()]
 }
 
-/// localStorage keys: playback position per file + the device-wide speed.
+/// localStorage keys: playback position and speed per file, and the default
+/// speed for a file with none of its own (SKADI-T-0659).
 fn pos_key(fid: &str) -> String {
     format!("skadi-pos-{fid}")
+}
+fn rate_key(fid: &str) -> String {
+    format!("skadi-rate-{fid}")
 }
 const RATE_KEY: &str = "skadi-rate";
 
@@ -204,6 +208,7 @@ pub fn PlayerPage() -> impl IntoView {
     let current = RwSignal::new(0.0f64);
     let playing = RwSignal::new(false);
     let rate = RwSignal::new(load_f64(RATE_KEY).unwrap_or(1.0));
+    let default_rate = RwSignal::new(load_f64(RATE_KEY).unwrap_or(1.0));
     let sleep = RwSignal::new(None::<Sleep>);
     // The chapter end an armed End of chapter is waiting for: set on arm and
     // recomputed on every seek, so it follows the chapter actually playing.
@@ -491,9 +496,11 @@ pub fn PlayerPage() -> impl IntoView {
     let on_loaded = move |_| {
         let Some(a) = audio_ref.get() else { return };
         duration.set(a.duration());
+        // This book's own speed, else the default (SKADI-T-0659).
+        let (_, fid) = ids();
+        rate.set(load_f64(&rate_key(&fid)).unwrap_or_else(|| default_rate.get_untracked()));
         a.set_playback_rate(rate.get_untracked());
         // Resume where we left off (if meaningfully into the book).
-        let (_, fid) = ids();
         if let Some(t) = load_f64(&pos_key(&fid))
             && t > 5.0
             && t < a.duration() - 5.0
@@ -622,7 +629,8 @@ pub fn PlayerPage() -> impl IntoView {
         let cycle_speed = move |_| {
             let r = next_speed(rate.get());
             rate.set(r);
-            store_f64(RATE_KEY, r);
+            let (_, fid) = ids();
+            store_f64(&rate_key(&fid), r);
         };
         let arm_sleep = move |ev: leptos::ev::Event| {
             match event_target_value(&ev).as_str() {
@@ -691,6 +699,22 @@ pub fn PlayerPage() -> impl IntoView {
                     <button type="button" class="player-btn-sm mono" on:click=cycle_speed title="Playback speed">
                         {move || format!("{}×", rate.get())}
                     </button>
+                    {move || {
+                        let r = rate.get();
+                        ((r - default_rate.get()).abs() > 0.001).then(|| view! {
+                            <button
+                                type="button"
+                                class="player-btn-sm"
+                                title="Use this speed for books you have not set one for"
+                                on:click=move |_| {
+                                    store_f64(RATE_KEY, r);
+                                    default_rate.set(r);
+                                }
+                            >
+                                {format!("Make {r}× default")}
+                            </button>
+                        })
+                    }}
                     <button
                         type="button"
                         class="player-btn-sm"

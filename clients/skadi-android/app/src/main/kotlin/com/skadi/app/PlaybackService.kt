@@ -89,7 +89,7 @@ class PlaybackService : MediaSessionService() {
 
             override fun onPlaybackParametersChanged(
                 playbackParameters: androidx.media3.common.PlaybackParameters,
-            ) = scheduleSleep()
+) = scheduleSleep()
         })
         session = MediaSession.Builder(this, player).build()
         instance = this

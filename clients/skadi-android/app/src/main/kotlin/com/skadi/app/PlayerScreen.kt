@@ -110,6 +110,7 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var showSheet by remember { mutableStateOf(false) }
     var showSleepSheet by remember { mutableStateOf(false) }
     val playerSettings = remember { com.skadi.core.PlayerSettings(context) }
+    var defaultSpeed by remember { mutableStateOf(playerSettings.defaultSpeed) }
     var shakeToExtend by remember { mutableStateOf(playerSettings.shakeToExtend) }
 
     // Bind the controller; load the book if the service isn't already on it.
@@ -137,6 +138,9 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                     )
                     .build()
                 c.setMediaItem(item, ((meta?.positionS ?: 0.0) * 1000).toLong())
+                // The book's own speed, else the default (SKADI-T-0659). It
+                // used to carry over whatever the last book was played at.
+                c.setPlaybackSpeed(playerSettings.speedFor(meta))
                 c.prepare()
                 // The tap that got here said "Play" (a library row, a Home
                 // card), so play. Opening paused meant every resume was two
@@ -329,10 +333,34 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                                 onClick = {
                                     speed = s
                                     controller?.setPlaybackSpeed(s)
+                                    // This book's speed from now on (SKADI-T-0659).
+                                    // Saved here, not on the player's speed
+                                    // change: opening a book applies the
+                                    // default, and that must not become the
+                                    // book's own.
+                                    store.updateSpeed(fid, s)
                                 },
                                 label = { Text("${trimSpeed(s)}×") },
                             )
                         }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    ) {
+                        Text(
+                            "Default for other books: ${trimSpeed(defaultSpeed)}×",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = {
+                                playerSettings.defaultSpeed = speed
+                                defaultSpeed = speed
+                            },
+                            enabled = kotlin.math.abs(speed - defaultSpeed) >= 0.01f,
+                        ) { Text("Make ${trimSpeed(speed)}× the default") }
                     }
                 }
             }

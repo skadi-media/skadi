@@ -36,6 +36,7 @@ web-sys = { version = "0.3", features = [
     # are unstable-gated and not worth threading the cfg through trunk/wasm-pack/Docker.)
     "HtmlAudioElement", "HtmlMediaElement",
     "HtmlVideoElement", "XmlHttpRequest",
+    "TextTrack", "TextTrackList", "TextTrackMode",
     "XmlHttpRequestResponseType", "ProgressEvent", "Blob", "Url", "Storage",
     "Event",
     # OPFS offline book storage (SKADI-T-0332).

@@ -13,6 +13,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +75,11 @@ fun VideoPlayerScreen(
     // player's own position updates and resume to wherever playback had already
     // got to — which is to say, nowhere.
     val resumeAt = remember(progressKey) { progress.resumeAt(progressKey) }
+    val trackPrefs = remember { com.skadi.core.TrackPreferences(context) }
+    var showLanguages by remember { mutableStateOf(false) }
+    // Set while a track change is the viewer's, made in the player's own menu,
+    // rather than ours: only theirs is remembered for the series.
+    val viewerChose = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -111,6 +118,9 @@ fun VideoPlayerScreen(
     // menu beside any embedded ones. One small request; with none, or an
     // older server, the film plays without them.
     LaunchedEffect(url) {
+        // Start with the viewer's languages (SKADI-T-0664) — the series' own
+        // choice when this is an episode, else the global one.
+        applyTrackPrefs(player, trackPrefs.effective(progressKey))
         val subs = com.skadi.core.Subtitles.fetch(url)
         player.setMediaItem(
             MediaItem.Builder()
@@ -149,6 +159,21 @@ fun VideoPlayerScreen(
             // exactly the recovery signal the old code had no way to see.
             override fun onPlayerErrorChanged(e: PlaybackException?) {
                 if (e == null) error = null
+            }
+
+            // A track picked in the player's menu, during an episode, is that
+            // series' choice from now on (SKADI-T-0664). Our own changes go
+            // through [applyTrackPrefs] with the flag clear.
+            override fun onTrackSelectionParametersChanged(
+                parameters: androidx.media3.common.TrackSelectionParameters,
+            ) {
+                if (!applyingPrefs) viewerChose.set(true)
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (!viewerChose.getAndSet(false)) return
+                val seriesId = com.skadi.core.TrackPreferences.seriesIdOf(progressKey) ?: return
+                trackPrefs.setSeries(seriesId, chosenPrefs(tracks))
             }
 
             // Belt and braces: if anything is actually playing, there is no
@@ -246,6 +271,29 @@ fun VideoPlayerScreen(
         ) {
             Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
         }
+        IconButton(
+            onClick = { showLanguages = true },
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 56.dp, top = 8.dp),
+        ) {
+            Icon(
+                androidx.compose.material.icons.Icons.Filled.Subtitles,
+                contentDescription = "Languages",
+                tint = Color.White,
+            )
+        }
+        if (showLanguages) {
+            LanguagesDialog(
+                current = trackPrefs.global,
+                onDismiss = { showLanguages = false },
+                onSave = { p ->
+                    trackPrefs.global = p
+                    com.skadi.core.TrackPreferences.seriesIdOf(progressKey)
+                        ?.let { trackPrefs.setSeries(it, p) }
+                    applyTrackPrefs(player, p)
+                    showLanguages = false
+                },
+            )
+        }
         if (nextLabel != null && onNext != null) {
             androidx.compose.material3.TextButton(
                 onClick = onNext,
@@ -323,3 +371,129 @@ private fun subtitleConfiguration(
         .setSelectionFlags(if (t.forced) androidx.media3.common.C.SELECTION_FLAG_FORCED else 0)
         .setId("skadi-sub-${t.index}")
         .build()
+
+/** True while [applyTrackPrefs] is changing the selection, so it is not taken for the viewer's choice. */
+@Volatile
+private var applyingPrefs = false
+
+/** Point the player's track selection at [p] (SKADI-T-0664). */
+private fun applyTrackPrefs(player: Player, p: com.skadi.core.TrackPrefs) {
+    val text = androidx.media3.common.C.TRACK_TYPE_TEXT
+    val b = player.trackSelectionParameters.buildUpon()
+        .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_AUDIO)
+        .clearOverridesOfType(text)
+        .setPreferredAudioLanguage(p.audio)
+    when (p.subtitles) {
+        com.skadi.core.SubtitleMode.Off -> b.setTrackTypeDisabled(text, true)
+        // No preferred text language, and "default"-flagged subtitles ignored:
+        // only forced ones are picked.
+        com.skadi.core.SubtitleMode.Forced -> b.setTrackTypeDisabled(text, false)
+            .setPreferredTextLanguage(null)
+            .setIgnoredTextSelectionFlags(androidx.media3.common.C.SELECTION_FLAG_DEFAULT)
+        com.skadi.core.SubtitleMode.On -> b.setTrackTypeDisabled(text, false)
+            .setPreferredTextLanguage(p.subtitleLanguage ?: p.audio)
+            .setIgnoredTextSelectionFlags(0)
+            .setSelectUndeterminedTextLanguage(true)
+    }
+    applyingPrefs = true
+    try {
+        player.trackSelectionParameters = b.build()
+    } finally {
+        applyingPrefs = false
+    }
+}
+
+/** The preferences that reproduce what is selected now. */
+private fun chosenPrefs(tracks: androidx.media3.common.Tracks): com.skadi.core.TrackPrefs {
+    fun selected(type: Int) = tracks.groups
+        .filter { it.type == type && it.isSelected }
+        .firstNotNullOfOrNull { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
+    val audio = selected(androidx.media3.common.C.TRACK_TYPE_AUDIO)
+    val text = selected(androidx.media3.common.C.TRACK_TYPE_TEXT)
+    return com.skadi.core.TrackPrefs(
+        audio = audio?.language,
+        subtitles = when {
+            text == null -> com.skadi.core.SubtitleMode.Off
+            text.selectionFlags and androidx.media3.common.C.SELECTION_FLAG_FORCED != 0 ->
+                com.skadi.core.SubtitleMode.Forced
+            else -> com.skadi.core.SubtitleMode.On
+        },
+        subtitleLanguage = text?.language,
+    )
+}
+
+/** The viewer's languages, for every film and episode (SKADI-T-0664). */
+@Composable
+private fun LanguagesDialog(
+    current: com.skadi.core.TrackPrefs,
+    onDismiss: () -> Unit,
+    onSave: (com.skadi.core.TrackPrefs) -> Unit,
+) {
+    var audio by remember { mutableStateOf(current.audio) }
+    var mode by remember { mutableStateOf(current.subtitles) }
+    var subLang by remember { mutableStateOf(current.subtitleLanguage) }
+    val langs = com.skadi.core.TrackPreferences.LANGUAGES
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Languages") },
+        text = {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            ) {
+                Text("Audio", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                ChipRow(listOf(null to "File default") + langs, audio) { audio = it }
+                Text(
+                    "Subtitles",
+                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                ChipRow(
+                    listOf(
+                        com.skadi.core.SubtitleMode.Off to "Off",
+                        com.skadi.core.SubtitleMode.Forced to "Forced only",
+                        com.skadi.core.SubtitleMode.On to "On",
+                    ),
+                    mode,
+                ) { mode = it }
+                if (mode == com.skadi.core.SubtitleMode.On) {
+                    Text(
+                        "Subtitle language",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    ChipRow(listOf(null to "Same as audio") + langs, subLang) { subLang = it }
+                }
+                Text(
+                    "Used for every film and episode. A track you pick in the player during a series is remembered for that series.",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                onSave(com.skadi.core.TrackPrefs(audio, mode, subLang))
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun <T> ChipRow(options: List<Pair<T, String>>, selected: T, onPick: (T) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(top = 6.dp),
+    ) {
+        options.forEach { (value, label) ->
+            androidx.compose.material3.FilterChip(
+                selected = value == selected,
+                onClick = { onPick(value) },
+                label = { Text(label) },
+            )
+        }
+    }
+}

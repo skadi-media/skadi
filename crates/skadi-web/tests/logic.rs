@@ -2395,3 +2395,28 @@ fn sleep_end_of_chapter_follows_the_chapter_playing() {
         "at 3x the next update lands past the end"
     );
 }
+
+/// SKADI-T-0664: which subtitle file the web player shows for a preference.
+#[wasm_bindgen_test]
+fn subtitle_preference_picks_the_track() {
+    use skadi_web::api::SubtitleTrack;
+    use skadi_web::watch::subtitle_to_show;
+    let t = |lang: &str, forced: bool| SubtitleTrack {
+        index: 0,
+        language: Some(lang.into()),
+        label: lang.into(),
+        forced,
+        format: "srt".into(),
+    };
+    let tracks = vec![t("en", true), t("en", false), t("fr", false)];
+    assert_eq!(subtitle_to_show("off", &tracks), None);
+    assert_eq!(subtitle_to_show("forced", &tracks), Some(0));
+    assert_eq!(
+        subtitle_to_show("en", &tracks),
+        Some(1),
+        "the full English file, not the forced one"
+    );
+    assert_eq!(subtitle_to_show("fr", &tracks), Some(2));
+    assert_eq!(subtitle_to_show("de", &tracks), None);
+    assert_eq!(subtitle_to_show("forced", &tracks[1..]), None);
+}

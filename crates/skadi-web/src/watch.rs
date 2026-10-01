@@ -178,6 +178,29 @@ pub fn resume_at(saved: Option<f64>, duration: f64) -> Option<f64> {
     Some(pos)
 }
 
+/// localStorage key for the viewer's subtitle choice (SKADI-T-0664):
+/// `off`, `forced` (the default) or a language code.
+const SUB_PREF_KEY: &str = "skadi.watch.subtitles";
+
+/// Which of `tracks` to show for the preference `pref` (SKADI-T-0664):
+/// `off` shows none; `forced` the first forced one; a language its first
+/// unforced file, else any file in it.
+#[must_use]
+pub fn subtitle_to_show(pref: &str, tracks: &[api::SubtitleTrack]) -> Option<usize> {
+    match pref {
+        "off" => None,
+        "forced" | "" => tracks.iter().position(|t| t.forced),
+        lang => tracks
+            .iter()
+            .position(|t| t.language.as_deref() == Some(lang) && !t.forced)
+            .or_else(|| {
+                tracks
+                    .iter()
+                    .position(|t| t.language.as_deref() == Some(lang))
+            }),
+    }
+}
+
 fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
@@ -242,6 +265,11 @@ pub struct WatchItem {
 fn Watch(item: WatchItem) -> impl IntoView {
     let key = item.key.clone();
     let subs = RwSignal::new(Vec::<api::SubtitleTrack>::new());
+    let sub_pref = RwSignal::new(
+        storage()
+            .and_then(|s| s.get_item(SUB_PREF_KEY).ok().flatten())
+            .unwrap_or_else(|| "forced".into()),
+    );
     let video_path = item.video_path.clone();
     {
         let vp = item.video_path.clone();
@@ -257,7 +285,30 @@ fn Watch(item: WatchItem) -> impl IntoView {
     // Restore once the duration is known, so the end-of-file refusal has
     // something to compare against.
     let restore_key = key.clone();
+    // Show the preferred subtitle and hide the rest. The browser numbers its
+    // text tracks in `<track>` order, which is `subs` order.
+    let apply_subs = move || {
+        let Some(v) = video.get_untracked() else {
+            return;
+        };
+        let show = subtitle_to_show(&sub_pref.get_untracked(), &subs.get_untracked());
+        let Some(list) = v.text_tracks() else { return };
+        for i in 0..list.length() {
+            if let Some(t) = list.get(i) {
+                t.set_mode(if Some(i as usize) == show {
+                    web_sys::TextTrackMode::Showing
+                } else {
+                    web_sys::TextTrackMode::Disabled
+                });
+            }
+        }
+    };
+    Effect::new(move |_| {
+        let _ = (subs.get(), sub_pref.get());
+        apply_subs();
+    });
     let on_loaded = move |_| {
+        apply_subs();
         if let Some(v) = video.get() {
             if let Some(at) = resume_at(load_position(&restore_key), v.duration()) {
                 v.set_current_time(at);
@@ -378,6 +429,38 @@ fn Watch(item: WatchItem) -> impl IntoView {
                     }
                 }).collect_view()}
             </video>
+            // The viewer's subtitle choice, remembered for every video
+            // (SKADI-T-0664). Shown only when the video has subtitle files.
+            {move || (!subs.get().is_empty()).then(|| {
+                let mut langs: Vec<(String, String)> = Vec::new();
+                for t in subs.get() {
+                    if let Some(l) = t.language.clone()
+                        && !langs.iter().any(|(c, _)| *c == l)
+                    {
+                        let name = t.label.split(" (").next().unwrap_or(&t.label).to_string();
+                        langs.push((l, name));
+                    }
+                }
+                view! {
+                    <label class="watch-subs">
+                        "Subtitles "
+                        <select on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            if let Some(s) = storage() {
+                                let _ = s.set_item(SUB_PREF_KEY, &v);
+                            }
+                            sub_pref.set(v);
+                        }>
+                            <option value="off" selected=move || sub_pref.get() == "off">"Off"</option>
+                            <option value="forced" selected=move || sub_pref.get() == "forced">"Forced only"</option>
+                            {langs.into_iter().map(|(code, name)| {
+                                let c = code.clone();
+                                view! { <option value=code selected=move || sub_pref.get() == c>{name}</option> }
+                            }).collect_view()}
+                        </select>
+                    </label>
+                }
+            })}
             {meta.map(|m| view! { <p class="watch-meta mono">{m}</p> })}
         </div>
     }

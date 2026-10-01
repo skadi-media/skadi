@@ -22,6 +22,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 cucumber = { workspace = true }
+tempfile = "3"
 tokio = { workspace = true }
 # The BDD steps read the operator-settable import guards through the same
 # `ConfigView` path production uses (SKADI-T-0416), rather than restating the

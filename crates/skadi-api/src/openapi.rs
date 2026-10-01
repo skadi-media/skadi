@@ -777,6 +777,30 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/movies/{id}/editions/{eid}/subtitles",
+        "movies",
+        "List the subtitle files beside an edition's video",
+    ),
+    (
+        "GET",
+        "/movies/{id}/editions/{eid}/subtitles/{n}",
+        "movies",
+        "Get one subtitle file (?format=vtt converts to WebVTT)",
+    ),
+    (
+        "GET",
+        "/series/{id}/episodes/{eid}/subtitles",
+        "tv",
+        "List the subtitle files beside an episode's video",
+    ),
+    (
+        "GET",
+        "/series/{id}/episodes/{eid}/subtitles/{n}",
+        "tv",
+        "Get one subtitle file (?format=vtt converts to WebVTT)",
+    ),
+    (
+        "GET",
         "/importlists",
         "importlists",
         "List configured import lists",

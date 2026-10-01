@@ -1105,3 +1105,88 @@ async fn deleting_a_movie_clears_its_tags() {
         "the membership rows must go with the item"
     );
 }
+
+/// SKADI-T-0663: subtitle files beside an imported edition's video are listed,
+/// served as UTF-8, and converted to WebVTT on request.
+#[tokio::test]
+async fn subtitles_beside_the_video_are_listed_and_served() {
+    let h = harness().await;
+    let (profile_id, root_path) = register_profile_and_root(&h.store).await;
+    let req =
+        serde_json::json!({ "tmdb_id": 603, "profile": profile_id, "root_folder": root_path });
+    let (_, created) = call(h.http.routes(), "POST", "/movies", Some(req)).await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let edition = created["editions"][0]["id"].as_str().unwrap().to_string();
+
+    let dir = std::env::temp_dir().join(format!("skadi-subs-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let video = dir.join("The Matrix (1999).mkv");
+    std::fs::write(&video, b"not really a film").unwrap();
+    std::fs::write(
+        dir.join("The Matrix (1999).en.srt"),
+        b"1\r\n00:00:01,000 --> 00:00:02,000\r\nWake up, Neo\r\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("The Matrix (1999).fr.forced.srt"),
+        b"1\n00:00:01,000 --> 00:00:02,000\nR\xe9veille-toi\n",
+    )
+    .unwrap();
+
+    let edition_id = skadi_core::MovieEditionId::from(uuid::Uuid::parse_str(&edition).unwrap());
+    h.store
+        .set_edition_status(
+            edition_id,
+            AcquisitionStatus::Imported {
+                file: skadi_core::FileRef {
+                    path: video.clone(),
+                },
+                quality: skadi_core::QualityId::new(),
+                score: 0,
+                at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let base = format!("/movies/{id}/editions/{edition}/subtitles");
+    let (s, list) = call(h.http.routes(), "GET", &base, None).await;
+    assert_eq!(s, StatusCode::OK);
+    let labels: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, vec!["English", "French (forced)"]);
+
+    let get = |uri: String| {
+        let router = h.http.routes();
+        async move {
+            let res = router
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = res.status();
+            let ct = res.headers()["content-type"].to_str().unwrap().to_string();
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            (status, ct, String::from_utf8(body.to_vec()).unwrap())
+        }
+    };
+    let (s, ct, body) = get(format!("{base}/0?format=vtt")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(ct.starts_with("text/vtt"), "{ct}");
+    assert!(body.starts_with("WEBVTT\n\n"), "{body}");
+    assert!(body.contains("00:00:01.000 --> 00:00:02.000"), "{body}");
+
+    let (_, ct, body) = get(format!("{base}/1")).await;
+    assert!(ct.starts_with("application/x-subrip"), "{ct}");
+    assert!(
+        body.contains("Réveille-toi"),
+        "Windows-1252 served as UTF-8: {body}"
+    );
+
+    let (s, _, _) = get(format!("{base}/9")).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(&dir);
+}

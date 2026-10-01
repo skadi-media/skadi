@@ -7,6 +7,8 @@
 //! acquirables, so [`ImportOutcome`] is plural. All "what does this satisfy" /
 //! edition / naming judgment lives in the domain's matcher — never here.
 
+pub mod subtitles;
+
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -613,6 +615,18 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                         for (path, contents) in m.sidecars {
                             let _ = tokio::task::spawn_blocking(move || {
                                 std::fs::write(&path, contents)
+                            })
+                            .await;
+                        }
+                        // Carry the release's subtitle files (SKADI-T-0663): a
+                        // subtitle shipped beside the video, or in its `Subs/`
+                        // folder, never reached the library before. Best-effort.
+                        {
+                            let src = source.clone();
+                            let dest = m.dest.clone();
+                            let hardlinks = self.use_hardlinks;
+                            let _ = tokio::task::spawn_blocking(move || {
+                                subtitles::carry(&src, &dest, hardlinks)
                             })
                             .await;
                         }

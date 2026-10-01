@@ -2450,6 +2450,42 @@ fn with_api_key(url: String) -> String {
     }
 }
 
+/// A subtitle file beside a video (SKADI-T-0663), as `GET …/subtitles` lists it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SubtitleTrack {
+    pub index: usize,
+    pub language: Option<String>,
+    pub label: String,
+    #[serde(default)]
+    pub forced: bool,
+    pub format: String,
+}
+
+/// The subtitle files of the video at `video_path` (`…/editions/{eid}/video` or
+/// `…/episodes/{eid}/video`, without the key). Empty on any failure: the film
+/// still plays.
+pub async fn video_subtitles(video_path: &str) -> Vec<SubtitleTrack> {
+    let url = format!("{}/subtitles", video_path.trim_end_matches("/video"));
+    match get(&url).send().await {
+        Ok(r) if r.ok() => r.json().await.unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// A `<track>` URL for subtitle `index` of that video, as WebVTT — browsers
+/// load nothing else — with the key in the query, since a `<track>` cannot send
+/// a header either.
+pub fn video_subtitle_vtt_url(video_path: &str, index: usize) -> String {
+    let base = format!(
+        "{}/subtitles/{index}",
+        video_path.trim_end_matches("/video")
+    );
+    match api_token() {
+        Some(t) => format!("{base}?format=vtt&apikey={t}"),
+        None => format!("{base}?format=vtt"),
+    }
+}
+
 pub fn book_audio_url(id: &str, fid: &str) -> String {
     format!("{API_BASE}/books/{id}/files/{fid}/audio")
 }

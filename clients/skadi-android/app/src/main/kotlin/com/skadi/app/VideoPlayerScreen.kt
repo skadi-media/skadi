@@ -103,15 +103,27 @@ fun VideoPlayerScreen(
             .setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
             // Unplugging headphones pauses rather than blaring from the speaker.
             .setHandleAudioBecomingNoisy(true)
-            .build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            // Seek BEFORE prepare: media3 applies a pending seek as the start
-            // position, so the film opens where you left it instead of playing a
-            // second from the top and jumping.
-            resumeAt?.let { seekTo(it) }
-            prepare()
-            playWhenReady = true
-        }
+            .build()
+    }
+
+    // Load once the video's subtitle files are known (SKADI-T-0663): they
+    // must be part of the MediaItem, and appear in the player's own track
+    // menu beside any embedded ones. One small request; with none, or an
+    // older server, the film plays without them.
+    LaunchedEffect(url) {
+        val subs = com.skadi.core.Subtitles.fetch(url)
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setUri(url)
+                .setSubtitleConfigurations(subs.map { t -> subtitleConfiguration(url, t) })
+                .build(),
+        )
+        // Seek BEFORE prepare: media3 applies a pending seek as the start
+        // position, so the film opens where you left it instead of playing a
+        // second from the top and jumping.
+        resumeAt?.let { player.seekTo(it) }
+        player.prepare()
+        player.playWhenReady = true
     }
 
     // Persist position while playing (SKADI-T-0585). Every 10s, matching the
@@ -290,3 +302,24 @@ fun VideoPlayerScreen(
         }
     }
 }
+
+/** One server subtitle file as a media3 side-loaded track (SKADI-T-0663). */
+private fun subtitleConfiguration(
+    videoUrl: String,
+    t: com.skadi.core.SubtitleTrack,
+): MediaItem.SubtitleConfiguration =
+    MediaItem.SubtitleConfiguration.Builder(
+        android.net.Uri.parse(com.skadi.core.Subtitles.fileUrl(videoUrl, t.index)),
+    )
+        .setMimeType(
+            when (t.format) {
+                "vtt" -> androidx.media3.common.MimeTypes.TEXT_VTT
+                "ass", "ssa" -> androidx.media3.common.MimeTypes.TEXT_SSA
+                else -> androidx.media3.common.MimeTypes.APPLICATION_SUBRIP
+            },
+        )
+        .setLanguage(t.language)
+        .setLabel(t.label)
+        .setSelectionFlags(if (t.forced) androidx.media3.common.C.SELECTION_FLAG_FORCED else 0)
+        .setId("skadi-sub-${t.index}")
+        .build()

@@ -227,6 +227,8 @@ pub struct WatchItem {
     pub back_href: String,
     pub back_label: String,
     pub src: String,
+    /// `src` without the key: the base the subtitle routes hang off.
+    pub video_path: String,
     /// Resume key, shared with the phone's scheme.
     pub key: String,
     pub media_info: Option<api::MediaInfo>,
@@ -239,6 +241,12 @@ pub struct WatchItem {
 #[component]
 fn Watch(item: WatchItem) -> impl IntoView {
     let key = item.key.clone();
+    let subs = RwSignal::new(Vec::<api::SubtitleTrack>::new());
+    let video_path = item.video_path.clone();
+    {
+        let vp = item.video_path.clone();
+        spawn_local(async move { subs.set(api::video_subtitles(&vp).await) });
+    }
     let verdict = playability(item.media_info.as_ref(), browser_can_play);
     let note = match &verdict {
         Playability::Ok => None,
@@ -355,7 +363,21 @@ fn Watch(item: WatchItem) -> impl IntoView {
                 on:loadedmetadata=on_loaded
                 on:timeupdate=on_time
                 on:ended=on_ended
-            ></video>
+            >
+                // Subtitle files beside the video (SKADI-T-0663), as WebVTT
+                // tracks the browser's own captions menu offers.
+                {move || subs.get().into_iter().map(|t| {
+                    let src = api::video_subtitle_vtt_url(&video_path, t.index);
+                    view! {
+                        <track
+                            kind="subtitles"
+                            src=src
+                            srclang=t.language.clone().unwrap_or_default()
+                            label=t.label.clone()
+                        />
+                    }
+                }).collect_view()}
+            </video>
             {meta.map(|m| view! { <p class="watch-meta mono">{m}</p> })}
         </div>
     }
@@ -387,6 +409,7 @@ pub fn WatchMoviePage() -> impl IntoView {
                         back_href: format!("/movies/{id}"),
                         back_label: "Movie".into(),
                         src: api::movie_video_url(&id, &eid),
+                        video_path: format!("{}/movies/{id}/editions/{eid}/video", api::API_BASE),
                         key: format!("movie:{id}:{eid}"),
                         media_info: ed.media_info.clone(),
                         prev: None,
@@ -438,6 +461,7 @@ pub fn WatchEpisodePage() -> impl IntoView {
                         back_href: format!("/tv/{sid}"),
                         back_label: "Series".into(),
                         src: api::episode_video_url(&sid, &eid),
+                        video_path: format!("{}/series/{sid}/episodes/{eid}/video", api::API_BASE),
                         key: format!("episode:{sid}:{eid}"),
                         media_info: ep.media_info.clone(),
                         prev: prev_episode(&s.episodes, ep.season, ep.number).map(link),

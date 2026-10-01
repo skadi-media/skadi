@@ -104,6 +104,8 @@ impl HttpModule for MoviesHttp {
             .route("/movies/{id}/editions/{eid}/acquire", post(acquire_edition))
             // Video bytes for a player, with Range/seek (SKADI-T-0574).
             .route("/movies/{id}/editions/{eid}/video", get(edition_video))
+            .route("/movies/{id}/editions/{eid}/subtitles", get(edition_subtitles))
+            .route("/movies/{id}/editions/{eid}/subtitles/{n}", get(edition_subtitle))
             // Interactive search + manual grab (SKADI-T-0114): list scored
             // candidate releases for an edition, and grab a chosen one.
             .route(
@@ -2096,10 +2098,23 @@ async fn edition_video(
     Path((id, eid)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
+    let path = edition_video_path(&http, member, &id, &eid).await?;
+    skadi_api::ranged::serve_file_range(&path, &headers, "video").await
+}
+
+/// The imported file of edition `eid` of movie `id`, after the same checks the
+/// video route makes: the member may see the movie, the edition is the
+/// movie's, and it is imported.
+async fn edition_video_path(
+    http: &MoviesHttp,
+    member: Option<axum::extract::Extension<skadi_api::household::Member>>,
+    id: &str,
+    eid: &str,
+) -> Result<PathBuf, ApiError> {
     let member = skadi_api::household::member_or_admin(member);
-    let movie_id: MovieId = parse_id(&id, "movie")?;
-    let edition_id: MovieEditionId = parse_id(&eid, "edition")?;
-    let movie = repo(&http)
+    let movie_id: MovieId = parse_id(id, "movie")?;
+    let edition_id: MovieEditionId = parse_id(eid, "edition")?;
+    let movie = repo(http)
         .get_movie(movie_id)
         .await?
         .filter(|m| {
@@ -2124,13 +2139,56 @@ async fn edition_video(
                 "edition {edition_id} is not an edition of movie {movie_id}"
             )))
         })?;
-    let path = match &edition.status {
-        AcquisitionStatus::Imported { file, .. } => file.path.clone(),
-        _ => {
-            return Err(ApiError(AppError::NotFound(
-                "edition is not imported — no video to play yet".into(),
-            )));
-        }
-    };
-    skadi_api::ranged::serve_file_range(&path, &headers, "video").await
+    match &edition.status {
+        AcquisitionStatus::Imported { file, .. } => Ok(file.path.clone()),
+        _ => Err(ApiError(AppError::NotFound(
+            "edition is not imported — no video to play yet".into(),
+        ))),
+    }
+}
+
+/// `GET /movies/{id}/editions/{eid}/subtitles` — the subtitle files beside the
+/// edition's video (SKADI-T-0663). Embedded tracks are the player's to list.
+async fn edition_subtitles(
+    State(http): State<MoviesHttp>,
+    member: Option<axum::extract::Extension<skadi_api::household::Member>>,
+    Path((id, eid)): Path<(String, String)>,
+) -> Result<Json<Vec<skadi_importer::subtitles::SubtitleInfo>>, ApiError> {
+    let path = edition_video_path(&http, member, &id, &eid).await?;
+    let list = tokio::task::spawn_blocking(move || skadi_importer::subtitles::listing(&path))
+        .await
+        .map_err(|e| {
+            ApiError(AppError::Internal(format!(
+                "subtitle listing panicked: {e}"
+            )))
+        })?;
+    Ok(Json(list))
+}
+
+#[derive(Debug, Deserialize)]
+struct SubtitleQuery {
+    /// `vtt` converts to WebVTT, for browsers.
+    format: Option<String>,
+}
+
+/// `GET /movies/{id}/editions/{eid}/subtitles/{n}` — subtitle `n` of the
+/// listing, as UTF-8 text; `?format=vtt` converts it (SKADI-T-0663).
+async fn edition_subtitle(
+    State(http): State<MoviesHttp>,
+    member: Option<axum::extract::Extension<skadi_api::household::Member>>,
+    Path((id, eid, n)): Path<(String, String, usize)>,
+    Query(q): Query<SubtitleQuery>,
+) -> Result<Response, ApiError> {
+    let path = edition_video_path(&http, member, &id, &eid).await?;
+    subtitle_response(path, n, q.format.as_deref() == Some("vtt")).await
+}
+
+async fn subtitle_response(path: PathBuf, n: usize, webvtt: bool) -> Result<Response, ApiError> {
+    let found =
+        tokio::task::spawn_blocking(move || skadi_importer::subtitles::body(&path, n, webvtt))
+            .await
+            .map_err(|e| ApiError(AppError::Internal(format!("subtitle read panicked: {e}"))))?;
+    let (ct, text) =
+        found.ok_or_else(|| ApiError(AppError::NotFound(format!("no subtitle {n}"))))?;
+    Ok(([(axum::http::header::CONTENT_TYPE, ct)], text).into_response())
 }

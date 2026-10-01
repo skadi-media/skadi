@@ -78,6 +78,11 @@ fun VideoPlayerScreen(
     val resumeAt = remember(progressKey) { progress.resumeAt(progressKey) }
     val trackPrefs = remember { com.skadi.core.TrackPreferences(context) }
     var showLanguages by remember { mutableStateOf(false) }
+    // Intro / credits from the episode's chapters (SKADI-T-0666), and the
+    // position that decides when their buttons show.
+    var markers by remember { mutableStateOf(com.skadi.core.SkipMarkers()) }
+    var positionS by remember { mutableStateOf(0.0) }
+    LaunchedEffect(url) { markers = com.skadi.core.Markers.fetch(url) }
     // Set while a track change is the viewer's, made in the player's own menu,
     // rather than ours: only theirs is remembered for the series.
     val viewerChose = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -302,6 +307,24 @@ fun VideoPlayerScreen(
             update = { v -> v.useController = !Pip.inPip },
         )
         if (Pip.inPip) return@Box
+        LaunchedEffect(markers) {
+            if (markers == com.skadi.core.SkipMarkers()) return@LaunchedEffect
+            while (true) {
+                positionS = player.currentPosition / 1000.0
+                kotlinx.coroutines.delay(500)
+            }
+        }
+        if (markers.inIntro(positionS)) {
+            androidx.compose.material3.Button(
+                onClick = { markers.introEnd?.let { player.seekTo((it * 1000).toLong()) } },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 96.dp),
+            ) { Text("Skip intro") }
+        } else if (markers.inCredits(positionS) && onNext != null) {
+            androidx.compose.material3.Button(
+                onClick = { onNextNow.value?.invoke() },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 96.dp),
+            ) { Text("Next episode") }
+        }
         IconButton(
             onClick = onBack,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),

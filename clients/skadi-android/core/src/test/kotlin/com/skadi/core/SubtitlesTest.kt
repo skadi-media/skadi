@@ -20,4 +20,26 @@ class SubtitlesTest {
             Subtitles.listUrl("http://h/api/v1/series/s/episodes/x/video"),
         )
     }
+
+    // --- SKADI-T-0666 ---
+
+    @Test
+    fun `markers only for episodes`() {
+        assertEquals(
+            "http://h/api/v1/series/s/episodes/x/markers?apikey=k",
+            Markers.url("http://h/api/v1/series/s/episodes/x/video?apikey=k"),
+        )
+        assertEquals(null, Markers.url(video))
+    }
+
+    @Test
+    fun `skip intro shows during the intro, not in its last second`() {
+        val m = SkipMarkers(introStart = 90.0, introEnd = 180.0, creditsStart = 1290.0)
+        assertEquals(false, m.inIntro(89.0))
+        assertEquals(true, m.inIntro(90.0))
+        assertEquals(false, m.inIntro(179.5))
+        assertEquals(false, m.inCredits(1289.0))
+        assertEquals(true, m.inCredits(1290.0))
+        assertEquals(false, SkipMarkers().inIntro(100.0))
+    }
 }

@@ -795,6 +795,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/series/{id}/episodes/{eid}/markers",
+        "tv",
+        "Intro and credits positions from the episode's chapters",
+    ),
+    (
+        "GET",
         "/series/{id}/episodes/{eid}/subtitles/{n}",
         "tv",
         "Get one subtitle file (?format=vtt converts to WebVTT)",

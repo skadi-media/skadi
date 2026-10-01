@@ -311,6 +311,45 @@ pub fn probe_standalone(path: &Path) -> Option<skadi_core::MediaInfo> {
     })
 }
 
+/// A video's chapters via `ffprobe -show_chapters` (SKADI-T-0666), any
+/// container. Empty when ffprobe is absent, fails, times out, or the file has
+/// none. Blocking: call from the blocking pool.
+#[must_use]
+pub fn chapters(path: &Path) -> Vec<crate::markers::VideoChapter> {
+    if !available() {
+        return Vec::new();
+    }
+    let Ok(mut child) = Command::new("ffprobe")
+        .args(["-v", "quiet", "-print_format", "json", "-show_chapters"])
+        .arg(path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Vec::new();
+            }
+        }
+    }
+    match child.wait_with_output() {
+        Ok(out) if out.status.success() => {
+            crate::markers::parse_ffprobe_chapters(&String::from_utf8_lossy(&out.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Run `ffprobe` against `path`. `None` if it is unavailable, fails, or times out.
 #[must_use]
 pub fn probe(path: &Path) -> Option<Supplement> {

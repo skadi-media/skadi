@@ -11,6 +11,7 @@ pub mod chapters;
 mod mkv_colour;
 
 pub mod ffprobe;
+pub mod markers;
 
 use std::path::Path;
 

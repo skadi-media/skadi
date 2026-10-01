@@ -54,3 +54,42 @@ object Subtitles {
             }.getOrDefault(emptyList())
         }
 }
+
+/** Where an episode's intro and credits are, in seconds (SKADI-T-0666). */
+@Serializable
+data class SkipMarkers(
+    @kotlinx.serialization.SerialName("intro_start") val introStart: Double? = null,
+    @kotlinx.serialization.SerialName("intro_end") val introEnd: Double? = null,
+    @kotlinx.serialization.SerialName("credits_start") val creditsStart: Double? = null,
+) {
+    /** Inside the intro, with more than a second of it left to skip. */
+    fun inIntro(positionS: Double): Boolean =
+        introStart != null && introEnd != null && positionS >= introStart && positionS < introEnd - 1.0
+
+    fun inCredits(positionS: Double): Boolean = creditsStart != null && positionS >= creditsStart
+}
+
+/** The markers route sits beside an episode's video route, like subtitles. */
+object Markers {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    /** `…/episodes/{e}/video?apikey=k` → `…/episodes/{e}/markers?apikey=k`; null for a movie. */
+    fun url(videoUrl: String): String? {
+        val q = videoUrl.indexOf('?')
+        val path = if (q < 0) videoUrl else videoUrl.substring(0, q)
+        if (!path.contains("/episodes/") || !path.endsWith("/video")) return null
+        return path.removeSuffix("/video") + "/markers" + (if (q < 0) "" else videoUrl.substring(q))
+    }
+
+    suspend fun fetch(videoUrl: String, client: OkHttpClient = OkHttpClient()): SkipMarkers {
+        val u = url(videoUrl) ?: return SkipMarkers()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                client.newCall(Request.Builder().url(u).build()).execute().use { resp ->
+                    if (!resp.isSuccessful) SkipMarkers()
+                    else json.decodeFromString<SkipMarkers>(resp.body!!.string())
+                }
+            }.getOrDefault(SkipMarkers())
+        }
+    }
+}

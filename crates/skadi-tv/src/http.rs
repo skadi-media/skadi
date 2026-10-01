@@ -99,6 +99,7 @@ impl HttpModule for TelevisionHttp {
             // Video bytes for a player, with Range/seek (SKADI-T-0574).
             .route("/series/{id}/episodes/{eid}/video", get(episode_video))
             .route("/series/{id}/episodes/{eid}/subtitles", get(episode_subtitles))
+            .route("/series/{id}/episodes/{eid}/markers", get(episode_markers))
             .route("/series/{id}/episodes/{eid}/subtitles/{n}", get(episode_subtitle))
             // Library import (SKADI-I-0047): namespaced under `/tv/library-import`
             // (movies owns the bare `/library-import`), all merged under `/api/v1`.
@@ -1931,6 +1932,24 @@ async fn episode_video_path(
             "episode is not imported — no video to play yet".into(),
         ))),
     }
+}
+
+/// `GET /series/{id}/episodes/{eid}/markers` — where the intro and credits are,
+/// from the file's named chapters (SKADI-T-0666). All `null` when the file has
+/// no such chapters, or `ffprobe` is unavailable.
+async fn episode_markers(
+    State(http): State<TelevisionHttp>,
+    member: Option<axum::extract::Extension<skadi_api::household::Member>>,
+    Path((id, eid)): Path<(String, String)>,
+) -> Result<Json<skadi_media_probe::markers::SkipMarkers>, ApiError> {
+    let path = episode_video_path(&http, member, &id, &eid).await?;
+    let markers = tokio::task::spawn_blocking(move || {
+        let chapters = skadi_media_probe::ffprobe::chapters(&path);
+        skadi_media_probe::markers::skip_markers(&chapters, 0.0)
+    })
+    .await
+    .map_err(|e| ApiError(AppError::Internal(format!("marker probe panicked: {e}"))))?;
+    Ok(Json(markers))
 }
 
 /// `GET /series/{id}/episodes/{eid}/subtitles` — the subtitle files beside the

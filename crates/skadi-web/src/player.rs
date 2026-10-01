@@ -100,13 +100,88 @@ fn store_f64(key: &str, v: f64) {
     }
 }
 
-/// What the sleep timer is armed to do.
-#[derive(Clone, Copy, PartialEq)]
-enum Sleep {
-    /// Pause at this `js_sys::Date::now()` epoch-millis deadline.
-    At(f64),
-    /// Pause when playback crosses this audio timestamp (end of chapter).
-    AtAudioTime(f64),
+/// What the sleep timer is armed to do (SKADI-T-0657).
+///
+/// A minutes timer counts **listening** time: it runs only while playing, so a
+/// pause neither uses it up nor leaves a deadline that stops the next session.
+/// End of chapter is resolved against the position, so it means the chapter
+/// playing now — it used to be the absolute end of the chapter playing when it
+/// was set, which a seek made wrong. Mirrors Android's `SleepTimer`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Sleep {
+    /// `left_ms` of listening left as of `since` (epoch ms, `Date::now()`),
+    /// which is `Some` only while playing.
+    Minutes {
+        total_ms: f64,
+        left_ms: f64,
+        since: Option<f64>,
+    },
+    EndOfChapter,
+}
+
+impl Sleep {
+    pub fn minutes(mins: f64, now: f64, playing: bool) -> Self {
+        Sleep::Minutes {
+            total_ms: mins * 60_000.0,
+            left_ms: mins * 60_000.0,
+            since: playing.then_some(now),
+        }
+    }
+
+    /// Listening time left on a minutes timer.
+    pub fn remaining_ms(&self, now: f64) -> Option<f64> {
+        match *self {
+            Sleep::Minutes { left_ms, since, .. } => {
+                Some((left_ms - since.map_or(0.0, |s| now - s)).max(0.0))
+            }
+            Sleep::EndOfChapter => None,
+        }
+    }
+
+    /// Playback paused: bank the time used and stop the clock.
+    #[must_use]
+    pub fn paused(self, now: f64) -> Self {
+        match self {
+            Sleep::Minutes { total_ms, .. } => Sleep::Minutes {
+                total_ms,
+                left_ms: self.remaining_ms(now).unwrap_or(0.0),
+                since: None,
+            },
+            other => other,
+        }
+    }
+
+    /// Playback started: run the clock from now.
+    #[must_use]
+    pub fn resumed(self, now: f64) -> Self {
+        match self {
+            Sleep::Minutes {
+                total_ms,
+                left_ms,
+                since: None,
+            } => Sleep::Minutes {
+                total_ms,
+                left_ms,
+                since: Some(now),
+            },
+            other => other,
+        }
+    }
+}
+
+/// End of the chapter playing at `t`; a position on a boundary belongs to the
+/// chapter starting there.
+pub fn chapter_end_at(chapters: &[api::Chapter], t: f64) -> Option<f64> {
+    chapter_at(chapters, t)
+        .map(|i| chapters[i].end_s)
+        .or_else(|| chapters.first().map(|c| c.end_s))
+}
+
+/// Whether an end-of-chapter stop is due. `timeupdate` fires about every
+/// 250 ms of wall time, which is `0.25 × rate` of audio, so stop when the next
+/// update would land past the end.
+pub fn chapter_stop_due(end_s: f64, t: f64, rate: f64) -> bool {
+    t >= end_s - 0.3 * rate.max(0.1)
 }
 
 #[component]
@@ -130,6 +205,9 @@ pub fn PlayerPage() -> impl IntoView {
     let playing = RwSignal::new(false);
     let rate = RwSignal::new(load_f64(RATE_KEY).unwrap_or(1.0));
     let sleep = RwSignal::new(None::<Sleep>);
+    // The chapter end an armed End of chapter is waiting for: set on arm and
+    // recomputed on every seek, so it follows the chapter actually playing.
+    let eoc_end = RwSignal::new(None::<f64>);
     let show_chapters = RwSignal::new(false);
     let last_saved = RwSignal::new(0.0f64);
 
@@ -327,9 +405,10 @@ pub fn PlayerPage() -> impl IntoView {
         }
     });
 
-    // Wall-clock sleep timer (finding 9): a real setTimeout for a minutes-based
-    // Sleep::At so it fires even if timeupdate is throttled or playback is paused.
-    // Re-armed whenever `sleep` changes; cleared on unmount. The closure is kept
+    // Minutes sleep timer: a real setTimeout for the listening time left, so
+    // it fires even if timeupdate is throttled. Armed only while playing, and
+    // re-armed whenever `sleep` changes — which includes every play and pause,
+    // since they bank or restart the clock (SKADI-T-0657). The closure is kept
     // alive alongside the handle so it isn't dropped before it fires.
     let sleep_timeout = StoredValue::new(None::<i32>);
     let clear_sleep_timeout = move || {
@@ -344,13 +423,13 @@ pub fn PlayerPage() -> impl IntoView {
     Effect::new(move |_| {
         let s = sleep.get();
         clear_sleep_timeout();
-        if let Some(Sleep::At(deadline)) = s {
-            let ms = (deadline - js_sys::Date::now()).max(0.0) as i32;
+        if let Some(sl @ Sleep::Minutes { since: Some(_), .. }) = s {
+            let ms = sl.remaining_ms(js_sys::Date::now()).unwrap_or(0.0) as i32;
             let cb = Closure::<dyn FnMut()>::new(move || {
+                sleep.set(None);
                 if let Some(a) = audio_ref.get_untracked() {
                     let _ = a.pause();
                 }
-                sleep.set(None);
             });
             if let Some(w) = web_sys::window() {
                 if let Ok(id) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -361,7 +440,7 @@ pub fn PlayerPage() -> impl IntoView {
                 }
             }
             // Leak the one-shot closure (a re-arm/cleanup cancels the timeout by
-            // id); one tiny closure per manual arm, matching media_session_actions.
+            // id); one tiny closure per arm, matching media_session_actions.
             cb.forget();
         }
     });
@@ -398,14 +477,15 @@ pub fn PlayerPage() -> impl IntoView {
             store_f64(&pos_key(&fid), t);
             last_saved.set(t);
         }
-        // Sleep timer — the audio-time (end-of-chapter) case only; the wall-clock
-        // (minutes) case is driven by a real setTimeout below so it fires even
-        // when paused/backgrounded (finding 9, SKADI-T-0346).
-        if let Some(Sleep::AtAudioTime(end)) = sleep.get_untracked() {
-            if t >= end {
-                let _ = a.pause();
-                sleep.set(None);
-            }
+        // Sleep timer — the end-of-chapter case only; the minutes case is a
+        // real setTimeout above, so it fires even when backgrounded.
+        if sleep.get_untracked() == Some(Sleep::EndOfChapter)
+            && let Some(end) = eoc_end.get_untracked()
+            && chapter_stop_due(end, t, a.playback_rate())
+        {
+            sleep.set(None);
+            eoc_end.set(None);
+            let _ = a.pause();
         }
     };
     let on_loaded = move |_| {
@@ -425,6 +505,22 @@ pub fn PlayerPage() -> impl IntoView {
         let (_, fid) = ids();
         store_f64(&pos_key(&fid), current.get_untracked());
         playing.set(false);
+        if let Some(s) = sleep.get_untracked() {
+            sleep.set(Some(s.paused(js_sys::Date::now())));
+        }
+    };
+    let on_play = move |_| {
+        playing.set(true);
+        if let Some(s) = sleep.get_untracked() {
+            sleep.set(Some(s.resumed(js_sys::Date::now())));
+        }
+    };
+    let on_seeked = move |_| {
+        if sleep.get_untracked() == Some(Sleep::EndOfChapter)
+            && let Some(a) = audio_ref.get_untracked()
+        {
+            eoc_end.set(chapter_end_at(&chapters.get_untracked(), a.current_time()));
+        }
     };
 
     let body = move || {
@@ -532,14 +628,18 @@ pub fn PlayerPage() -> impl IntoView {
             match event_target_value(&ev).as_str() {
                 "" => sleep.set(None),
                 "eoc" => {
-                    let ch = chapters.get();
-                    if let Some(i) = chapter_at(&ch, current.get()) {
-                        sleep.set(Some(Sleep::AtAudioTime(ch[i].end_s)));
+                    if let Some(end) = chapter_end_at(&chapters.get(), current.get()) {
+                        eoc_end.set(Some(end));
+                        sleep.set(Some(Sleep::EndOfChapter));
                     }
                 }
                 m => {
                     if let Ok(mins) = m.parse::<f64>() {
-                        sleep.set(Some(Sleep::At(js_sys::Date::now() + mins * 60_000.0)));
+                        sleep.set(Some(Sleep::minutes(
+                            mins,
+                            js_sys::Date::now(),
+                            playing.get_untracked(),
+                        )));
                     }
                 }
             }
@@ -600,7 +700,19 @@ pub fn PlayerPage() -> impl IntoView {
                         "Chapters"
                     </button>
                     <select class="player-sleep" on:change=arm_sleep title="Sleep timer">
-                        <option value="">{move || if sleep.get().is_some() { "⏱ armed" } else { "⏱ sleep" }}</option>
+                        <option value="">{move || {
+                            // `current` ticks with timeupdate, so the countdown
+                            // refreshes while playing (SKADI-T-0657).
+                            let _ = current.get();
+                            match sleep.get() {
+                                None => "⏱ sleep".to_string(),
+                                Some(Sleep::EndOfChapter) => "⏱ chapter".to_string(),
+                                Some(s) => format!(
+                                    "⏱ {}",
+                                    fmt_clock(s.remaining_ms(js_sys::Date::now()).unwrap_or(0.0) / 1000.0)
+                                ),
+                            }
+                        }}</option>
                         <option value="15">"15 min"</option>
                         <option value="30">"30 min"</option>
                         <option value="45">"45 min"</option>
@@ -614,8 +726,9 @@ pub fn PlayerPage() -> impl IntoView {
                     prop:src=move || blob_url.get().unwrap_or_default()
                     on:timeupdate=on_timeupdate
                     on:loadedmetadata=on_loaded
-                    on:play=move |_| playing.set(true)
+                    on:play=on_play
                     on:pause=on_pause_save
+                    on:seeked=on_seeked
                     on:ended=on_pause_save
                 ></audio>
             </div>

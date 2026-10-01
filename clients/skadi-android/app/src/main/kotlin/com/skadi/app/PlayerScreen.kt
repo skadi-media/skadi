@@ -60,6 +60,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.skadi.core.Chapter
 import com.skadi.core.OfflineStore
+import com.skadi.core.SleepTimer
 import kotlinx.coroutines.delay
 
 private val SPEEDS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
@@ -100,14 +101,11 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var playing by remember { mutableStateOf(false) }
     var speed by remember { mutableStateOf(1.0f) }
     // Sleep state lives in PlaybackService (survives rotation/Activity death);
-    // these mirrors only drive the button label.
-    var sleepUntil by remember { mutableStateOf(PlaybackService.sleepAtMs.get().takeIf { it > 0 }) }
-    var sleepEoc by remember { mutableStateOf(PlaybackService.sleepEocGet() > 0) }
+    // this mirror, refreshed by the UI clock, only drives the labels and chips.
+    var sleepMode by remember { mutableStateOf(PlaybackService.sleep.mode) }
+    var sleepLeftMs by remember { mutableStateOf(PlaybackService.sleep.remainingMs()) }
     var showChapters by remember { mutableStateOf(false) }
     var showSheet by remember { mutableStateOf(false) }
-    // Last-chosen sleep minutes, for the sheet's chip selection (the service owns
-    // the real countdown; this only reflects the UI choice within the session).
-    var sleepMin by remember { mutableStateOf(0) }
 
     // Bind the controller; load the book if the service isn't already on it.
     // Released via releaseFuture (review pass 2, A10): releasing through the
@@ -157,10 +155,10 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                 positionS = c.currentPosition / 1000.0
                 durationS = (c.duration.takeIf { it > 0 } ?: 0L) / 1000.0
                 playing = c.isPlaying
-                // Service enforces the sleep timer; mirror its state for the label.
-                sleepUntil = PlaybackService.sleepAtMs.get().takeIf { it > 0 }
-                sleepEoc = PlaybackService.sleepEocGet() > 0
             }
+            // Service enforces the sleep timer; mirror its state for the label.
+            sleepMode = PlaybackService.sleep.mode
+            sleepLeftMs = PlaybackService.sleep.remainingMs()
             delay(500)
         }
     }
@@ -283,10 +281,12 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
             modifier = Modifier.padding(top = 14.dp),
         ) {
             OutlinedButton(onClick = { showSheet = true }) {
-                val sleepStr = when {
-                    sleepUntil != null -> "· ⏱ ${sleepMin.takeIf { it > 0 } ?: 30}m"
-                    sleepEoc -> "· ⏱ chapter"
-                    else -> ""
+                // Time left counts down live; it used to show the chosen
+                // length until the timer fired (SKADI-T-0657).
+                val sleepStr = when (sleepMode) {
+                    null -> ""
+                    is SleepTimer.Mode.Minutes -> "· ⏱ ${fmtClock(((sleepLeftMs ?: 0L) + 999) / 1000)}"
+                    SleepTimer.Mode.EndOfChapter -> "· ⏱ chapter"
                 }
                 Text("${trimSpeed(speed)}×  $sleepStr".trimEnd())
             }
@@ -329,33 +329,28 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                         modifier = Modifier.padding(top = 8.dp),
                     ) {
                         SLEEPS.forEach { (label, mins) ->
-                            val selected =
-                                if (mins == 0) sleepUntil == null && !sleepEoc
-                                else sleepUntil != null && sleepMin == mins
+                            val selected = when (val m = sleepMode) {
+                                null -> mins == 0
+                                is SleepTimer.Mode.Minutes -> m.totalMs == mins * 60_000L
+                                SleepTimer.Mode.EndOfChapter -> false
+                            }
                             FilterChip(
                                 selected = selected,
                                 onClick = {
-                                    if (mins == 0) {
-                                        PlaybackService.sleepAtMs.set(0)
-                                        PlaybackService.sleepEocSet(0.0)
-                                        sleepMin = 0
-                                    } else {
-                                        PlaybackService.sleepAtMs.set(
-                                            System.currentTimeMillis() + mins * 60_000L,
-                                        )
-                                        PlaybackService.sleepEocSet(0.0)
-                                        sleepMin = mins
-                                    }
+                                    if (mins == 0) PlaybackService.cancelSleep()
+                                    else PlaybackService.armSleepMinutes(mins)
+                                    sleepMode = PlaybackService.sleep.mode
+                                    sleepLeftMs = PlaybackService.sleep.remainingMs()
                                 },
                                 label = { Text(label) },
                             )
                         }
                         FilterChip(
-                            selected = sleepEoc,
+                            selected = sleepMode == SleepTimer.Mode.EndOfChapter,
                             onClick = {
-                                PlaybackService.sleepAtMs.set(0)
-                                PlaybackService.sleepEocSet(chapterAt(chapters, positionS)?.endS ?: 0.0)
-                                sleepMin = 0
+                                PlaybackService.armSleepEndOfChapter()
+                                sleepMode = PlaybackService.sleep.mode
+                                sleepLeftMs = null
                             },
                             label = { Text("End of chapter") },
                             enabled = chapters.isNotEmpty(),

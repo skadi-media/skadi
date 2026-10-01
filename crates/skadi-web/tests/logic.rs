@@ -29,7 +29,8 @@ use skadi_web::movies::{
     active_profile_name, profile_is_active, size_human, status_class, tmdb_img,
 };
 use skadi_web::player::{
-    chapter_at, fmt_clock, next_chapter_target, next_speed, prev_chapter_target,
+    Sleep, chapter_at, chapter_end_at, chapter_stop_due, fmt_clock, next_chapter_target,
+    next_speed, prev_chapter_target,
 };
 use skadi_web::tv_import::{
     auto_episode, auto_episodes, clean_folder_title, collision_losers, episode_label,
@@ -2350,4 +2351,47 @@ fn authors_order_by_surname() {
     ] {
         assert_eq!(name_sort_key(name), key, "{name}");
     }
+}
+
+/// SKADI-T-0657: a minutes timer counts listening time; a pause neither uses it
+/// up nor leaves a deadline that stops the next session.
+#[wasm_bindgen_test]
+fn sleep_minutes_count_listening_time_only() {
+    let min = 60_000.0;
+    let s = Sleep::minutes(15.0, 0.0, true);
+    let s = s.paused(10.0 * min);
+    assert_eq!(s.remaining_ms(10.0 * min), Some(5.0 * min));
+    assert_eq!(
+        s.remaining_ms(70.0 * min),
+        Some(5.0 * min),
+        "an hour paused costs nothing"
+    );
+    let s = s.resumed(70.0 * min);
+    assert_eq!(s.remaining_ms(71.0 * min), Some(4.0 * min));
+    let armed_paused = Sleep::minutes(30.0, 0.0, false);
+    assert_eq!(armed_paused.remaining_ms(10.0 * min), Some(30.0 * min));
+}
+
+#[wasm_bindgen_test]
+fn sleep_end_of_chapter_follows_the_chapter_playing() {
+    let ch = |i: usize, s: f64, e: f64| skadi_web::api::Chapter {
+        index: i,
+        title: format!("Ch {i}"),
+        start_s: s,
+        end_s: e,
+    };
+    let chapters = vec![ch(0, 0.0, 600.0), ch(1, 600.0, 1500.0)];
+    assert_eq!(chapter_end_at(&chapters, 500.0), Some(600.0));
+    assert_eq!(
+        chapter_end_at(&chapters, 600.0),
+        Some(1500.0),
+        "a boundary starts the next"
+    );
+    assert_eq!(chapter_end_at(&[], 10.0), None);
+    assert!(!chapter_stop_due(600.0, 599.0, 1.0));
+    assert!(chapter_stop_due(600.0, 599.8, 1.0));
+    assert!(
+        chapter_stop_due(600.0, 599.2, 3.0),
+        "at 3x the next update lands past the end"
+    );
 }

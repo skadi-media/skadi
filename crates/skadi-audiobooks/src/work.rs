@@ -19,6 +19,10 @@ pub struct Work {
     pub authors: Vec<String>,
     /// Primary author's ASIN, when known (links to `authors`/other works).
     pub author_asin: Option<AsinId>,
+    /// Each contributor's Audible ASIN, aligned index-for-index with `authors`
+    /// (`None` where upstream gave none). Empty for a work stored before
+    /// SKADI-T-0656: no evidence either way.
+    pub author_asins: Vec<Option<AsinId>>,
     pub series_name: Option<String>,
     /// Audible series ASIN, when captured (lets works group by series id).
     pub series_asin: Option<AsinId>,
@@ -97,6 +101,7 @@ impl Work {
             title: title.into(),
             authors: Vec::new(),
             author_asin: None,
+            author_asins: Vec::new(),
             series_name: None,
             series_asin: None,
             series_position: None,

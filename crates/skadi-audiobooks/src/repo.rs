@@ -906,6 +906,7 @@ struct WorkRow {
     title: String,
     authors_json: Json<Vec<String>>,
     author_asin: Option<String>,
+    author_asins_json: Json<Vec<Option<String>>>,
     series_name: Option<String>,
     series_asin: Option<String>,
     series_position: Option<String>,
@@ -924,6 +925,7 @@ struct WorkUpdate {
     title: String,
     authors_json: Json<Vec<String>>,
     author_asin: Option<String>,
+    author_asins_json: Json<Vec<Option<String>>>,
     series_name: Option<String>,
     series_asin: Option<String>,
     series_position: Option<String>,
@@ -933,12 +935,20 @@ struct WorkUpdate {
     updated_at: Timestamp,
 }
 
+fn asins_to_json(asins: &[Option<AsinId>]) -> Vec<Option<String>> {
+    asins
+        .iter()
+        .map(|a| a.as_ref().map(|x| x.0.clone()))
+        .collect()
+}
+
 fn work_to_row(w: &Work) -> WorkRow {
     WorkRow {
         asin: w.asin.0.clone(),
         title: w.title.clone(),
         authors_json: Json(w.authors.clone()),
         author_asin: w.author_asin.as_ref().map(|a| a.0.clone()),
+        author_asins_json: Json(asins_to_json(&w.author_asins)),
         series_name: w.series_name.clone(),
         series_asin: w.series_asin.as_ref().map(|a| a.0.clone()),
         series_position: w.series_position.clone(),
@@ -955,6 +965,7 @@ fn work_to_update(w: &Work) -> WorkUpdate {
         title: w.title.clone(),
         authors_json: Json(w.authors.clone()),
         author_asin: w.author_asin.as_ref().map(|a| a.0.clone()),
+        author_asins_json: Json(asins_to_json(&w.author_asins)),
         series_name: w.series_name.clone(),
         series_asin: w.series_asin.as_ref().map(|a| a.0.clone()),
         series_position: w.series_position.clone(),
@@ -972,6 +983,12 @@ impl From<WorkRow> for Work {
             title: r.title,
             authors: r.authors_json.0,
             author_asin: r.author_asin.map(AsinId),
+            author_asins: r
+                .author_asins_json
+                .0
+                .into_iter()
+                .map(|a| a.map(AsinId))
+                .collect(),
             series_name: r.series_name,
             series_asin: r.series_asin.map(AsinId),
             series_position: r.series_position,

@@ -88,6 +88,7 @@ diesel::table! {
         first_seen -> Timestamp,
         updated_at -> Timestamp,
         language -> Nullable<Text>,
+        author_asins_json -> Json,
     }
 }
 

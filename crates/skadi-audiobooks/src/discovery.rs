@@ -214,21 +214,35 @@ pub async fn ingest_author_pages(
 ///   result is the only evidence there is, and nothing contradicts it.
 ///
 /// `None` = not this author's product; it is not ingested for them.
-fn credited_asin(
+///
+/// The rule itself is [`credits`], which the startup link repair also uses on
+/// stored works, so the two cannot disagree (SKADI-T-0656).
+pub(crate) fn credited_asin(
     item: &CatalogItem,
     want_key: &str,
     author_asin: Option<&AsinId>,
 ) -> Option<Option<AsinId>> {
-    if item.authors.is_empty() {
+    credits(&item.authors, &item.author_asins, want_key, author_asin)
+}
+
+/// The attribution rule over a contributor list: `authors` with their ASINs,
+/// aligned by index (a missing or short `author_asins` means "no ASIN"). See
+/// [`credited_asin`] for the rule; this is the one place it lives.
+pub(crate) fn credits(
+    authors: &[String],
+    author_asins: &[Option<AsinId>],
+    want_key: &str,
+    author_asin: Option<&AsinId>,
+) -> Option<Option<AsinId>> {
+    if authors.is_empty() {
         return Some(author_asin.cloned());
     }
-    let mut contributors = item
-        .authors
+    let mut contributors = authors
         .iter()
-        .zip(item.author_asins.iter().chain(std::iter::repeat(&None)));
+        .zip(author_asins.iter().chain(std::iter::repeat(&None)));
     match author_asin {
         Some(asin) => {
-            if item.author_asins.iter().flatten().any(|a| a == asin) {
+            if author_asins.iter().flatten().any(|a| a == asin) {
                 return Some(Some(asin.clone()));
             }
             contributors
@@ -274,9 +288,12 @@ pub(crate) fn name_key(name: &str) -> String {
 }
 
 /// Build a [`Work`] from an Audible [`CatalogItem`] + the owning author's ASIN.
-fn work_from_catalog(item: &CatalogItem, attributed: Option<AsinId>) -> Work {
+pub(crate) fn work_from_catalog(item: &CatalogItem, attributed: Option<AsinId>) -> Work {
     let mut w = Work::new(item.asin.clone(), item.title.clone());
     w.authors = item.authors.clone();
+    // Kept so the link repair can judge the work by ASIN, as discovery did,
+    // rather than by name (SKADI-T-0656).
+    w.author_asins = item.author_asins.clone();
     // Attribution is decided by [`credited_asin`], from the product's own
     // contributors. It used to *prefer the searched author's ASIN* over the
     // product's, which credited every product a fuzzy name search returned to
@@ -778,6 +795,41 @@ mod discover_tests {
 
     fn grrm() -> AsinId {
         AsinId(GRRM.into())
+    }
+
+    /// SKADI-T-0656: whatever discovery decides for a product, the startup
+    /// repair must decide the same for the work stored from it — keep what was
+    /// credited, clear what was not. They disagreed on 85 works when the repair
+    /// judged by name and discovery by ASIN, and each undid the other.
+    #[test]
+    fn discovery_and_the_link_repair_agree() {
+        let author = "Derek Kunsken";
+        let key = name_key(author);
+        let fixtures: Vec<CatalogItem> = vec![
+            item(&[("Derek Kunsken", Some(GRRM))]),
+            item(&[("Derek Künsken", Some(GRRM))]),
+            item(&[("Kunsken Derek", Some(GRRM))]),
+            item(&[("Derek Kunsken", None)]),
+            item(&[("Derek Kunsken", Some("OTHER"))]),
+            item(&[("Someone Else", Some("OTHER"))]),
+            item(&[("Someone Else", None)]),
+            item(&[("Someone Else", None), ("Derek Künsken", Some(GRRM))]),
+            item(&[]),
+        ];
+        for i in &fixtures {
+            let decided = credited_asin(i, &key, Some(&grrm()));
+            // Store the work as if attributed to the author, which is what a
+            // stale or wrong attribution looks like to the repair.
+            let mut w = work_from_catalog(i, Some(grrm()));
+            w.author_asin = Some(grrm());
+            assert_eq!(
+                crate::roles::keeps_attribution(&w, &key),
+                decided.is_some(),
+                "disagree on {:?} / {:?}",
+                i.authors,
+                i.author_asins
+            );
+        }
     }
 
     #[test]

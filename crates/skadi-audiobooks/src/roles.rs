@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use skadi_core::Result;
-use skadi_metadata::{select_author_names, split_role};
+use skadi_metadata::{select_author_names, select_authors, split_role};
 
 use crate::author::Author;
 use crate::repo::{AudiobooksRepo, AuthorFilter, BookFilter, WorksRepo};
@@ -77,11 +77,21 @@ where
 
     let mut changed_works = Vec::new();
     for mut work in store.list_all_works().await? {
-        let clean = select_author_names(work.authors.clone());
+        // Names and ASINs are filtered together so they stay aligned
+        // (SKADI-T-0656). A work stored without ASINs keeps none.
+        let had_asins = !work.author_asins.is_empty();
+        let pairs = work.authors.iter().cloned().zip(
+            work.author_asins
+                .iter()
+                .cloned()
+                .chain(std::iter::repeat(None)),
+        );
+        let (clean, asins): (Vec<String>, Vec<_>) = select_authors(pairs).into_iter().unzip();
         if clean == work.authors || clean.is_empty() {
             continue;
         }
         work.authors = clean;
+        work.author_asins = if had_asins { asins } else { Vec::new() };
         changed_works.push(work);
     }
     if !changed_works.is_empty() {
@@ -165,10 +175,18 @@ pub struct LinkReport {
 /// 1. **Mis-attributed works.** Discovery used to credit every product a fuzzy
 ///    `author=` search returned to the searched author, so known works carry an
 ///    `author_asin` for an author they do not name — George R. Martin III's books
-///    under George R. R. Martin. A work whose `author_asin` belongs to a
-///    registered author whose name key matches **none** of the work's authors has
-///    that link cleared. A work pointing at an ASIN with no registered author is
-///    left alone: nothing to judge it against.
+///    under George R. R. Martin. A work is judged with discovery's own rule
+///    ([`crate::discovery::credits`]) against the registered author holding its
+///    `author_asin`, and the link is cleared when that rule does not credit it.
+///
+///    Only a work that **stores its contributor ASINs** is judged. Judging the
+///    others by name alone disagreed with discovery, which judges by ASIN:
+///    "Derek Künsken" credited under Derek Kunsken's ASIN, "Fritz Leiber Jr.",
+///    "Hammett Dashiell" — 85 works on production were cleared here at every
+///    start and restored by discovery hours later (SKADI-T-0656). A work stored
+///    before ASINs were kept is left alone until discovery rewrites it. A work
+///    pointing at an ASIN with no registered author is also left alone: nothing
+///    to judge it against.
 /// 2. **Unlinked books.** Library books are linked to an author record by name
 ///    key, but only when **exactly one** registered author matches. Two matches
 ///    — e.g. two Audible pages for one person — leaves the book unlinked rather
@@ -192,9 +210,9 @@ where
         let Some(key) = key_by_asin.get(&asin.0) else {
             continue;
         };
-        if !w.authors.iter().any(|n| &name_key(n) == key) {
+        if !keeps_attribution(&w, key) {
             tracing::info!(work = %w.title, credited = ?w.authors, was = %asin.0,
-                "author links: cleared a work's attribution to an author it does not name");
+                "author links: cleared a work's attribution to an author it does not credit");
             // Not `upsert_works`: its changeset skips `None`, so it cannot clear.
             store.clear_work_author(&w.asin).await?;
             report.works_unattributed += 1;
@@ -223,6 +241,22 @@ where
         }
     }
     Ok(report)
+}
+
+/// Whether a stored work keeps its `author_asin`, given the name key of the
+/// registered author holding that ASIN. True when there is no ASIN evidence to
+/// judge by; otherwise exactly what discovery decides for the same contributors.
+pub(crate) fn keeps_attribution(w: &crate::work::Work, author_key: &str) -> bool {
+    if w.author_asins.is_empty() {
+        return true;
+    }
+    crate::discovery::credits(
+        &w.authors,
+        &w.author_asins,
+        author_key,
+        w.author_asin.as_ref(),
+    )
+    .is_some()
 }
 
 /// Two records may be one person only when nothing says otherwise: matching

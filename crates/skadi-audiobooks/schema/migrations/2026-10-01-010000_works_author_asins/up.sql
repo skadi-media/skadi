@@ -1,0 +1,12 @@
+-- Contributor ASINs on known works (SKADI-T-0656).
+--
+-- `authors_json` holds names only, so the startup link repair could judge a
+-- work's attribution only by name, while discovery judges it by contributor
+-- ASIN. The two disagreed on 85 works (a diacritic, a "Jr.", a reversed name)
+-- and undid each other on every restart.
+--
+-- This stores the contributor ASINs, aligned index-for-index with
+-- `authors_json` (an entry is null when upstream gave none). Existing rows get
+-- an empty array: no evidence, and the repair leaves such a work alone until
+-- discovery rewrites it.
+ALTER TABLE works ADD COLUMN author_asins_json JSON NOT NULL DEFAULT '[]';

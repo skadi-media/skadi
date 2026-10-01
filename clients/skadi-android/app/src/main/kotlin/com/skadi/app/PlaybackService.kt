@@ -51,6 +51,10 @@ class PlaybackService : MediaSessionService() {
 
     private val sleepTick = Runnable { onSleepTick() }
     private lateinit var settings: PlayerSettings
+
+    /** When playback last stopped, for rewind on resume (SKADI-T-0661). */
+    private var pausedAtMs: Long? = null
+    private var lastFid: String? = null
     private var exo: ExoPlayer? = null
     private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
     private var boostLevel = 0
@@ -74,6 +78,13 @@ class PlaybackService : MediaSessionService() {
         exo = player
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                // A new book: the last pause belonged to the old one. The
+                // notification's metadata update is a transition too, to the
+                // same book, so compare ids.
+                if (mediaItem?.mediaId != lastFid) {
+                    lastFid = mediaItem?.mediaId
+                    pausedAtMs = null
+                }
                 applyAudioOptions()
             }
 
@@ -82,6 +93,7 @@ class PlaybackService : MediaSessionService() {
             override fun onAudioSessionIdChanged(audioSessionId: Int) = applyBoost(boostLevel, force = true)
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) rewindOnResume() else pausedAtMs = System.currentTimeMillis()
                 sleep.onPlayingChanged(isPlaying)
                 scheduleSleep()
                 if (isPlaying) {
@@ -103,7 +115,7 @@ class PlaybackService : MediaSessionService() {
                 playbackParameters: androidx.media3.common.PlaybackParameters,
 ) = scheduleSleep()
         })
-        session = MediaSession.Builder(this, player).build()
+        session = MediaSession.Builder(this, SkipPlayer(player, settings)).build()
         instance = this
     }
 
@@ -182,6 +194,22 @@ class PlaybackService : MediaSessionService() {
             next = minOf(next, 500L)
         }
         handler.postDelayed(sleepTick, next)
+    }
+
+    /**
+     * Resume a little before where playback stopped, scaled by how long it was
+     * stopped (SKADI-T-0661). With no pause in this process — the app was
+     * killed, or the book was just opened — the book's last save stands in for
+     * it: `meta.json` is rewritten on every pause.
+     */
+    private fun rewindOnResume() {
+        val p = exo ?: return
+        if (!settings.rewindOnResume) return
+        val fid = p.currentMediaItem?.mediaId ?: return
+        val since = pausedAtMs ?: store.lastPlayedAt(fid).takeIf { it > 0 } ?: return
+        pausedAtMs = null
+        val back = PlayerSettings.rewindOnResumeMs(System.currentTimeMillis() - since)
+        if (back > 0) p.seekTo((p.currentPosition - back).coerceAtLeast(0L))
     }
 
     /**

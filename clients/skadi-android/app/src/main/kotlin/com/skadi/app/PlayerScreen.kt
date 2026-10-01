@@ -17,7 +17,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Forward30
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.scale
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay30
@@ -111,6 +118,9 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var showSleepSheet by remember { mutableStateOf(false) }
     val playerSettings = remember { com.skadi.core.PlayerSettings(context) }
     var defaultSpeed by remember { mutableStateOf(playerSettings.defaultSpeed) }
+    var skipBackS by remember { mutableStateOf(playerSettings.skipBackS) }
+    var skipForwardS by remember { mutableStateOf(playerSettings.skipForwardS) }
+    var rewindOnResume by remember { mutableStateOf(playerSettings.rewindOnResume) }
     var skipSilence by remember(fid) { mutableStateOf(meta?.skipSilence == true) }
     var boost by remember(fid) { mutableStateOf(meta?.boost ?: 0) }
     var shakeToExtend by remember { mutableStateOf(playerSettings.shakeToExtend) }
@@ -258,10 +268,12 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                 enabled = chapters.isNotEmpty(),
                 modifier = Modifier.size(48.dp),
             ) { Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous chapter") }
+            // Lengths from settings, through the session's SkipPlayer, so these
+            // and the notification and headset agree (SKADI-T-0661).
             OutlinedIconButton(
-                onClick = { controller?.let { it.seekTo(it.currentPosition - 30_000) } },
+                onClick = { controller?.seekBack() },
                 modifier = Modifier.size(52.dp),
-            ) { Icon(Icons.Filled.Replay30, contentDescription = "Back 30 seconds") }
+            ) { SkipIcon(seconds = skipBackS, forward = false) }
             FilledIconButton(
                 onClick = { controller?.let { if (it.isPlaying) it.pause() else it.play() } },
                 modifier = Modifier.size(72.dp),
@@ -273,9 +285,9 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                 )
             }
             OutlinedIconButton(
-                onClick = { controller?.let { it.seekTo(it.currentPosition + 30_000) } },
+                onClick = { controller?.seekForward() },
                 modifier = Modifier.size(52.dp),
-            ) { Icon(Icons.Filled.Forward30, contentDescription = "Forward 30 seconds") }
+            ) { SkipIcon(seconds = skipForwardS, forward = true) }
             OutlinedIconButton(
                 onClick = {
                     chapterAt(chapters, positionS)?.let { ch ->
@@ -320,6 +332,7 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
             ModalBottomSheet(onDismissRequest = { showSheet = false }, sheetState = sheetState) {
                 Column(
                     modifier = Modifier
+                        .verticalScroll(rememberScrollState())
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                         .padding(bottom = 28.dp),
@@ -407,6 +420,52 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                                 label = { Text(label) },
                             )
                         }
+                    }
+                    // Device-wide, not per book (SKADI-T-0661).
+                    Text(
+                        "Skip back",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 14.dp),
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        com.skadi.core.PlayerSettings.SKIP_CHOICES.forEach { secs ->
+                            FilterChip(
+                                selected = skipBackS == secs,
+                                onClick = { skipBackS = secs; playerSettings.skipBackS = secs },
+                                label = { Text("${secs}s") },
+                            )
+                        }
+                    }
+                    Text(
+                        "Skip forward",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 14.dp),
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        com.skadi.core.PlayerSettings.SKIP_CHOICES.forEach { secs ->
+                            FilterChip(
+                                selected = skipForwardS == secs,
+                                onClick = { skipForwardS = secs; playerSettings.skipForwardS = secs },
+                                label = { Text("${secs}s") },
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Rewind when resuming", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Back a few seconds after a pause, more after a long one.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = rewindOnResume,
+                            onCheckedChange = { rewindOnResume = it; playerSettings.rewindOnResume = it },
+                        )
                     }
                 }
             }
@@ -522,4 +581,32 @@ fun nextInSeries(store: OfflineStore, fid: String): com.skadi.core.OfflineBook? 
         .filter { (p, _) -> p > curPos }
         .minByOrNull { (p, _) -> p }
         ?.second
+}
+
+/**
+ * The skip icon for [seconds]. Material has numbered icons for 10 and 30 only;
+ * other lengths draw the plain arrow with the number in it, mirrored for
+ * forward (SKADI-T-0661).
+ */
+@Composable
+private fun SkipIcon(seconds: Int, forward: Boolean) {
+    val label = if (forward) "Forward $seconds seconds" else "Back $seconds seconds"
+    when {
+        seconds == 10 && forward -> Icon(Icons.Filled.Forward10, contentDescription = label)
+        seconds == 10 -> Icon(Icons.Filled.Replay10, contentDescription = label)
+        seconds == 30 && forward -> Icon(Icons.Filled.Forward30, contentDescription = label)
+        seconds == 30 -> Icon(Icons.Filled.Replay30, contentDescription = label)
+        else -> Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Filled.Replay,
+                contentDescription = label,
+                modifier = Modifier.size(28.dp).scale(scaleX = if (forward) -1f else 1f, scaleY = 1f),
+            )
+            Text(
+                "$seconds",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+    }
 }

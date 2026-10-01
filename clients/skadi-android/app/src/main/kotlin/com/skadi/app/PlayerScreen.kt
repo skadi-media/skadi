@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -32,6 +33,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -106,6 +108,9 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var sleepLeftMs by remember { mutableStateOf(PlaybackService.sleep.remainingMs()) }
     var showChapters by remember { mutableStateOf(false) }
     var showSheet by remember { mutableStateOf(false) }
+    var showSleepSheet by remember { mutableStateOf(false) }
+    val playerSettings = remember { com.skadi.core.PlayerSettings(context) }
+    var shakeToExtend by remember { mutableStateOf(playerSettings.shakeToExtend) }
 
     // Bind the controller; load the book if the service isn't already on it.
     // Released via releaseFuture (review pass 2, A10): releasing through the
@@ -281,14 +286,24 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
             modifier = Modifier.padding(top = 14.dp),
         ) {
             OutlinedButton(onClick = { showSheet = true }) {
-                // Time left counts down live; it used to show the chosen
-                // length until the timer fired (SKADI-T-0657).
-                val sleepStr = when (sleepMode) {
-                    null -> ""
-                    is SleepTimer.Mode.Minutes -> "· ⏱ ${fmtClock(((sleepLeftMs ?: 0L) + 999) / 1000)}"
-                    SleepTimer.Mode.EndOfChapter -> "· ⏱ chapter"
-                }
-                Text("${trimSpeed(speed)}×  $sleepStr".trimEnd())
+                Text("${trimSpeed(speed)}×")
+            }
+            // Its own button (SKADI-T-0658): it used to share the speed
+            // button, labelled "1×", and could not be found. Counts down live
+            // while armed (SKADI-T-0657).
+            OutlinedButton(onClick = { showSleepSheet = true }) {
+                Icon(
+                    Icons.Filled.Bedtime,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp).padding(end = 4.dp),
+                )
+                Text(
+                    when (sleepMode) {
+                        null -> "Sleep"
+                        is SleepTimer.Mode.Minutes -> SleepTimer.clock(sleepLeftMs ?: 0L)
+                        SleepTimer.Mode.EndOfChapter -> "End of chapter"
+                    },
+                )
             }
             OutlinedButton(onClick = { showChapters = !showChapters }, enabled = chapters.isNotEmpty()) {
                 Text("Chapters")
@@ -319,11 +334,21 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                             )
                         }
                     }
-                    Text(
-                        "Sleep timer",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(top = 18.dp),
-                    )
+                }
+            }
+        }
+        if (showSleepSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showSleepSheet = false },
+                sheetState = rememberModalBottomSheetState(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 28.dp),
+                ) {
+                    Text("Sleep timer", style = MaterialTheme.typography.titleMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.padding(top = 8.dp),
@@ -354,6 +379,26 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                             },
                             label = { Text("End of chapter") },
                             enabled = chapters.isNotEmpty(),
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Shake to extend", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "In the last minute, shake the phone to start the timer again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = shakeToExtend,
+                            onCheckedChange = {
+                                shakeToExtend = it
+                                playerSettings.shakeToExtend = it
+                            },
                         )
                     }
                 }

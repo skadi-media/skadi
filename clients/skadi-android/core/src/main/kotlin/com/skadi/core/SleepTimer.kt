@@ -90,6 +90,47 @@ class SleepTimer(private val now: () -> Long = System::currentTimeMillis) {
         }
 
     companion object {
+        /** A timed stop fades the volume out over its last stretch (SKADI-T-0658). */
+        const val FADE_MS = 10_000L
+
+        /** Shake to extend is listened for only in the last minute. */
+        const val SHAKE_WINDOW_MS = 60_000L
+
+        /** Player volume with [msLeft] to go: full until the fade, then linear to 0. */
+        fun fadeVolume(msLeft: Long): Float =
+            (msLeft.toFloat() / FADE_MS).coerceIn(0f, 1f)
+
+        /**
+         * When the service should next look at the timer: at the start of the
+         * shake window, then at the start of the fade, then every 200 ms
+         * through the fade. Nothing in between, so an armed timer costs one
+         * wake-up per stage.
+         */
+        fun nextTickMs(msLeft: Long): Long = when {
+            msLeft > SHAKE_WINDOW_MS -> msLeft - SHAKE_WINDOW_MS
+            msLeft > FADE_MS -> msLeft - FADE_MS
+            else -> minOf(200L, msLeft).coerceAtLeast(0L)
+        }
+
+        /**
+         * Short status for places with one line to spare — the notification and
+         * the mini player. `null` when nothing is armed.
+         */
+        fun statusLabel(mode: Mode?, remainingMs: Long?): String? = when (mode) {
+            null -> null
+            is Mode.Minutes -> "Sleep in ${clock((remainingMs ?: 0L))}"
+            Mode.EndOfChapter -> "Sleep at chapter end"
+        }
+
+        /** `m:ss`, or `h:mm:ss` from an hour, rounding up so 0:00 means stopped. */
+        fun clock(ms: Long): String {
+            val s = (ms + 999) / 1000
+            val h = s / 3600
+            val m = (s % 3600) / 60
+            val sec = s % 60
+            return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+        }
+
         /**
          * End of the chapter playing at [positionS]. A position exactly on a
          * boundary belongs to the chapter that starts there.

@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.skadi.core.OfflineStore
+import com.skadi.core.PlayerSettings
 import com.skadi.core.SleepTimer
 
 /**
@@ -23,7 +24,9 @@ import com.skadi.core.SleepTimer
  *    exists for). [SleepTimer] holds the mode; this service posts a callback
  *    for the exact stop moment and re-posts it on play/pause, seek and speed
  *    change (SKADI-T-0657 — it used to be checked on the 10 s persist tick,
- *    which played up to 10 s into the next chapter);
+ *    which played up to 10 s into the next chapter). The last 10 s fade out,
+ *    a shake in the last minute restarts a minutes timer, and the
+ *    notification shows when it will stop (SKADI-T-0658);
  *  - position persisted (atomically, see OfflineStore) on pause + every 10s;
  *    finished = >= 98% listened, feeding next-in-series.
  */
@@ -39,14 +42,21 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** End-of-chapter target the pending [sleepCheck] was scheduled for. */
+    /**
+     * The chapter end an armed End of chapter is counting down to. Fixed when
+     * scheduled (play, seek, speed change), so a tick that lands a few ms into
+     * the next chapter still knows which end it was waiting for.
+     */
     private var scheduledEndS: Double? = null
 
-    private val sleepCheck = Runnable { onSleepDue() }
+    private val sleepTick = Runnable { onSleepTick() }
+    private lateinit var settings: PlayerSettings
+    private var shake: ShakeDetector? = null
 
     override fun onCreate() {
         super.onCreate()
         store = OfflineStore(filesDir)
+        settings = PlayerSettings(this)
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -95,42 +105,105 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Post [sleepCheck] for the moment playback must stop. Nothing is posted
-     * while paused: a minutes timer does not run, and the chapter end does not
-     * come closer.
+     * Re-plan the sleep timer from the player's state now. Called on arm,
+     * cancel, play/pause, seek and speed change. Nothing runs while paused: a
+     * minutes timer is stopped, and the chapter end does not come closer.
      */
     private fun scheduleSleep() {
-        handler.removeCallbacks(sleepCheck)
+        handler.removeCallbacks(sleepTick)
         scheduledEndS = null
         val p = session?.player ?: return
-        if (!p.isPlaying) return
-        val chapters = chaptersOf(p)
-        val posS = p.currentPosition / 1000.0
-        val ms = sleep.msUntilStop(posS, p.playbackParameters.speed, chapters) ?: return
         if (sleep.mode == SleepTimer.Mode.EndOfChapter) {
-            scheduledEndS = SleepTimer.chapterEndS(chapters, posS)
+            scheduledEndS = SleepTimer.chapterEndS(chaptersOf(p), p.currentPosition / 1000.0)
         }
-        handler.postDelayed(sleepCheck, ms)
+        showSleepInNotification(p)
+        if (!p.isPlaying || sleep.mode == null) {
+            endFade(p)
+            return
+        }
+        onSleepTick()
     }
 
-    private fun onSleepDue() {
-        val p = session?.player ?: return
-        val due = when (sleep.mode) {
-            null -> false
-            is SleepTimer.Mode.Minutes -> (sleep.remainingMs() ?: 0L) <= 50L
-            // Judged against the end this check was scheduled for: a callback
-            // that runs a few ms late is already in the next chapter, whose own
-            // end is far away.
-            SleepTimer.Mode.EndOfChapter ->
-                scheduledEndS?.let { p.currentPosition / 1000.0 >= it - 0.3 } ?: false
+    /** Wall-clock ms until the stop, or null when nothing will stop playback. */
+    private fun msUntilStop(p: Player): Long? = when (sleep.mode) {
+        null -> null
+        is SleepTimer.Mode.Minutes -> sleep.remainingMs()
+        SleepTimer.Mode.EndOfChapter -> scheduledEndS?.let { end ->
+            val left = (end - p.currentPosition / 1000.0) / p.playbackParameters.speed.coerceAtLeast(0.1f)
+            // A tick that lands a hair past the end, or within the 0.3 s it
+            // takes to act, is due now.
+            if (left <= 0.3) 0L else (left * 1000).toLong()
         }
-        if (due) {
+    }
+
+    private fun onSleepTick() {
+        val p = session?.player ?: return
+        val ms = msUntilStop(p)
+        if (ms == null) {
+            endFade(p)
+            return
+        }
+        if (ms <= 50L) {
             sleep.cancel()
             scheduledEndS = null
             p.pause()
-        } else {
-            scheduleSleep()
+            endFade(p)
+            showSleepInNotification(p)
+            return
         }
+        p.volume = SleepTimer.fadeVolume(ms)
+        val wantShake = sleep.mode is SleepTimer.Mode.Minutes &&
+            ms <= SleepTimer.SHAKE_WINDOW_MS && settings.shakeToExtend
+        if (wantShake && shake == null) {
+            shake = ShakeDetector(this) {
+                sleep.restart(playing = p.isPlaying)
+                scheduleSleep()
+            }.also { it.start() }
+        } else if (!wantShake) {
+            stopShake()
+        }
+        handler.postDelayed(sleepTick, SleepTimer.nextTickMs(ms))
+    }
+
+    /** Full volume and no shake listener: the state outside a fade. */
+    private fun endFade(p: Player) {
+        p.volume = 1f
+        stopShake()
+    }
+
+    private fun stopShake() {
+        shake?.stop()
+        shake = null
+    }
+
+    /**
+     * Put the sleep timer in the notification's second line, after the
+     * author: the time it will stop ("Sleep at 11:41 PM"), which changes only
+     * when the plan does, rather than a countdown the notification would have
+     * to redraw every second. Updated in place with [Player.replaceMediaItem]:
+     * same URI, so ExoPlayer updates the metadata without re-preparing.
+     */
+    private fun showSleepInNotification(p: Player) {
+        val item = p.currentMediaItem ?: return
+        val md = item.mediaMetadata
+        val base = md.extras?.getString(BASE_ARTIST) ?: md.artist?.toString().orEmpty()
+        val status = when (sleep.mode) {
+            null -> null
+            is SleepTimer.Mode.Minutes -> if (p.isPlaying) {
+                val at = System.currentTimeMillis() + (sleep.remainingMs() ?: 0L)
+                "Sleep at " + android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at))
+            } else {
+                "Sleep in " + SleepTimer.clock(sleep.remainingMs() ?: 0L)
+            }
+            SleepTimer.Mode.EndOfChapter -> "Sleep at chapter end"
+        }
+        val artist = listOfNotNull(base.ifEmpty { null }, status).joinToString(" · ")
+        if (artist == md.artist?.toString().orEmpty()) return
+        val extras = android.os.Bundle().apply { putString(BASE_ARTIST, base) }
+        val updated = item.buildUpon()
+            .setMediaMetadata(md.buildUpon().setArtist(artist).setExtras(extras).build())
+            .build()
+        p.replaceMediaItem(p.currentMediaItemIndex, updated)
     }
 
     private fun chaptersOf(p: Player): List<com.skadi.core.Chapter> {
@@ -155,7 +228,8 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         if (instance === this) instance = null
         handler.removeCallbacks(persist)
-        handler.removeCallbacks(sleepCheck)
+        handler.removeCallbacks(sleepTick)
+        stopShake()
         savePosition()
         session?.run {
             player.release()
@@ -174,6 +248,9 @@ class PlaybackService : MediaSessionService() {
         val sleep = SleepTimer()
 
         private var instance: PlaybackService? = null
+
+        /** The author line before the sleep status was appended to it. */
+        private const val BASE_ARTIST = "skadi.base_artist"
 
         private fun playing() = instance?.session?.player?.isPlaying == true
 

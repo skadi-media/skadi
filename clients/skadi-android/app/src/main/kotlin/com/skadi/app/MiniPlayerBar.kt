@@ -62,6 +62,8 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
     var fid by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
+    // Armed sleep timer, so it is visible outside the player (SKADI-T-0658).
+    var sleepStatus by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -91,6 +93,10 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                 progress = if (dur > 0) (c.currentPosition.toFloat() / dur).coerceIn(0f, 1f) else 0f
                 playing = c.isPlaying
             }
+            sleepStatus = com.skadi.core.SleepTimer.statusLabel(
+                PlaybackService.sleep.mode,
+                PlaybackService.sleep.remainingMs(),
+            )
             delay(1000)
         }
     }
@@ -131,7 +137,10 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                meta?.authors?.joinToString(", ")?.takeIf { it.isNotEmpty() }?.let {
+                listOfNotNull(
+                    meta?.authors?.joinToString(", ")?.takeIf { it.isNotEmpty() },
+                    sleepStatus,
+                ).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
                     Text(
                         it,
                         style = MaterialTheme.typography.bodySmall,

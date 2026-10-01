@@ -92,4 +92,31 @@ class SleepTimerTest {
         assertNull(t.mode)
         assertNull(t.msUntilStop(0.0, 1f, chapters))
     }
+
+    // --- SKADI-T-0658 ---
+
+    @Test
+    fun `the fade runs over the last ten seconds only`() {
+        assertEquals(1f, SleepTimer.fadeVolume(60_000L), 0f)
+        assertEquals(1f, SleepTimer.fadeVolume(10_000L), 0f)
+        assertEquals(0.5f, SleepTimer.fadeVolume(5_000L), 0.001f)
+        assertEquals(0f, SleepTimer.fadeVolume(0L), 0f)
+    }
+
+    @Test
+    fun `the service wakes at each stage, not continuously`() {
+        assertEquals("to the shake window", 29 * 60_000L, SleepTimer.nextTickMs(30 * 60_000L))
+        assertEquals("to the fade", 50_000L, SleepTimer.nextTickMs(60_000L))
+        assertEquals("through the fade", 200L, SleepTimer.nextTickMs(9_000L))
+        assertEquals(30L, SleepTimer.nextTickMs(30L))
+    }
+
+    @Test
+    fun `status labels`() {
+        assertNull(SleepTimer.statusLabel(null, null))
+        assertEquals("Sleep in 14:32", SleepTimer.statusLabel(SleepTimer.Mode.Minutes(15 * 60_000L, 0), 872_000L))
+        assertEquals("Sleep in 1:00:00", SleepTimer.statusLabel(SleepTimer.Mode.Minutes(60 * 60_000L, 0), 3_600_000L))
+        assertEquals("Sleep at chapter end", SleepTimer.statusLabel(SleepTimer.Mode.EndOfChapter, null))
+        assertEquals("rounds up", "0:01", SleepTimer.clock(1L))
+    }
 }

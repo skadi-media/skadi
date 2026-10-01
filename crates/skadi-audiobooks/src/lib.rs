@@ -37,7 +37,10 @@ pub mod work;
 pub use author::{Author, Series, SeriesLink};
 pub use book::Book;
 pub use book_file::BookFile;
-pub use discovery::{AuthorDiscovery, AuthorDiscoveryWorker, DEFAULT_DISCOVERY_INTERVAL};
+pub use discovery::{
+    AuthorDiscovery, AuthorDiscoveryWorker, DEFAULT_DISCOVERY_INTERVAL, IngestProgress,
+    MAX_PAGES_PER_PASS, ingest_author_pages, ingest_author_works,
+};
 pub use http::{AudiobooksHttp, AudiobooksLibrary};
 pub use import::{Placement, RawCandidate, commit_item, parse_asin, scan_candidates};
 pub use matcher::AudiobookMatcher;

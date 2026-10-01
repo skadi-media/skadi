@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 use skadi_core::module::BoxFuture;
 use skadi_core::{AppError, AsinId, ProfileId, Result, RootFolder, Worker};
-use skadi_metadata::{AudibleCatalogProvider, CatalogItem, MetadataProvider};
+use skadi_metadata::{AudibleCatalogProvider, CatalogItem, MAX_PAGES_PER_AUTHOR, MetadataProvider};
 use skadi_store::Store;
 
 use crate::author::Author;
@@ -36,18 +36,54 @@ use crate::work::{WatchScope, Work};
 /// hourly-ish sweep is plenty (tunable later via the config plane).
 pub const DEFAULT_DISCOVERY_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 
-/// Upper bound on authors ingested per pass, so a big library can't hammer the
-/// Audible catalog in a single tick (the rest are picked up next tick).
-const MAX_AUTHORS_PER_PASS: usize = 50;
+/// Catalog **pages** read per periodic pass, across all authors, so a big library
+/// cannot hammer the Audible catalog in one tick.
+///
+/// This used to be a cap of 50 *authors*, which assumed one request per author.
+/// Reading a whole catalog costs several requests for a big author (SKADI-T-0650),
+/// so the budget is now counted in what it actually spends. An author cut off
+/// mid-catalog resumes at the next page on the following pass.
+pub const MAX_PAGES_PER_PASS: u32 = 60;
+
+/// Where the next periodic pass picks up (SKADI-T-0650).
+///
+/// Held in memory: a restart simply begins again from the first author at page 0,
+/// which is safe because ingest upserts. Persisting it would buy a slightly
+/// faster first pass after a restart in exchange for a migration.
+#[derive(Default)]
+struct IngestCursor {
+    /// The author name the next pass starts at. Targets are walked in **name
+    /// order** — they used to come out of a `HashMap`, whose order changes every
+    /// pass, so with a per-pass cap some authors went unvisited for many passes.
+    next_author: Option<String>,
+    /// Page to resume at for an author whose read was cut off by the budget.
+    resume_page: std::collections::HashMap<String, u32>,
+}
+
+/// What one bounded read of an author's catalog achieved.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IngestProgress {
+    /// Works upserted.
+    pub upserted: usize,
+    /// The author's own ASIN, when it could be resolved (see [`ingest_author_works`]).
+    pub resolved: Option<AsinId>,
+    /// Pages actually requested.
+    pub pages_read: u32,
+    /// `Some(page)` when the catalog has more and the read stopped at its page
+    /// allowance; `None` when the author's catalog was read to the end.
+    pub next_page: Option<u32>,
+}
 
 /// Upper bound on books queued for acquisition per watcher-resolution pass, so a
 /// freshly-watched prolific author/series can't flood the hunter in one tick.
 const MAX_ACQUIRE_PER_PASS: usize = 25;
 
-/// Ingest one author's Audible catalog into the known-works store (SKADI-I-0018):
-/// list the author's products and upsert each as a [`Work`] (with series
-/// membership). Acquires nothing. Callable from the discovery worker and from the
-/// add handlers (ingest-on-add).
+/// Ingest one author's **whole** Audible catalog into the known-works store
+/// (SKADI-I-0018): every page, up to [`MAX_PAGES_PER_AUTHOR`]. Acquires nothing.
+/// Used where the caller wants one author finished now — ingest-on-add, and the
+/// operator's "Refresh catalog". The periodic pass uses
+/// [`ingest_author_pages`] so it can spread a big author across passes.
+///
 /// Returns `(works upserted, resolved primary-author ASIN)`. The resolved ASIN is
 /// the registered `author_asin` when given, else the one the catalog reports for a
 /// product whose primary author matches `author_name` — the caller uses it to
@@ -58,36 +94,96 @@ pub async fn ingest_author_works(
     author_name: &str,
     author_asin: Option<&AsinId>,
 ) -> Result<(usize, Option<AsinId>)> {
-    let items = catalog.list_by_author(author_name).await?;
-    let mut works: Vec<Work> = Vec::with_capacity(items.len());
-    for item in &items {
-        let mut w = work_from_catalog(item, author_asin);
-        w.language = classify_language(store, catalog, &w.asin).await;
-        // English-only catalog (SKADI-I-0051): a big Audible catalog is full of
-        // foreign-language editions (German/French/Spanish translations). Don't
-        // store the positively-non-English ones at all, so the catalog + every
-        // downstream (series rollups, watcher acquisition) is English-only.
-        if crate::work::is_catalog_language(w.language.as_deref()) {
-            works.push(w);
-        }
+    let p = ingest_author_pages(
+        store,
+        catalog,
+        author_name,
+        author_asin,
+        0,
+        MAX_PAGES_PER_AUTHOR,
+    )
+    .await?;
+    if p.next_page.is_some() {
+        tracing::warn!(
+            author = author_name,
+            pages = MAX_PAGES_PER_AUTHOR,
+            "catalog ingest: page ceiling reached; the rest of this author's catalog was not read"
+        );
     }
-    store.upsert_works(&works).await?;
-    // Resolve the author's own ASIN: prefer the caller's, else the catalog's for a
-    // product whose primary author (authors[0]) is the queried name AND that carries
-    // an ASIN — the SAME author appears both with and without an ASIN across a
-    // catalog (e.g. a translated edition drops it), and only some items include it,
-    // so we must keep scanning past the ASIN-less matches. Name match is normalized
-    // (case/'.'/spacing-insensitive) so "A.G. Riddle" == "A. G. Riddle".
-    let resolved = author_asin.cloned().or_else(|| {
-        let want = name_key(author_name);
-        items
-            .iter()
-            .find(|it| {
-                it.author_asin.is_some() && it.authors.first().is_some_and(|a| name_key(a) == want)
-            })
-            .and_then(|it| it.author_asin.clone())
-    });
-    Ok((works.len(), resolved))
+    Ok((p.upserted, p.resolved))
+}
+
+/// Read up to `max_pages` pages of an author's catalog starting at page `start`,
+/// upserting each page's works as it arrives — so a failure partway keeps what was
+/// already read (SKADI-T-0650).
+///
+/// Language comes **inline** from the list response when present; the per-title
+/// lookup is only the fallback. Before SKADI-T-0650 every unclassified product
+/// cost an extra request here.
+pub async fn ingest_author_pages(
+    store: &Store,
+    catalog: &AudibleCatalogProvider,
+    author_name: &str,
+    author_asin: Option<&AsinId>,
+    start: u32,
+    max_pages: u32,
+) -> Result<IngestProgress> {
+    let mut progress = IngestProgress {
+        resolved: author_asin.cloned(),
+        ..IngestProgress::default()
+    };
+    let want = name_key(author_name);
+    let mut index = start;
+    loop {
+        if progress.pages_read >= max_pages {
+            progress.next_page = Some(index);
+            return Ok(progress);
+        }
+        let page = catalog.list_by_author_page(author_name, index).await?;
+        progress.pages_read += 1;
+        let last = page.is_last(index);
+
+        let mut works: Vec<Work> = Vec::with_capacity(page.items.len());
+        for item in &page.items {
+            let mut w = work_from_catalog(item, author_asin);
+            w.language = match &item.language {
+                Some(l) => Some(l.clone()),
+                None => classify_language(store, catalog, &w.asin).await,
+            };
+            // English-only catalog (SKADI-I-0051): a big Audible catalog is full of
+            // foreign-language editions (German/French/Spanish translations). Don't
+            // store the positively-non-English ones at all, so the catalog + every
+            // downstream (series rollups, watcher acquisition) is English-only.
+            if crate::work::is_catalog_language(w.language.as_deref()) {
+                works.push(w);
+            }
+        }
+        store.upsert_works(&works).await?;
+        progress.upserted += works.len();
+
+        // Resolve the author's own ASIN: prefer the caller's, else the catalog's for
+        // a product whose primary author (authors[0]) is the queried name AND that
+        // carries an ASIN — the SAME author appears both with and without an ASIN
+        // across a catalog (e.g. a translated edition drops it), and only some items
+        // include it, so we must keep scanning past the ASIN-less matches. Name match
+        // is normalized (case/'.'/spacing-insensitive) so "A.G. Riddle" ==
+        // "A. G. Riddle". Kept across pages: first match wins.
+        if progress.resolved.is_none() {
+            progress.resolved = page
+                .items
+                .iter()
+                .find(|it| {
+                    it.author_asin.is_some()
+                        && it.authors.first().is_some_and(|a| name_key(a) == want)
+                })
+                .and_then(|it| it.author_asin.clone());
+        }
+
+        if last {
+            return Ok(progress);
+        }
+        index += 1;
+    }
 }
 
 /// The work's Audible language, lowercased — reused from the cached
@@ -170,6 +266,15 @@ pub struct AuthorDiscovery {
     store: Store,
     catalog: Arc<AudibleCatalogProvider>,
     enrich: Arc<dyn MetadataProvider>,
+    /// Rotation and resume state between periodic passes. It persists because the
+    /// worker holds one `Arc<AuthorDiscovery>` for its lifetime (`module.rs`) and
+    /// calls [`run_once`](Self::run_once) every tick.
+    ///
+    /// The mutex serialises passes **on this instance** only. The operator's
+    /// "Refresh catalog" builds its own `AuthorDiscovery` per request, with its own
+    /// cursor, so it can run alongside a periodic pass; both upsert, so the cost
+    /// of overlap is duplicate requests, not bad data.
+    cursor: tokio::sync::Mutex<IngestCursor>,
 }
 
 impl AuthorDiscovery {
@@ -185,6 +290,7 @@ impl AuthorDiscovery {
             store,
             catalog,
             enrich,
+            cursor: tokio::sync::Mutex::new(IngestCursor::default()),
         }
     }
 
@@ -192,7 +298,7 @@ impl AuthorDiscovery {
     /// auto-sweep stays gentle), then resolve watchers into acquisitions
     /// (SKADI-I-0018). Returns (works upserted, books acquired).
     pub async fn run_once(&self) -> (usize, usize) {
-        let ingested = self.ingest_once(MAX_AUTHORS_PER_PASS).await;
+        let ingested = self.ingest_once(MAX_PAGES_PER_PASS).await;
         let acquired = self.resolve_watchers_once().await;
         (ingested, acquired)
     }
@@ -202,7 +308,7 @@ impl AuthorDiscovery {
     /// user-triggered and we want it to finish the job in one go (already-classified
     /// works skip the per-title language lookup, so re-runs are cheap).
     pub async fn run_full(&self) -> (usize, usize) {
-        let ingested = self.ingest_once(usize::MAX).await;
+        let ingested = self.ingest_once(u32::MAX).await;
         let acquired = self.resolve_watchers_once().await;
         (ingested, acquired)
     }
@@ -211,7 +317,7 @@ impl AuthorDiscovery {
     /// don't acquire). Returns the number of works upserted. Also auto-migrates a
     /// legacy `monitored` author into an author-level watcher (SKADI-T-0156), so
     /// existing monitored authors keep acquiring once watchers drive acquisition.
-    pub async fn ingest_once(&self, max_authors: usize) -> usize {
+    pub async fn ingest_once(&self, max_pages: u32) -> usize {
         // Ingest targets are keyed by author **name** (the catalog query is by
         // name). Registered authors contribute their ASIN (so their works carry
         // `author_asin` for the author-page browse); library books contribute any
@@ -260,19 +366,51 @@ impl AuthorDiscovery {
             Err(e) => tracing::warn!(error = %e, "catalog ingest: listing books failed"),
         }
 
+        // Name order, so a pass that stops early hands over to the *next* author
+        // rather than to whoever a HashMap happens to yield (SKADI-T-0650).
+        let mut targets: Vec<(String, Option<AsinId>)> = targets.into_iter().collect();
+        targets.sort_by(|a, b| a.0.cmp(&b.0));
+        if targets.is_empty() {
+            return 0;
+        }
+
+        let mut cursor = self.cursor.lock().await;
+        let start = cursor
+            .next_author
+            .as_ref()
+            .and_then(|n| targets.iter().position(|(t, _)| t >= n))
+            .unwrap_or(0);
+        cursor.next_author = None;
+
+        let mut budget = max_pages;
         let mut upserted = 0usize;
-        for (i, (name, asin)) in targets.into_iter().enumerate() {
-            if i >= max_authors {
+        let count = targets.len();
+        for step in 0..count {
+            let (name, asin) = &targets[(start + step) % count];
+            if budget == 0 {
+                cursor.next_author = Some(name.clone());
                 tracing::info!(
-                    "catalog ingest: per-pass author cap ({max_authors}) hit; rest next tick"
+                    pages = max_pages,
+                    resume_at = %name,
+                    "catalog ingest: per-pass page budget spent; resuming next pass"
                 );
                 break;
             }
-            match ingest_author_works(&self.store, self.catalog.as_ref(), &name, asin.as_ref())
-                .await
+            let from = cursor.resume_page.remove(name).unwrap_or(0);
+            let allowance = budget.min(MAX_PAGES_PER_AUTHOR.saturating_sub(from));
+            match ingest_author_pages(
+                &self.store,
+                self.catalog.as_ref(),
+                name,
+                asin.as_ref(),
+                from,
+                allowance,
+            )
+            .await
             {
-                Ok((n, resolved)) => {
-                    upserted += n;
+                Ok(progress) => {
+                    budget = budget.saturating_sub(progress.pages_read);
+                    upserted += progress.upserted;
                     // Register an author entity for a library-derived author (one
                     // with no registered ASIN yet) so the author-scope browse and
                     // Watch button work for an imported library (SKADI-T-0160).
@@ -280,7 +418,7 @@ impl AuthorDiscovery {
                     // until the operator watches. Idempotent via get_by_asin
                     // (upsert conflicts on id, and Author::new mints a fresh id).
                     if asin.is_none()
-                        && let Some(a_asin) = resolved
+                        && let Some(a_asin) = progress.resolved.clone()
                         && matches!(self.repo.get_author_by_asin(&a_asin).await, Ok(None))
                     {
                         let mut author = Author::new(name.clone());
@@ -290,8 +428,27 @@ impl AuthorDiscovery {
                             tracing::warn!(author = %name, error = %e, "catalog ingest: author register failed");
                         }
                     }
+                    match progress.next_page {
+                        Some(next) if next >= MAX_PAGES_PER_AUTHOR => tracing::warn!(
+                            author = %name,
+                            pages = MAX_PAGES_PER_AUTHOR,
+                            "catalog ingest: page ceiling reached; the rest of this author's catalog was not read"
+                        ),
+                        Some(next) => {
+                            // Cut off by the pass budget, not the ceiling: resume
+                            // here, at this page, next pass.
+                            cursor.resume_page.insert(name.clone(), next);
+                            cursor.next_author = Some(name.clone());
+                            break;
+                        }
+                        None => {}
+                    }
                 }
-                Err(e) => tracing::warn!(author = %name, error = %e, "catalog ingest: failed"),
+                Err(e) => {
+                    // At least the failing request was spent.
+                    budget = budget.saturating_sub(1);
+                    tracing::warn!(author = %name, error = %e, "catalog ingest: failed");
+                }
             }
         }
         if upserted > 0 {

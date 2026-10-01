@@ -124,3 +124,190 @@ async fn monitored_author_discovery_adds_a_new_book_and_is_idempotent() {
     let (_ingested2, acquired2) = discovery.run_once().await;
     assert_eq!(acquired2, 0, "no duplicate acquisition on re-run");
 }
+
+// ---------------------------------------------------------------------------
+// SKADI-T-0650: whole-catalog reads, inline language, and a page budget.
+// ---------------------------------------------------------------------------
+
+/// `n` products in `lang`, ASINs prefixed so pages and authors are told apart.
+fn products(prefix: &str, n: usize, lang: &str, author: &str) -> Vec<serde_json::Value> {
+    (0..n)
+        .map(|i| {
+            serde_json::json!({
+                "asin": format!("{prefix}{i:03}"),
+                "title": format!("{prefix} {i}"),
+                "language": lang,
+                "authors": [{ "name": author }]
+            })
+        })
+        .collect()
+}
+
+async fn mount_author_page(
+    server: &MockServer,
+    author: &str,
+    page: u32,
+    total: usize,
+    items: Vec<serde_json::Value>,
+) {
+    Mock::given(method("GET"))
+        .and(path("/1.0/catalog/products"))
+        .and(query_param("author", author))
+        .and(query_param("page", page.to_string()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "total_results": total, "products": items })),
+        )
+        .mount(server)
+        .await;
+}
+
+/// The measured George R. R. Martin shape: the newest page is all translations
+/// and the English novels sit on later pages. Reading one page ingested none of
+/// them. Language must also arrive inline — no per-title detail request.
+#[tokio::test]
+async fn ingests_english_works_that_sit_behind_a_page_of_translations() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    let server = MockServer::start().await;
+    let a = "George R. R. Martin";
+    mount_author_page(&server, a, 0, 61, products("DE", 50, "german", a)).await;
+    mount_author_page(&server, a, 1, 61, products("EN", 11, "english", a)).await;
+    let catalog = AudibleCatalogProvider::new(client()).with_base_url(server.uri());
+
+    let (n, _) = skadi_audiobooks::ingest_author_works(&store, &catalog, a, None)
+        .await
+        .unwrap();
+
+    assert_eq!(n, 11, "the eleven English works on page 1 are ingested");
+    let works = skadi_audiobooks::WorksRepo::list_all_works(&store)
+        .await
+        .unwrap();
+    assert_eq!(works.len(), 11);
+    assert!(
+        works
+            .iter()
+            .all(|w| w.language.as_deref() == Some("english")),
+        "no translation is stored"
+    );
+    let detail_lookups = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() != "/1.0/catalog/products")
+        .count();
+    assert_eq!(
+        detail_lookups, 0,
+        "language came inline; no per-title requests"
+    );
+}
+
+/// The per-pass budget counts **pages**, a partly-read author resumes at the page
+/// it stopped on rather than starting again, and authors are visited in a stable
+/// order rather than whatever a HashMap yields.
+#[tokio::test]
+async fn the_pass_budget_counts_pages_and_a_cut_off_author_resumes() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    for (name, asin) in [("Alpha", "AA"), ("Bravo", "BB"), ("Charlie", "CC")] {
+        let mut author = Author::new(name);
+        author.asin = Some(AsinId(asin.into()));
+        store.upsert_author(&author).await.unwrap();
+    }
+    let server = MockServer::start().await;
+    // Alpha: three pages (50, 50, 5). Bravo and Charlie: one short page each.
+    mount_author_page(
+        &server,
+        "Alpha",
+        0,
+        105,
+        products("A0", 50, "english", "Alpha"),
+    )
+    .await;
+    mount_author_page(
+        &server,
+        "Alpha",
+        1,
+        105,
+        products("A1", 50, "english", "Alpha"),
+    )
+    .await;
+    mount_author_page(
+        &server,
+        "Alpha",
+        2,
+        105,
+        products("A2", 5, "english", "Alpha"),
+    )
+    .await;
+    mount_author_page(
+        &server,
+        "Bravo",
+        0,
+        3,
+        products("B0", 3, "english", "Bravo"),
+    )
+    .await;
+    mount_author_page(
+        &server,
+        "Charlie",
+        0,
+        2,
+        products("C0", 2, "english", "Charlie"),
+    )
+    .await;
+
+    let audnexus = MockServer::start().await;
+    let repo: Arc<dyn AudiobooksRepo> = Arc::new(store.clone());
+    let catalog = Arc::new(AudibleCatalogProvider::new(client()).with_base_url(server.uri()));
+    let enrich = Arc::new(AudnexusProvider::new(client()).with_base_url(audnexus.uri()));
+    let discovery = AuthorDiscovery::new(repo, store.clone(), catalog, enrich);
+
+    // Which (author, page) each request asked for, in order.
+    let asked = |reqs: &[wiremock::Request]| -> Vec<(String, String)> {
+        reqs.iter()
+            .filter(|r| r.url.path() == "/1.0/catalog/products")
+            .map(|r| {
+                let q: std::collections::HashMap<_, _> = r.url.query_pairs().collect();
+                (q["author"].to_string(), q["page"].to_string())
+            })
+            .collect()
+    };
+
+    // Pass 1, two pages: both go to Alpha (first by name), which is not finished.
+    discovery.ingest_once(2).await;
+    let after1 = server.received_requests().await.unwrap();
+    assert_eq!(
+        asked(&after1),
+        vec![("Alpha".into(), "0".into()), ("Alpha".into(), "1".into())],
+        "the budget is two pages, not two authors"
+    );
+
+    // Pass 2: Alpha resumes at page 2 (not page 0), finishes, then Bravo.
+    discovery.ingest_once(2).await;
+    let after2 = server.received_requests().await.unwrap();
+    assert_eq!(
+        asked(&after2[after1.len()..]),
+        vec![("Alpha".into(), "2".into()), ("Bravo".into(), "0".into())],
+        "a cut-off author resumes where it stopped"
+    );
+
+    // Pass 3 starts at Charlie — the rotation moves on rather than restarting.
+    discovery.ingest_once(1).await;
+    let after3 = server.received_requests().await.unwrap();
+    assert_eq!(
+        asked(&after3[after2.len()..]),
+        vec![("Charlie".into(), "0".into())],
+        "the next pass picks up at the next author"
+    );
+
+    let works = skadi_audiobooks::WorksRepo::list_all_works(&store)
+        .await
+        .unwrap();
+    assert_eq!(
+        works.len(),
+        105 + 3 + 2,
+        "every work from every page was kept"
+    );
+}

@@ -19,7 +19,9 @@ pub mod import_list;
 pub mod servarr;
 pub mod skyhook;
 pub mod tmdb;
-pub use audible_catalog::{AudibleCatalogProvider, CatalogItem};
+pub use audible_catalog::{
+    AudibleCatalogProvider, CatalogItem, CatalogPage, MAX_PAGES_PER_AUTHOR, NUM_RESULTS,
+};
 pub use audnexus::{AudnexusAuthor, AudnexusProvider, AuthorMatch};
 pub use servarr::ServarrProvider;
 pub use skyhook::SkyhookProvider;

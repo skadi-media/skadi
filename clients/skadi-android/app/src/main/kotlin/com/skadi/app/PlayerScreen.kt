@@ -17,6 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Replay
@@ -118,6 +121,11 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var showSleepSheet by remember { mutableStateOf(false) }
     val playerSettings = remember { com.skadi.core.PlayerSettings(context) }
     var defaultSpeed by remember { mutableStateOf(playerSettings.defaultSpeed) }
+    val marks = remember(fid) { com.skadi.core.Bookmarks(context.filesDir, fid) }
+    var bookmarks by remember(fid) { mutableStateOf(marks.list()) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<com.skadi.core.Bookmark?>(null) }
+    var noteDraft by remember { mutableStateOf("") }
     var skipBackS by remember { mutableStateOf(playerSettings.skipBackS) }
     var skipForwardS by remember { mutableStateOf(playerSettings.skipForwardS) }
     var rewindOnResume by remember { mutableStateOf(playerSettings.rewindOnResume) }
@@ -197,6 +205,17 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                     contentDescription = "Back",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            // Mark this place (SKADI-T-0662). Added at once — the moment is the
+            // point — then a note can be written or skipped.
+            androidx.compose.material3.IconButton(onClick = {
+                val b = marks.add(positionS)
+                bookmarks = marks.list()
+                editing = b
+                noteDraft = ""
+            }) {
+                Icon(Icons.Filled.BookmarkAdd, contentDescription = "Add bookmark")
             }
         }
         cover?.let {
@@ -323,8 +342,11 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                     },
                 )
             }
-            OutlinedButton(onClick = { showChapters = !showChapters }, enabled = chapters.isNotEmpty()) {
-                Text("Chapters")
+            OutlinedButton(
+                onClick = { showChapters = !showChapters },
+                enabled = chapters.isNotEmpty() || bookmarks.isNotEmpty(),
+            ) {
+                Text(if (chapters.isEmpty()) "Bookmarks" else "Chapters")
             }
         }
         if (showSheet) {
@@ -544,28 +566,117 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
             }
         }
         if (showChapters) {
+            // Chapters and bookmarks share the panel (SKADI-T-0662); a fourth
+            // button would not fit beside speed and sleep.
+            if (chapters.isNotEmpty() && bookmarks.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                ) {
+                    FilterChip(
+                        selected = !showBookmarks,
+                        onClick = { showBookmarks = false },
+                        label = { Text("Chapters") },
+                    )
+                    FilterChip(
+                        selected = showBookmarks,
+                        onClick = { showBookmarks = true },
+                        label = { Text("Bookmarks · ${bookmarks.size}") },
+                    )
+                }
+            }
+            val listBookmarks = chapters.isEmpty() || (showBookmarks && bookmarks.isNotEmpty())
             LazyColumn(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
-                items(chapters, key = { it.index }) { ch ->
-                    val cur = chapterAt(chapters, positionS)?.index == ch.index
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        TextButton(onClick = { controller?.seekTo((ch.startS * 1000).toLong()) }) {
+                if (listBookmarks) {
+                    items(bookmarks, key = { it.id }) { b ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { controller?.seekTo((b.positionS * 1000).toLong()) }
+                                    .padding(vertical = 6.dp, horizontal = 12.dp),
+                            ) {
+                                Text(
+                                    listOfNotNull(
+                                        fmtClock(b.positionS.toLong()),
+                                        chapterAt(chapters, b.positionS)?.let { it.title.ifBlank { "Chapter ${it.index + 1}" } },
+                                    ).joinToString(" · "),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                if (b.note.isNotEmpty()) {
+                                    Text(
+                                        b.note,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            androidx.compose.material3.IconButton(onClick = {
+                                editing = b
+                                noteDraft = b.note
+                            }) {
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = "Edit bookmark",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(chapters, key = { it.index }) { ch ->
+                        val cur = chapterAt(chapters, positionS)?.index == ch.index
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            TextButton(onClick = { controller?.seekTo((ch.startS * 1000).toLong()) }) {
+                                Text(
+                                    ch.title.ifBlank { "Chapter ${ch.index + 1}" },
+                                    color = if (cur) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                                )
+                            }
+                            // The chapter's LENGTH, not its offset into the book.
                             Text(
-                                ch.title.ifBlank { "Chapter ${ch.index + 1}" },
-                                color = if (cur) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                                fmtClock((ch.endS - ch.startS).coerceAtLeast(0.0).toLong()),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        // The chapter's LENGTH, not its offset into the book.
-                        Text(
-                            fmtClock((ch.endS - ch.startS).coerceAtLeast(0.0).toLong()),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
                     }
                 }
             }
+        }
+        editing?.let { b ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { editing = null },
+                title = { Text("Bookmark at ${fmtClock(b.positionS.toLong())}") },
+                text = {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = noteDraft,
+                        onValueChange = { noteDraft = it },
+                        label = { Text("Note (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        marks.updateNote(b.id, noteDraft)
+                        bookmarks = marks.list()
+                        editing = null
+                    }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        marks.delete(b.id)
+                        bookmarks = marks.list()
+                        editing = null
+                    }) { Text("Delete") }
+                },
+            )
         }
     }
 }

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -253,6 +254,39 @@ fun VideoPlayerScreen(
         }
     }
 
+    // Picture-in-picture (SKADI-T-0665): while this screen is up, leaving the
+    // app shrinks the film into a window instead of leaving it behind.
+    DisposableEffect(Unit) {
+        Pip.video = Pip.Video(
+            isPlaying = { player.isPlaying },
+            togglePlay = { if (player.isPlaying) player.pause() else player.play() },
+            seekBy = { d -> player.seekTo((player.currentPosition + d).coerceAtLeast(0L)) },
+            onDismissed = {
+                // Closing the window ends the film, keeping its place.
+                player.pause()
+                val pos = player.currentPosition
+                if (pos > 0) progress.save(progressKey, pos, player.duration.coerceAtLeast(0))
+                onBack()
+            },
+            aspect = {
+                player.videoSize.takeIf { it.width > 0 && it.height > 0 }
+                    ?.let { android.util.Rational(it.width, it.height) }
+            },
+        )
+        Pip.update(activity)
+        val l = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) = Pip.update(activity)
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) =
+                Pip.update(activity)
+        }
+        player.addListener(l)
+        onDispose {
+            player.removeListener(l)
+            Pip.video = null
+            Pip.update(activity)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -264,7 +298,10 @@ fun VideoPlayerScreen(
                     setShowPreviousButton(false)
                 }
             },
+            // A PiP window is too small for controls; the window has its own.
+            update = { v -> v.useController = !Pip.inPip },
         )
+        if (Pip.inPip) return@Box
         IconButton(
             onClick = onBack,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
@@ -278,6 +315,16 @@ fun VideoPlayerScreen(
             Icon(
                 androidx.compose.material.icons.Icons.Filled.Subtitles,
                 contentDescription = "Languages",
+                tint = Color.White,
+            )
+        }
+        IconButton(
+            onClick = { activity?.let { runCatching { it.enterPictureInPictureMode(Pip.params(it)) } } },
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 104.dp, top = 8.dp),
+        ) {
+            Icon(
+                androidx.compose.material.icons.Icons.Filled.PictureInPictureAlt,
+                contentDescription = "Picture in picture",
                 tint = Color.White,
             )
         }

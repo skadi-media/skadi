@@ -69,7 +69,50 @@ class MainActivity : ComponentActivity() {
             askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         pairFromLink(intent)
+        // PiP actions (SKADI-T-0665): play/pause and ±10 s, sent by the system
+        // as broadcasts to this app only.
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            pipReceiver,
+            android.content.IntentFilter(Pip.ACTION),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         setContent { SkadiTheme { Root() } }
+    }
+
+    private val pipReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            Pip.handle(intent.getIntExtra(Pip.EXTRA, 0))
+            Pip.update(this@MainActivity)
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(pipReceiver) }
+        super.onDestroy()
+    }
+
+    /** Leaving while a video is on screen shrinks it into a PiP window (SKADI-T-0665). */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Pip.video != null && !isInPictureInPictureMode) {
+            runCatching { enterPictureInPictureMode(Pip.params(this)) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        Pip.inPip = isInPictureInPictureMode
+        // Leaving PiP with the activity not back in front means the window was
+        // closed, not expanded: stop the film and keep its place.
+        if (!isInPictureInPictureMode &&
+            !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        ) {
+            Pip.video?.onDismissed?.invoke()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

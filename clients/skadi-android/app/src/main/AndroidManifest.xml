@@ -25,7 +25,11 @@
              on every orientation change, which the video player triggers on the
              way in and out — and the dying instance restoring portrait while the
              new one asked for landscape relaunched it in a loop (SKADI-T-0578). -->
+        <!-- Picture-in-picture for the video player (SKADI-T-0665); PiP resizes
+             the window, which the configChanges below already absorb. -->
         <activity android:name=".MainActivity" android:exported="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

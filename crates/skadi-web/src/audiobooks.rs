@@ -291,12 +291,25 @@ fn BookCluster(
     watch: Option<(&'static str, String)>,
     /// Total known works (from the series rollup) for an `N/M` completeness count.
     total: Option<usize>,
+    /// A real series cluster: list members with no series position after the
+    /// numbered ones under "Related", and leave them out of the count
+    /// (SKADI-T-0654). False for Standalone and author clusters, whose books
+    /// have no series position by definition.
+    split_related: bool,
     /// Shared `(scope, key)` set of active watchers, for reactive toggle state.
     watchers: RwSignal<HashSet<(String, String)>>,
     /// Bump to re-fetch the library after an add/grab/want.
     reload: RwSignal<u32>,
 ) -> impl IntoView {
-    let n = books.len();
+    // In a series cluster only *positioned* books count, so the label agrees
+    // with the rollup's `total`, which also excludes related members. Counting
+    // every book showed "2/1" for A Song of Ice and Fire once its anthology
+    // stopped counting.
+    let n = if split_related {
+        books.iter().filter(|b| book_is_positioned(b)).count()
+    } else {
+        books.len()
+    };
     let count_label = match total {
         Some(t) if t > n => format!("{n}/{t}"),
         _ => n.to_string(),
@@ -421,10 +434,23 @@ fn BookCluster(
                         author_body(bs, &ws, reload_fn)
                     } else {
                         let tiles = merge_owned_missing(bs, &ws);
+                        let (numbered, related) = if split_related {
+                            split_related_tiles(tiles)
+                        } else {
+                            (tiles, Vec::new())
+                        };
                         view! {
                             <div class="poster-grid">
-                                {tiles.into_iter().map(|t| render_tile(t, reload_fn)).collect_view()}
+                                {numbered.into_iter().map(|t| render_tile(t, reload_fn)).collect_view()}
                             </div>
+                            {(!related.is_empty()).then(|| view! {
+                                <div class="lib-subcluster">
+                                    <h4 class="lib-subcluster-head muted">"Related"</h4>
+                                    <div class="poster-grid">
+                                        {related.into_iter().map(|t| render_tile(t, reload_fn)).collect_view()}
+                                    </div>
+                                </div>
+                            })}
                         }
                             .into_any()
                     },
@@ -642,6 +668,7 @@ pub fn AudiobooksPage() -> impl IntoView {
                                 expanded=expanded
                                 watch=watch
                                 total=total
+                                split_related=true
                                 watchers=watchers
                                 reload=reload
                             />
@@ -660,6 +687,7 @@ pub fn AudiobooksPage() -> impl IntoView {
                                 expanded=expanded
                                 watch=None
                                 total=None
+                                split_related=false
                                 watchers=watchers
                                 reload=reload
                             />
@@ -688,6 +716,7 @@ pub fn AudiobooksPage() -> impl IntoView {
                                 expanded=expanded
                                 watch=watch
                                 total=None
+                                split_related=false
                                 watchers=watchers
                                 reload=reload
                             />
@@ -891,6 +920,39 @@ pub fn merge_owned_missing(owned: Vec<api::Book>, works: &[api::Work]) -> Vec<Se
             .then_with(|| a.title_key().cmp(&b.title_key()))
     });
     tiles
+}
+
+/// Whether a series position is a real one (SKADI-T-0654): non-blank after
+/// trimming. `"0"` (a prequel) and `"1.5"` count; `None` and blank do not. Mirrors
+/// the server's `has_position`.
+#[must_use]
+pub fn has_series_position(position: Option<&str>) -> bool {
+    position.is_some_and(|p| !p.trim().is_empty())
+}
+
+/// Whether a library book has a position in its series.
+#[must_use]
+pub fn book_is_positioned(b: &api::Book) -> bool {
+    has_series_position(b.series.as_ref().and_then(|s| s.position.as_deref()))
+}
+
+impl SeriesTile {
+    /// Whether this member has a position in its series (SKADI-T-0654).
+    #[must_use]
+    pub fn is_positioned(&self) -> bool {
+        match self {
+            SeriesTile::Owned(b) => book_is_positioned(b),
+            SeriesTile::Missing(w) => has_series_position(w.series_position.as_deref()),
+        }
+    }
+}
+
+/// Split a series' tiles into the numbered members, in order, and the
+/// unpositioned ones listed under "Related" (SKADI-T-0654). Order within each
+/// part is preserved.
+#[must_use]
+pub fn split_related_tiles(tiles: Vec<SeriesTile>) -> (Vec<SeriesTile>, Vec<SeriesTile>) {
+    tiles.into_iter().partition(SeriesTile::is_positioned)
 }
 
 fn render_tile<F: Fn() + Copy + 'static>(t: SeriesTile, reload: F) -> AnyView {

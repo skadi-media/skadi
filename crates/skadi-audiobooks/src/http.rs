@@ -341,6 +341,12 @@ async fn list_series(State(http): State<AudiobooksHttp>) -> Result<impl IntoResp
     Ok(Json(rollup_series(&works, &books, &watched_series)))
 }
 
+/// Whether a series position is a real one (SKADI-T-0654): non-blank after
+/// trimming. `"0"` counts — prequels exist (*Ball Lightning* is position 0).
+fn has_position(position: Option<&str>) -> bool {
+    position.is_some_and(|p| !p.trim().is_empty())
+}
+
 /// Build the series rollups from known works and library books together
 /// (SKADI-T-0651).
 ///
@@ -359,8 +365,13 @@ async fn list_series(State(http): State<AudiobooksHttp>) -> Result<impl IntoResp
 /// - **Join.** Library books carry a series *name* but no series ASIN, so books
 ///   join rollups by series name, compared case- and whitespace-insensitively.
 ///   When books gain a series ASIN, join on that first.
-/// - Membership with no position counts here like any other; how unpositioned
-///   members count is SKADI-T-0654.
+/// - **Only positioned members count** (SKADI-T-0654). A member with no series
+///   position — *Dangerous Women* and *The Book of Swords* in *A Song of Ice and
+///   Fire* — is counted in `related` instead. Audible tags those anthologies into
+///   the series because each contains a series novella; counting them is what let
+///   two anthologies stand in for a five-novel series. A member is positioned if
+///   either its work or its library book carries a position; `"0"` (a prequel)
+///   and `"1.5"` are positions, `null` and blank are not.
 fn rollup_series(
     works: &[crate::work::Work],
     books: &[Book],
@@ -380,6 +391,7 @@ fn rollup_series(
         series_asin: Option<String>,
         members: HashSet<String>,
         owned: HashSet<String>,
+        positioned: HashSet<String>,
         watched: bool,
     }
     let mut by_series: HashMap<String, Acc> = HashMap::new();
@@ -390,6 +402,7 @@ fn rollup_series(
             series_asin: None,
             members: HashSet::new(),
             owned: HashSet::new(),
+            positioned: HashSet::new(),
             watched: false,
         });
         k
@@ -411,6 +424,9 @@ fn rollup_series(
             e.series_asin = w.series_asin.as_ref().map(|a| a.0.clone());
         }
         e.members.insert(w.asin.0.clone());
+        if has_position(w.series_position.as_deref()) {
+            e.positioned.insert(w.asin.0.clone());
+        }
         if held.contains(w.asin.0.as_str()) {
             e.owned.insert(w.asin.0.clone());
         }
@@ -437,6 +453,9 @@ fn rollup_series(
             .as_ref()
             .map_or_else(|| format!("book:{}", b.id), |a| a.0.clone());
         e.members.insert(member.clone());
+        if has_position(series.position.as_deref()) {
+            e.positioned.insert(member.clone());
+        }
         e.owned.insert(member);
     }
 
@@ -445,8 +464,9 @@ fn rollup_series(
         .map(|a| SeriesRollupDto {
             name: a.name,
             series_asin: a.series_asin,
-            total: a.members.len(),
-            owned: a.owned.len(),
+            total: a.positioned.len(),
+            owned: a.owned.intersection(&a.positioned).count(),
+            related: a.members.len() - a.positioned.len(),
             watched: a.watched,
         })
         .collect();
@@ -506,8 +526,14 @@ async fn clear_watcher(
 struct SeriesRollupDto {
     name: String,
     series_asin: Option<String>,
+    /// Positioned members only (SKADI-T-0654).
     total: usize,
+    /// Positioned members the library holds.
     owned: usize,
+    /// Members with no series position — usually anthologies that contain a
+    /// series story. Listed by clients under "Related"; never part of `total`
+    /// or `owned`. Additive, so older clients ignore it.
+    related: usize,
     watched: bool,
 }
 
@@ -2560,10 +2586,17 @@ mod tests {
 
     // --- SKADI-T-0651: series rollups merge library books with known works ---
 
+    /// A series work with no position — counted as *related* since SKADI-T-0654.
     fn work(asin: &str, series: &str) -> crate::work::Work {
         let mut w = crate::work::Work::new(AsinId(asin.into()), asin);
         w.series_name = Some(series.into());
         w.series_asin = Some(AsinId("SERIES".into()));
+        w
+    }
+
+    fn work_at(asin: &str, series: &str, position: &str) -> crate::work::Work {
+        let mut w = work(asin, series);
+        w.series_position = Some(position.into());
         w
     }
 
@@ -2592,7 +2625,7 @@ mod tests {
     #[test]
     fn a_work_and_a_library_book_with_different_asins_are_two_members() {
         let r = rollup(
-            &[work("W1", "Saga")],
+            &[work_at("W1", "Saga", "2")],
             &[lib_book(Some("B1"), "Saga", Some("1"))],
         );
         assert_eq!(r.len(), 1);
@@ -2628,7 +2661,7 @@ mod tests {
     #[test]
     fn library_books_join_by_name_ignoring_case_and_spacing() {
         let r = rollup(
-            &[work("W1", "A Song of Ice and Fire")],
+            &[work_at("W1", "A Song of Ice and Fire", "2")],
             &[lib_book(Some("B1"), "a song of  ice and fire ", Some("1"))],
         );
         assert_eq!(r.len(), 1, "one series, not two");
@@ -2660,11 +2693,60 @@ mod tests {
         ];
         let r = rollup(&works, &books);
         assert_eq!(r.len(), 1);
+        // SKADI-T-0651 made A Game of Thrones count at all; SKADI-T-0654 stops the
+        // two unpositioned anthologies counting towards completeness. Before both:
+        // total 2, owned 1 — two anthologies. Now: one novel, owned, plus two
+        // related.
         assert_eq!(
-            r[0].total, 3,
-            "Dangerous Women + Book of Swords + A Game of Thrones"
+            (r[0].total, r[0].owned, r[0].related),
+            (1, 1, 2),
+            "A Game of Thrones counts; Dangerous Women and The Book of Swords are related"
         );
-        assert_eq!(r[0].owned, 2, "A Game of Thrones now counts as owned");
+    }
+
+    // --- SKADI-T-0654: unpositioned members are related, not counted ---
+
+    #[test]
+    fn positions_one_zero_and_fractional_count_null_and_blank_do_not() {
+        let positions = [Some("1"), Some("0"), Some("1.5"), None, Some("  ")];
+        let books: Vec<Book> = positions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| lib_book(Some(&format!("B{i}")), "Saga", *p))
+            .collect();
+        let r = rollup(&[], &books);
+        assert_eq!(
+            (r[0].total, r[0].related),
+            (3, 2),
+            "\"1\", \"0\" and \"1.5\" are positioned; null and blank are related"
+        );
+    }
+
+    #[test]
+    fn related_members_are_excluded_from_total_and_owned() {
+        let r = rollup(
+            &[
+                work_at("W1", "Saga", "1"),
+                work("W2", "Saga"),
+                work("W3", "Saga"),
+            ],
+            &[lib_book(Some("W2"), "Saga", None)],
+        );
+        assert_eq!(r[0].total, 1, "only the positioned work");
+        assert_eq!(
+            r[0].owned, 0,
+            "the owned book is related, so it is not counted"
+        );
+        assert_eq!(r[0].related, 2);
+    }
+
+    #[test]
+    fn a_position_on_either_the_work_or_the_book_makes_a_member_positioned() {
+        let r = rollup(
+            &[work("B1", "Saga")],
+            &[lib_book(Some("B1"), "Saga", Some("3"))],
+        );
+        assert_eq!((r[0].total, r[0].related), (1, 0));
     }
 
     #[test]

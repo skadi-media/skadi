@@ -44,3 +44,19 @@ fun groupBooksBySeries(books: List<Book>): Pair<List<SeriesGroup>, List<Book>> {
         .sortedBy { it.name.lowercase() }
     return sortedGroups to standalone
 }
+
+/**
+ * Whether a series position is a real one (SKADI-T-0654): non-blank after
+ * trimming. "0" (a prequel) and "1.5" count; null and blank do not. Mirrors the
+ * server's `has_position` and the web's `has_series_position`.
+ */
+fun hasSeriesPosition(position: String?): Boolean = !position.isNullOrBlank()
+
+/**
+ * Split series members into the numbered ones and the unpositioned ones shown
+ * under "Related" (SKADI-T-0654) — usually anthologies Audible tags into a series
+ * because they contain one story from it, like Dangerous Women in A Song of Ice
+ * and Fire. Order within each part is preserved.
+ */
+fun <T> splitRelated(members: List<T>, position: (T) -> String?): Pair<List<T>, List<T>> =
+    members.partition { hasSeriesPosition(position(it)) }

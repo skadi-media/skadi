@@ -241,7 +241,10 @@ fun SeriesExploreScreen(
     val rows = remember(mine, works) {
         mergeRows(mine, works ?: emptyList()).sortedWith(compareBy({ posKey(it.position) }, { it.title.lowercase() }))
     }
-    val owned = rows.count { it.owned }
+    // Numbered members, then the unpositioned ones under "Related"; only the
+    // numbered ones count (SKADI-T-0654), matching the server's rollup.
+    val (numbered, related) = remember(rows) { com.skadi.core.splitRelated(rows) { it.position } }
+    val owned = numbered.count { it.owned }
 
     Column(modifier = Modifier.fillMaxSize()) {
         SkadiTopBar(title = name, onBack = onBack)
@@ -250,9 +253,9 @@ fun SeriesExploreScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         ) {
             Text(
-                if (rows.isEmpty()) "" else "$owned of ${rows.size} owned" +
-                    (rows.count { it.wanted }.takeIf { it > 0 }?.let { " · $it wanted" } ?: "") +
-                    ((rows.size - owned - rows.count { it.wanted }).takeIf { it > 0 }?.let { " · $it gaps" } ?: ""),
+                if (numbered.isEmpty()) "" else "$owned of ${numbered.size} owned" +
+                    (numbered.count { it.wanted }.takeIf { it > 0 }?.let { " · $it wanted" } ?: "") +
+                    ((numbered.size - owned - numbered.count { it.wanted }).takeIf { it > 0 }?.let { " · $it gaps" } ?: ""),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -279,7 +282,7 @@ fun SeriesExploreScreen(
         if (!resolved && mine.isEmpty()) { Loading(); return@Column }
         if (rows.isEmpty()) { EmptyState("Nothing here."); return@Column }
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(rows, key = { it.key }) { r ->
+            val row: @Composable (WorkRow) -> Unit = { r ->
                 WorkRowView(
                     r = r,
                     added = r.asin in added,
@@ -289,6 +292,11 @@ fun SeriesExploreScreen(
                         scope.launch { if (api.addBook(a)) added = added + a }
                     },
                 )
+            }
+            items(numbered, key = { it.key }) { row(it) }
+            if (related.isNotEmpty()) {
+                item(key = "related-label") { SectionLabel("Related") }
+                items(related, key = { it.key }) { row(it) }
             }
         }
     }

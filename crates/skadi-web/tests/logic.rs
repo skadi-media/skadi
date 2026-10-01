@@ -21,7 +21,8 @@ use skadi_web::api::{WantedEdition, WantedItem};
 use skadi_web::audiobook_import::confidence_class;
 use skadi_web::audiobooks::{
     SeriesTile, book_byline, book_status, clean_overview, extract_asin, file_resettable,
-    group_books_by_series, looks_like_asin, merge_owned_missing, series_label,
+    group_books_by_series, has_series_position, looks_like_asin, merge_owned_missing, series_label,
+    split_related_tiles,
 };
 use skadi_web::dashboard::{book_counts, check_class, movie_counts};
 use skadi_web::movies::{
@@ -2259,4 +2260,70 @@ fn only_a_contributor_is_offered_the_catalog_search() {
     // Unknown role means `/me` has not answered yet. Showing it beats flashing
     // it away under an operator who can use it.
     assert!(offered(None));
+}
+
+// --- SKADI-T-0654: unpositioned series members are "Related" ---
+
+#[wasm_bindgen_test]
+fn series_positions_zero_and_fractional_count_blank_does_not() {
+    assert!(has_series_position(Some("1")));
+    assert!(has_series_position(Some("0")), "prequels are position 0");
+    assert!(has_series_position(Some("1.5")));
+    assert!(!has_series_position(None));
+    assert!(!has_series_position(Some("   ")));
+}
+
+/// The A Song of Ice and Fire shape: the novels by number, then the two
+/// anthologies Audible tags into the series without a position.
+#[wasm_bindgen_test]
+fn a_series_lists_its_numbered_members_then_the_related_ones() {
+    let asoiaf = "A Song of Ice and Fire";
+    let owned_book = |asin: &str, title: &str, pos: Option<&str>| {
+        let mut b = book_with(&[json!({"Imported": {}})]);
+        b.external_ids.asin = Some(asin.into());
+        b.title = title.into();
+        b.series = Some(SeriesLink {
+            series_id: "asoiaf".into(),
+            name: asoiaf.into(),
+            position: pos.map(str::to_string),
+        });
+        b
+    };
+    let work = |asin: &str, title: &str, pos: Option<&str>| Work {
+        asin: asin.into(),
+        title: title.into(),
+        authors: vec!["George R. R. Martin".into()],
+        series_name: Some(asoiaf.into()),
+        series_position: pos.map(str::to_string),
+        cover_url: None,
+        release_date: None,
+        owned: false,
+        book_id: None,
+        watched: false,
+    };
+    let owned = vec![
+        owned_book("AGOT", "A Game of Thrones", Some("1")),
+        owned_book("DW", "Dangerous Women", None),
+    ];
+    let works = vec![
+        work("ACOK", "A Clash of Kings", Some("2")),
+        work("BOS", "The Book of Swords", None),
+    ];
+    let (numbered, related) = split_related_tiles(merge_owned_missing(owned, &works));
+    let titles = |ts: &[SeriesTile]| -> Vec<String> {
+        ts.iter()
+            .map(|t| match t {
+                SeriesTile::Owned(b) => b.title.clone(),
+                SeriesTile::Missing(w) => w.title.clone(),
+            })
+            .collect()
+    };
+    assert_eq!(
+        titles(&numbered),
+        vec!["A Game of Thrones", "A Clash of Kings"]
+    );
+    assert_eq!(
+        titles(&related),
+        vec!["Dangerous Women", "The Book of Swords"]
+    );
 }

@@ -405,7 +405,16 @@ if (mode == "series") {
                 for (g in groups) {
                     val l = sortLetter(g.name)
                     add(l to g)
-                    if (g.seriesId in expanded) g.books.forEach { add(l to ("book" to it)) }
+                    if (g.seriesId in expanded) {
+                        // Numbered books, then the unpositioned ones under their own
+                        // "Related" heading (SKADI-T-0654).
+                        val (numbered, related) = com.skadi.core.splitRelated(g.books) { it.series?.position }
+                        numbered.forEach { add(l to ("book" to it)) }
+                        if (related.isNotEmpty()) {
+                            add(l to RelatedLabel(g.seriesId))
+                            related.forEach { add(l to ("book" to it)) }
+                        }
+                    }
                 }
                 if (standalone.isNotEmpty()) {
                     add('#' to "Standalone")
@@ -425,6 +434,10 @@ if (mode == "series") {
                     when (val e = entries[i].second) {
                         is OfflineBook -> "shelf-" + e.fileId
                         is com.skadi.core.SeriesGroup -> "series-" + e.seriesId
+                        // Its own type, keyed by series: a plain String label would be
+                        // "label-Related" for every expanded series, and duplicate
+                        // LazyColumn keys crash Compose.
+                        is RelatedLabel -> "related-" + e.seriesId
                         is String -> "label-$e"
                         else -> "book-" + ((e as Pair<*, *>).second as Book).id
                     }
@@ -441,10 +454,13 @@ if (mode == "series") {
                             val isOpen = e.seriesId in expanded
                             val roll = rollups.firstOrNull { nameKey(it.name) == nameKey(e.name) }
                             val total = roll?.total?.takeIf { it > 0 }
+                            // Count numbered books only, to match the rollup's total,
+                            // which excludes related members (SKADI-T-0654).
+                            val counted = e.books.count { com.skadi.core.hasSeriesPosition(it.series?.position) }
                             CompactRow(
                                 cover = e.books.firstNotNullOfOrNull { it.coverUrl?.takeIf { c -> c.isNotEmpty() } },
                                 title = e.name,
-                                meta = if (total != null && total > e.books.size) "${e.books.size} of $total books" else "${e.books.size} book${if (e.books.size == 1) "" else "s"}",
+                                meta = if (total != null && total > counted) "$counted of $total books" else "${e.books.size} book${if (e.books.size == 1) "" else "s"}",
                                 onClick = { if (isOpen) expanded.remove(e.seriesId) else expanded.add(e.seriesId) },
                             ) {
                                 IconButton(onClick = { openSeries = e.name }) {
@@ -457,6 +473,7 @@ if (mode == "series") {
                                 )
                             }
                         }
+                        is RelatedLabel -> SectionLabel("Related")
                         is String -> SectionLabel(e)
                         else -> bookItem((e as Pair<*, *>).second as Book)
                     }
@@ -498,8 +515,10 @@ if (mode == "series") {
     }
 }
 
+/** A muted list heading. `internal` so the series explore screen can use the
+ *  same "Related" heading as the library (SKADI-T-0654). */
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Text(
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -766,3 +785,7 @@ private fun CompactRow(
         trailing()
     }
 }
+
+/** The "Related" heading inside one expanded series (SKADI-T-0654). Its own type
+ *  rather than a String so its LazyColumn key can carry the series. */
+private data class RelatedLabel(val seriesId: String)

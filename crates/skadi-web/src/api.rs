@@ -2570,8 +2570,12 @@ pub struct SeriesRollup {
     pub name: String,
     #[serde(default)]
     pub series_asin: Option<String>,
+    /// Positioned members only (SKADI-T-0654).
     pub total: usize,
     pub owned: usize,
+    /// Members with no series position, shown under "Related" and not counted.
+    #[serde(default)]
+    pub related: usize,
     #[serde(default)]
     pub watched: bool,
 }

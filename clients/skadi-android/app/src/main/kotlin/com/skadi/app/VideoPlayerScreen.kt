@@ -16,6 +16,10 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -78,6 +82,8 @@ fun VideoPlayerScreen(
     val resumeAt = remember(progressKey) { progress.resumeAt(progressKey) }
     val trackPrefs = remember { com.skadi.core.TrackPreferences(context) }
     var showLanguages by remember { mutableStateOf(false) }
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var controlsShown by remember { mutableStateOf(true) }
     // Intro / credits from the episode's chapters (SKADI-T-0666), and the
     // position that decides when their buttons show.
     var markers by remember { mutableStateOf(com.skadi.core.SkipMarkers()) }
@@ -301,12 +307,28 @@ fun VideoPlayerScreen(
                     useController = true
                     setShowNextButton(false)
                     setShowPreviousButton(false)
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { vis ->
+                            controlsShown = vis == android.view.View.VISIBLE
+                        },
+                    )
+                    playerView = this
                 }
             },
             // A PiP window is too small for controls; the window has its own.
             update = { v -> v.useController = !Pip.inPip },
         )
         if (Pip.inPip) return@Box
+        // Touch gestures (SKADI-T-0667), only while the controls are hidden:
+        // with them showing, every touch belongs to them — the seek bar above
+        // all — so no swipe or double-tap can fight it.
+        if (!controlsShown) {
+            VideoGestures(
+                player = player,
+                activity = activity,
+                onSingleTap = { playerView?.showController() },
+            )
+        }
         LaunchedEffect(markers) {
             if (markers == com.skadi.core.SkipMarkers()) return@LaunchedEffect
             while (true) {
@@ -563,6 +585,116 @@ private fun <T> ChipRow(options: List<Pair<T, String>>, selected: T, onPick: (T)
                 selected = value == selected,
                 onClick = { onPick(value) },
                 label = { Text(label) },
+            )
+        }
+    }
+}
+
+/**
+ * Double-tap the left or right third to seek 10 s (taps in a row add up);
+ * swipe up and down on the left half for brightness, the right half for
+ * volume (SKADI-T-0667). Brightness is this window's only, and is handed back
+ * to the system when the player closes.
+ */
+@Composable
+private fun VideoGestures(player: Player, activity: Activity?, onSingleTap: () -> Unit) {
+    val context = LocalContext.current
+    val audio = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
+    val maxVolume = remember { audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var seekTotal by remember { mutableStateOf(0L) }
+    var lastSeekAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(feedback) {
+        if (feedback != null) {
+            kotlinx.coroutines.delay(800)
+            feedback = null
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.window?.let { w ->
+                w.attributes = w.attributes.apply {
+                    screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+            }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onSingleTap() },
+                    onDoubleTap = { o ->
+                        val dir = when (com.skadi.core.Gestures.zone(o.x, size.width.toFloat())) {
+                            com.skadi.core.Gestures.Zone.Left -> -1
+                            com.skadi.core.Gestures.Zone.Right -> 1
+                            com.skadi.core.Gestures.Zone.Middle -> 0
+                        }
+                        if (dir == 0) {
+                            if (player.isPlaying) player.pause() else player.play()
+                        } else {
+                            val now = System.currentTimeMillis()
+                            // Double-taps in quick succession add up: "-30s".
+                            seekTotal = if (now - lastSeekAt < 1_000 && (seekTotal < 0) == (dir < 0)) {
+                                seekTotal + dir * com.skadi.core.Gestures.SEEK_STEP_MS
+                            } else {
+                                dir * com.skadi.core.Gestures.SEEK_STEP_MS
+                            }
+                            lastSeekAt = now
+                            player.seekTo((player.currentPosition + dir * com.skadi.core.Gestures.SEEK_STEP_MS).coerceAtLeast(0L))
+                            feedback = (if (seekTotal < 0) "−" else "+") + "${kotlin.math.abs(seekTotal) / 1000}s"
+                        }
+                    },
+                )
+            }
+            .pointerInput(Unit) {
+                var left = true
+                var level = 0f
+                detectVerticalDragGestures(
+                    onDragStart = { o ->
+                        left = o.x < size.width / 2f
+                        level = if (left) {
+                            activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0f }
+                                ?: (android.provider.Settings.System.getInt(
+                                    context.contentResolver,
+                                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                    128,
+                                ) / 255f)
+                        } else {
+                            audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() / maxVolume
+                        }
+                    },
+                    onVerticalDrag = { _, dy ->
+                        level = com.skadi.core.Gestures.clampLevel(
+                            level + com.skadi.core.Gestures.levelDelta(dy, size.height.toFloat()),
+                        )
+                        if (left) {
+                            activity?.window?.let { w ->
+                                w.attributes = w.attributes.apply { screenBrightness = level.coerceAtLeast(0.01f) }
+                            }
+                            feedback = "Brightness ${(level * 100).toInt()}%"
+                        } else {
+                            audio.setStreamVolume(
+                                android.media.AudioManager.STREAM_MUSIC,
+                                com.skadi.core.Gestures.toSteps(level, maxVolume),
+                                0,
+                            )
+                            feedback = "Volume ${(level * 100).toInt()}%"
+                        }
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        feedback?.let {
+            Text(
+                it,
+                color = Color.White,
+                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
     }

@@ -19,7 +19,7 @@ class NameSortingTest {
         "Stephen King",
         "  Alan Lee  ",            // stray whitespace
         "Йозеф К",                 // non-ASCII first letter
-        "3 Body Problem Author",   // leading digit
+        "1984",                    // digits only
     )
 
     @Test
@@ -50,32 +50,57 @@ class NameSortingTest {
     }
 
     @Test
-    fun `a name beginning with an article keeps it — An Na is not Na`() {
-        // This is the case that made the bug visible, and the reason names do not
-        // reuse the title sort. "An" is part of the name.
-        assertEquals("an na", NameSorting.key("An Na"))
-        assertEquals('A', NameSorting.letter("An Na"))
+    fun `a name beginning with an article keeps it — An is part of the name`() {
+        // The case that made F2 visible, and the reason names do not reuse the
+        // title sort: "An" is a given name here, not an article to strip.
+        assertEquals("na an", NameSorting.key("An Na"))
+        assertEquals('N', NameSorting.letter("An Na"))
+    }
+
+    /**
+     * Surname order (SKADI-T-0648 F1). The same vector is in skadi-web
+     * (`audiobooks.rs`, `name_sort_key`), so the two clients order alike.
+     */
+    @Test
+    fun `authors order by surname`() {
+        val vector = listOf(
+            "Stephen King" to "king stephen",
+            "A. G. Riddle" to "riddle a. g.",
+            "Ursula K. Le Guin" to "le guin ursula k.",
+            "A. E. van Vogt" to "van vogt a. e.",
+            "Fritz Leiber Jr." to "leiber fritz",
+            "Fritz Leiber, Jr." to "leiber fritz",
+            "George R. Martin III" to "martin george r.",
+            "Hammett, Dashiell" to "hammett dashiell",
+            "Van Morrison" to "morrison van",
+            "bell hooks" to "hooks bell",
+            "Plato" to "plato",
+            "Full Cast" to "full cast",
+            "  Alan   Lee " to "lee alan",
+        )
+        for ((name, key) in vector) assertEquals(name, key, NameSorting.key(name))
+        assertEquals('K', NameSorting.letter("Stephen King"))
+        assertEquals('L', NameSorting.letter("Ursula K. Le Guin"))
     }
 
     @Test
     fun `case and surrounding whitespace do not change the order`() {
         assertEquals(NameSorting.key("alan lee"), NameSorting.key("  Alan LEE "))
-        assertEquals('A', NameSorting.letter("  alan lee"))
+        assertEquals('L', NameSorting.letter("  alan lee"))
     }
 
     @Test
     fun `names that do not start with a latin letter bucket together`() {
         assertEquals('#', NameSorting.letter("Йозеф К"))
-        assertEquals('#', NameSorting.letter("3 Body Problem Author"))
+        assertEquals('#', NameSorting.letter("1984"))
         assertEquals('#', NameSorting.letter(""))
         assertEquals('#', NameSorting.letter("   "))
     }
 
     @Test
     fun `lowercase author names are not re-cased`() {
-        // bell hooks must sort with the Bs and must not be title-cased anywhere
-        // on the way there.
-        assertEquals("bell hooks", NameSorting.key("bell hooks"))
-        assertEquals('B', NameSorting.letter("bell hooks"))
+        // bell hooks files under H, and must not be title-cased on the way there.
+        assertEquals("hooks bell", NameSorting.key("bell hooks"))
+        assertEquals('H', NameSorting.letter("bell hooks"))
     }
 }

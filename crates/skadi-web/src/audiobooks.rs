@@ -178,9 +178,60 @@ fn author_key(name: &str) -> String {
         .collect()
 }
 
+const NAME_PARTICLES: &[&str] = &[
+    "le", "la", "de", "du", "da", "di", "del", "della", "des", "van", "von", "der", "den", "ter",
+    "ten", "dos", "das", "st", "st.", "al", "el", "bin", "ibn",
+];
+const NAME_SUFFIXES: &[&str] = &[
+    "jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "phd", "ph.d.", "md", "m.d.",
+];
+const COLLECTIVE_CREDITS: &[&str] = &[
+    "full cast",
+    "various",
+    "various authors",
+    "anonymous",
+    "unknown author",
+];
+
+/// Sort key for a person's name, **surname first** (SKADI-T-0648 F1): "Stephen
+/// King" orders as "king stephen". Audnexus exposes no sort name, so the surname
+/// is derived — the last word plus any particles before it ("Le Guin", "van
+/// Vogt"), ignoring a suffix ("Jr.", "III"). "Surname, Given" is taken as
+/// written; collective credits ("Full Cast") keep their order. Mirrors the
+/// Android `NameSorting.key`; both test the same vector.
+pub fn name_sort_key(name: &str) -> String {
+    let n = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if n.is_empty() || COLLECTIVE_CREDITS.contains(&n.as_str()) {
+        return n;
+    }
+    if let Some((head, tail)) = n.split_once(", ")
+        && !NAME_SUFFIXES.contains(&tail.trim_end_matches(','))
+    {
+        return format!("{head} {tail}");
+    }
+    let mut words: Vec<&str> = n.split(' ').map(|w| w.trim_end_matches(',')).collect();
+    while words.len() > 1 && NAME_SUFFIXES.contains(words.last().expect("non-empty")) {
+        words.pop();
+    }
+    if words.len() == 1 {
+        return words[0].to_string();
+    }
+    let mut start = words.len() - 1;
+    while start > 1 && NAME_PARTICLES.contains(&words[start - 1]) {
+        start -= 1;
+    }
+    let mut out = words[start..].to_vec();
+    out.extend_from_slice(&words[..start]);
+    out.join(" ")
+}
+
 /// Group books by **primary author** (`authors[0]`) for the "organize by author" pivot
-/// (the author parallel to [`group_books_by_series`]). Authors sorted case-insensitively;
-/// books within each by title. Books with no author go under "Unknown author". Pure.
+/// (the author parallel to [`group_books_by_series`]). Authors sorted by surname
+/// ([`name_sort_key`]); books within each by title. Books with no author go under "Unknown author". Pure.
 pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<(String, Vec<api::Book>)> {
     let mut map: HashMap<String, Vec<api::Book>> = HashMap::new();
     for b in books {
@@ -196,7 +247,7 @@ pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<(String, Vec<api::Boo
     for (_, bs) in &mut groups {
         bs.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
     }
-    groups.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    groups.sort_by_cached_key(|g| name_sort_key(&g.0));
     groups
 }
 

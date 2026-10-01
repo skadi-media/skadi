@@ -21,8 +21,8 @@ use skadi_web::api::{WantedEdition, WantedItem};
 use skadi_web::audiobook_import::confidence_class;
 use skadi_web::audiobooks::{
     SeriesTile, book_byline, book_status, clean_overview, extract_asin, file_resettable,
-    group_books_by_series, has_series_position, looks_like_asin, merge_owned_missing, series_label,
-    split_related_tiles,
+    group_books_by_series, has_series_position, looks_like_asin, merge_owned_missing,
+    name_sort_key, series_label, split_related_tiles,
 };
 use skadi_web::dashboard::{book_counts, check_class, movie_counts};
 use skadi_web::movies::{
@@ -2326,4 +2326,28 @@ fn a_series_lists_its_numbered_members_then_the_related_ones() {
         titles(&related),
         vec!["Dangerous Women", "The Book of Swords"]
     );
+}
+
+/// Surname order (SKADI-T-0648 F1). The same vector is in the Android
+/// `NameSortingTest`, so the two clients order alike.
+#[wasm_bindgen_test]
+fn authors_order_by_surname() {
+    for (name, key) in [
+        ("Stephen King", "king stephen"),
+        ("A. G. Riddle", "riddle a. g."),
+        ("Ursula K. Le Guin", "le guin ursula k."),
+        ("A. E. van Vogt", "van vogt a. e."),
+        ("Fritz Leiber Jr.", "leiber fritz"),
+        ("Fritz Leiber, Jr.", "leiber fritz"),
+        ("George R. Martin III", "martin george r."),
+        ("Hammett, Dashiell", "hammett dashiell"),
+        ("Van Morrison", "morrison van"),
+        ("bell hooks", "hooks bell"),
+        ("Plato", "plato"),
+        ("Full Cast", "full cast"),
+        ("  Alan   Lee ", "lee alan"),
+        ("An Na", "na an"),
+    ] {
+        assert_eq!(name_sort_key(name), key, "{name}");
+    }
 }

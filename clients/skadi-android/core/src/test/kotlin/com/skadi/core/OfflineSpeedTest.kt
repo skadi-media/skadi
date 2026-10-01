@@ -38,4 +38,18 @@ class OfflineSpeedTest {
         assertNull(m.speed)
         assertEquals(3.0, m.positionS, 0.0)
     }
+
+    // --- SKADI-T-0660 ---
+
+    @Test
+    fun `skip silence and boost are stored per book and survive progress`() {
+        val s = store()
+        assertEquals(false, s.meta("f")!!.skipSilence)
+        s.updateAudio("f", skipSilence = true, boost = 2)
+        s.updateProgress("f", 10.0, finished = false)
+        assertEquals(true, s.meta("f")!!.skipSilence)
+        assertEquals(2, s.meta("f")!!.boost)
+        s.updateAudio("f", skipSilence = false, boost = 9)
+        assertEquals("clamped to high", 3, s.meta("f")!!.boost)
+    }
 }

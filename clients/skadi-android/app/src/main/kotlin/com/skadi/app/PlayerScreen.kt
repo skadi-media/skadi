@@ -111,6 +111,8 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
     var showSleepSheet by remember { mutableStateOf(false) }
     val playerSettings = remember { com.skadi.core.PlayerSettings(context) }
     var defaultSpeed by remember { mutableStateOf(playerSettings.defaultSpeed) }
+    var skipSilence by remember(fid) { mutableStateOf(meta?.skipSilence == true) }
+    var boost by remember(fid) { mutableStateOf(meta?.boost ?: 0) }
     var shakeToExtend by remember { mutableStateOf(playerSettings.shakeToExtend) }
 
     // Bind the controller; load the book if the service isn't already on it.
@@ -322,7 +324,7 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                         .padding(horizontal = 20.dp)
                         .padding(bottom = 28.dp),
                 ) {
-                    Text("Playback speed", style = MaterialTheme.typography.titleMedium)
+                    Text("Playback", style = MaterialTheme.typography.titleMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.padding(top = 8.dp),
@@ -361,6 +363,50 @@ fun PlayerScreen(fid: String, onBack: () -> Unit) {
                             },
                             enabled = kotlin.math.abs(speed - defaultSpeed) >= 0.01f,
                         ) { Text("Make ${trimSpeed(speed)}× the default") }
+                    }
+                    // Per book (SKADI-T-0660): a quiet recording or a narrator
+                    // with long pauses is a property of the book.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Skip silence", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Shortens pauses in this book.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = skipSilence,
+                            onCheckedChange = {
+                                skipSilence = it
+                                store.updateAudio(fid, skipSilence, boost)
+                                PlaybackService.audioOptionsChanged()
+                            },
+                        )
+                    }
+                    Text(
+                        "Volume boost",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 14.dp),
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        listOf("Off", "Low", "Medium", "High").forEachIndexed { level, label ->
+                            FilterChip(
+                                selected = boost == level,
+                                onClick = {
+                                    boost = level
+                                    store.updateAudio(fid, skipSilence, boost)
+                                    PlaybackService.audioOptionsChanged()
+                                },
+                                label = { Text(label) },
+                            )
+                        }
                     }
                 }
             }

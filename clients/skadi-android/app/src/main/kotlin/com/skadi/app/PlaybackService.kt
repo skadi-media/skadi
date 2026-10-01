@@ -51,6 +51,9 @@ class PlaybackService : MediaSessionService() {
 
     private val sleepTick = Runnable { onSleepTick() }
     private lateinit var settings: PlayerSettings
+    private var exo: ExoPlayer? = null
+    private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
+    private var boostLevel = 0
     private var shake: ShakeDetector? = null
 
     override fun onCreate() {
@@ -68,7 +71,16 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setHandleAudioBecomingNoisy(true)
             .build()
+        exo = player
         player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                applyAudioOptions()
+            }
+
+            // The enhancer is bound to an audio session; a new session needs a
+            // new one.
+            override fun onAudioSessionIdChanged(audioSessionId: Int) = applyBoost(boostLevel, force = true)
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 sleep.onPlayingChanged(isPlaying)
                 scheduleSleep()
@@ -162,7 +174,41 @@ class PlaybackService : MediaSessionService() {
         } else if (!wantShake) {
             stopShake()
         }
-        handler.postDelayed(sleepTick, SleepTimer.nextTickMs(ms))
+        var next = SleepTimer.nextTickMs(ms)
+        // With skip silence on, audio runs ahead of the wall-clock estimate by
+        // however much silence is cut, so End of chapter is checked often
+        // rather than trusted to the estimate (SKADI-T-0660).
+        if (sleep.mode == SleepTimer.Mode.EndOfChapter && exo?.skipSilenceEnabled == true) {
+            next = minOf(next, 500L)
+        }
+        handler.postDelayed(sleepTick, next)
+    }
+
+    /**
+     * Apply the current book's skip-silence and boost choices (SKADI-T-0660).
+     * They are ExoPlayer and audio-effect settings that a MediaController
+     * cannot reach, so the service owns them and reads them from the book.
+     */
+    private fun applyAudioOptions() {
+        val p = exo ?: return
+        val book = p.currentMediaItem?.mediaId?.let { store.meta(it) }
+        p.skipSilenceEnabled = book?.skipSilence == true
+        applyBoost(book?.boost ?: 0)
+    }
+
+    private fun applyBoost(level: Int, force: Boolean = false) {
+        if (level == boostLevel && !force && (level == 0 || enhancer != null)) return
+        boostLevel = level
+        enhancer?.release()
+        enhancer = null
+        val sessionId = exo?.audioSessionId ?: return
+        if (level == 0 || sessionId == C.AUDIO_SESSION_ID_UNSET) return
+        enhancer = runCatching {
+            android.media.audiofx.LoudnessEnhancer(sessionId).apply {
+                setTargetGain(BOOST_MB[level])
+                enabled = true
+            }
+        }.onFailure { android.util.Log.w("skadi", "volume boost unavailable: $it") }.getOrNull()
     }
 
     /** Full volume and no shake listener: the state outside a fade. */
@@ -230,6 +276,8 @@ class PlaybackService : MediaSessionService() {
         handler.removeCallbacks(persist)
         handler.removeCallbacks(sleepTick)
         stopShake()
+        enhancer?.release()
+        enhancer = null
         savePosition()
         session?.run {
             player.release()
@@ -263,6 +311,14 @@ class PlaybackService : MediaSessionService() {
             sleep.armEndOfChapter()
             instance?.scheduleSleep()
         }
+
+        /** The current book's audio options changed; apply them now. */
+        fun audioOptionsChanged() {
+            instance?.applyAudioOptions()
+        }
+
+        /** LoudnessEnhancer target gain in millibels for boost levels 0..3. */
+        private val BOOST_MB = intArrayOf(0, 600, 1200, 1800)
 
         fun cancelSleep() {
             sleep.cancel()

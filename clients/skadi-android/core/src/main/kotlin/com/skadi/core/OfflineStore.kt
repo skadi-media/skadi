@@ -41,6 +41,10 @@ data class OfflineBook(
      * because the right speed depends on the narrator.
      */
     val speed: Float? = null,
+    /** Skip silences while playing (SKADI-T-0660). */
+    @SerialName("skip_silence") val skipSilence: Boolean = false,
+    /** Volume boost: 0 off, 1 low, 2 medium, 3 high (SKADI-T-0660). */
+    val boost: Int = 0,
 )
 
 class OfflineStore(private val root: File) {
@@ -118,6 +122,12 @@ class OfflineStore(private val root: File) {
         val m = meta(fid) ?: return
         if (m.speed == speed) return
         saveMeta(m.copy(speed = speed))
+    }
+
+    /** Remember this book's skip-silence and boost choices (SKADI-T-0660). */
+    fun updateAudio(fid: String, skipSilence: Boolean, boost: Int) {
+        val m = meta(fid) ?: return
+        saveMeta(m.copy(skipSilence = skipSilence, boost = boost.coerceIn(0, 3)))
     }
 
     /**

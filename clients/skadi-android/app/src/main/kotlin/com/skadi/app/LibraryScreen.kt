@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.skadi.core.Book
 import com.skadi.core.BookActionPolicy
+import com.skadi.core.NameSorting
 import com.skadi.core.OfflineBook
 import com.skadi.core.OfflineStore
 import com.skadi.core.SkadiApi
@@ -332,7 +333,12 @@ fun LibraryScreen(
                 .values
                 .map { pairs -> Triple(pairs.first().first, pairs.count { it.second.importedFileId != null }, pairs.count { it.second.importedFileId == null }) }
                 .filter { (n, _, _) -> q.isEmpty() || n.lowercase().contains(q) }
-                .sortedBy { it.first.lowercase() }
+                // NameSorting, not the title sort: the rail below takes its
+                // letters from the same object, so the two cannot disagree.
+                // This list used to sort on a plain lowercase name while the
+                // rail lettered with the article-stripping `sortLetter`, which
+                // filed "An Na" under A and labelled it N (SKADI-T-0648 F2).
+                .sortedBy { NameSorting.key(it.first) }
             if (authors.isEmpty()) { EmptyState(if (q.isNotEmpty()) "No authors match “$query”." else "No audiobooks in the library."); return@Column }
             // Same row shape as the TV list, with the rail (SKADI-T-0609): an
             // author's first cover as the thumbnail, name, owned/wanted line.
@@ -361,7 +367,7 @@ fun LibraryScreen(
                     }
                 }
                 AlphabetRail(
-                    letters = remember(authors) { authors.map { sortLetter(it.first) } },
+                    letters = remember(authors) { authors.map { NameSorting.letter(it.first) } },
                     onJump = { i -> scope.launch { listState.scrollToItem(i) } },
                 )
             }

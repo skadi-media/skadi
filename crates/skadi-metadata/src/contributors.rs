@@ -80,13 +80,20 @@ pub fn split_role(raw: &str) -> (String, Option<ContributorRole>) {
                 .map(str::trim)
                 .filter(|p| !p.is_empty())
                 .collect();
-            let roles: Option<Vec<ContributorRole>> =
-                parts.iter().map(|p| ContributorRole::parse(p)).collect();
-            if let Some(roles) = roles
-                && let Some(first) = roles.first()
-                && !name.is_empty()
-            {
-                return (name.to_string(), Some(*first));
+            // "author" is a recognised word too, and it wins: a suffix such as
+            // "editor/author" — a real string Audible returns for George R. R.
+            // Martin, found by the live check in SKADI-T-0650 — means the person
+            // IS an author, so they are kept as a plain one.
+            let is_author = |p: &str| p.trim().eq_ignore_ascii_case("author");
+            let all_known = parts
+                .iter()
+                .all(|p| is_author(p) || ContributorRole::parse(p).is_some());
+            if all_known && !parts.is_empty() && !name.is_empty() {
+                if parts.iter().any(|p| is_author(p)) {
+                    return (name.to_string(), None);
+                }
+                let first = ContributorRole::parse(parts[0]).expect("checked above");
+                return (name.to_string(), Some(first));
             }
             break;
         }
@@ -223,6 +230,30 @@ mod tests {
         assert_eq!(
             split_role("Ken Liu - editor, genius"),
             ("Ken Liu - editor, genius".into(), None)
+        );
+    }
+
+    /// The live Audible catalog returns "George R. R. Martin - editor/author"
+    /// (found by the SKADI-T-0650 live check). "author" in the suffix means the
+    /// person is an author: strip the suffix, keep them as a plain author.
+    #[test]
+    fn an_author_credit_in_the_suffix_makes_them_a_plain_author() {
+        assert_eq!(
+            split_role("George R. R. Martin - editor/author"),
+            ("George R. R. Martin".into(), None)
+        );
+        assert_eq!(split_role("Jo March - Author"), ("Jo March".into(), None));
+        assert_eq!(
+            split_role("Jo March - author, editor"),
+            ("Jo March".into(), None)
+        );
+        assert_eq!(
+            select_author_names([
+                "George R. R. Martin - editor/author".to_string(),
+                "Gardner Dozois - editor".to_string(),
+            ]),
+            vec!["George R. R. Martin"],
+            "he is a plain author, so the editor-only fallback does not apply"
         );
     }
 

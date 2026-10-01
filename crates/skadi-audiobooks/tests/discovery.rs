@@ -311,3 +311,64 @@ async fn the_pass_budget_counts_pages_and_a_cut_off_author_resumes() {
         "every work from every page was kept"
     );
 }
+
+/// **Live** check against the real Audible catalog (SKADI-T-0650, SKADI-T-0652).
+/// `#[ignore]`d because it needs the network; run it deliberately with
+/// `cargo test -p skadi-audiobooks --test discovery -- --ignored live_`.
+///
+/// Runs the shipped code path — `ingest_author_works` with a real
+/// `AudibleCatalogProvider` — into a test database. The lab stack was the planned
+/// place for this, but on 2026-09-30 its network could not reach Audible.
+#[tokio::test]
+#[ignore = "hits the live Audible catalog"]
+async fn live_george_r_r_martin_ingests_the_english_ice_and_fire_novels() {
+    let db = TestDb::new(SQLITE_MIGRATIONS, skadi_audiobooks::POSTGRES_MIGRATIONS).await;
+    let store = db.store.clone();
+    let catalog = AudibleCatalogProvider::new(
+        skadi_http::HttpClient::new(std::time::Duration::from_secs(30)).unwrap(),
+    );
+    let grrm = AsinId("B000APIGH4".into());
+
+    let (n, _) =
+        skadi_audiobooks::ingest_author_works(&store, &catalog, "George R. R. Martin", Some(&grrm))
+            .await
+            .unwrap();
+    let works = skadi_audiobooks::WorksRepo::list_all_works(&store)
+        .await
+        .unwrap();
+    eprintln!("ingested {n} English works");
+
+    // English editions of A Song of Ice and Fire #1–#5, observed on Audible
+    // pages 1 and 2 on 2026-09-30. None were on page 0, the only page read before.
+    for (pos, asin, title) in [
+        ("1", "B002UZZ93G", "A Game of Thrones"),
+        ("2", "B002UZKIBO", "A Clash of Kings"),
+        ("3", "B0036NQ9Z8", "A Storm of Swords"),
+        ("4", "B006LPIVL8", "A Feast for Crows"),
+        ("5", "B0057POQJE", "A Dance with Dragons"),
+    ] {
+        let w = works
+            .iter()
+            .find(|w| w.asin.0 == asin)
+            .unwrap_or_else(|| panic!("#{pos} {title} ({asin}) was not ingested"));
+        assert_eq!(w.series_position.as_deref(), Some(pos), "{title}");
+        assert_eq!(w.language.as_deref(), Some("english"), "{title}");
+    }
+    assert!(
+        works
+            .iter()
+            .all(|w| w.language.as_deref() == Some("english")),
+        "no translation was stored"
+    );
+
+    // SKADI-T-0652: Dangerous Women's editors arrive as plain names.
+    if let Some(dw) = works.iter().find(|w| w.asin.0 == "B00GXJN3U6") {
+        assert_eq!(dw.authors, vec!["George R. R. Martin", "Gardner Dozois"]);
+    }
+    let suffixed: Vec<&String> = works
+        .iter()
+        .flat_map(|w| &w.authors)
+        .filter(|a| a.contains(" - editor"))
+        .collect();
+    assert!(suffixed.is_empty(), "role suffixes survived: {suffixed:?}");
+}

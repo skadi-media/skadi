@@ -312,9 +312,12 @@ async fn create_author(
     Ok((StatusCode::CREATED, Json(author)).into_response())
 }
 
-/// `GET /audiobooks/series` — series completeness rollups from the known-works
-/// catalog (SKADI-I-0018): per series, total known works vs how many are owned,
-/// keyed by series name (the join the library UI uses). Watched flag included.
+/// `GET /audiobooks/series` — series completeness rollups (SKADI-I-0018): per
+/// series, how many members there are and how many the library holds, keyed by
+/// series name (the join the library UI uses). Watched flag included.
+///
+/// Members are known works **and** library books, merged (SKADI-T-0651). See
+/// [`rollup_series`].
 async fn list_series(State(http): State<AudiobooksHttp>) -> Result<impl IntoResponse, ApiError> {
     let works: Vec<_> = http
         .store
@@ -324,52 +327,131 @@ async fn list_series(State(http): State<AudiobooksHttp>) -> Result<impl IntoResp
         .into_iter()
         .filter(|w| shown_language(w.language.as_deref()))
         .collect();
-    // Owned = a `books` row exists with the work's ASIN.
     let books = http
         .store
         .list_books(BookFilter::default())
         .await
         .map_err(ApiError)?;
-    let owned: std::collections::HashSet<String> = books
-        .iter()
-        .filter_map(|b| b.external_ids.asin.as_ref().map(|a| a.0.clone()))
-        .collect();
     let watchers = http.store.list_watchers().await.unwrap_or_default();
     let watched_series: std::collections::HashSet<String> = watchers
         .iter()
         .filter(|w| w.scope == WatchScope::Series)
         .map(|w| w.key.clone())
         .collect();
+    Ok(Json(rollup_series(&works, &books, &watched_series)))
+}
 
-    // Group works by series (skip works with no series).
-    let mut by_series: std::collections::HashMap<String, SeriesRollupDto> =
-        std::collections::HashMap::new();
+/// Build the series rollups from known works and library books together
+/// (SKADI-T-0651).
+///
+/// This used to count the known-works store alone, so a book that was in the
+/// library and in a series but that discovery had never found did not count at
+/// all. *A Game of Thrones* — owned, position 1 — was invisible to *A Song of Ice
+/// and Fire*, whose rollup read `total 2, owned 1` from two anthologies.
+///
+/// - **Members** = works carrying the series ∪ library books whose
+///   `series.name` is the series. Deduplicated by **book ASIN**; a library book
+///   with no ASIN is its own member.
+/// - **Owned** = a library row exists for the member. That is the rule the web's
+///   tiles already use (`merge_owned_missing` shows every library row as owned),
+///   so the count and the tiles agree. It is not "on disk": a book a watcher has
+///   queued but not yet downloaded is a library row too.
+/// - **Join.** Library books carry a series *name* but no series ASIN, so books
+///   join rollups by series name, compared case- and whitespace-insensitively.
+///   When books gain a series ASIN, join on that first.
+/// - Membership with no position counts here like any other; how unpositioned
+///   members count is SKADI-T-0654.
+fn rollup_series(
+    works: &[crate::work::Work],
+    books: &[Book],
+    watched_series: &std::collections::HashSet<String>,
+) -> Vec<SeriesRollupDto> {
+    use std::collections::{HashMap, HashSet};
+
+    fn key(name: &str) -> String {
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    }
+
+    struct Acc {
+        name: String,
+        series_asin: Option<String>,
+        members: HashSet<String>,
+        owned: HashSet<String>,
+        watched: bool,
+    }
+    let mut by_series: HashMap<String, Acc> = HashMap::new();
+    let acc = |by: &mut HashMap<String, Acc>, name: &str| -> String {
+        let k = key(name);
+        by.entry(k.clone()).or_insert_with(|| Acc {
+            name: name.trim().to_string(),
+            series_asin: None,
+            members: HashSet::new(),
+            owned: HashSet::new(),
+            watched: false,
+        });
+        k
+    };
+
+    // ASIN -> the library holds it.
+    let held: HashSet<&str> = books
+        .iter()
+        .filter_map(|b| b.external_ids.asin.as_ref().map(|a| a.0.as_str()))
+        .collect();
+
     for w in works {
-        let Some(name) = w.series_name.clone() else {
+        let Some(name) = w.series_name.as_deref() else {
             continue;
         };
-        let entry = by_series
-            .entry(name.clone())
-            .or_insert_with(|| SeriesRollupDto {
-                name,
-                series_asin: w.series_asin.as_ref().map(|a| a.0.clone()),
-                total: 0,
-                owned: 0,
-                watched: false,
-            });
-        entry.total += 1;
-        if owned.contains(&w.asin.0) {
-            entry.owned += 1;
+        let k = acc(&mut by_series, name);
+        let e = by_series.get_mut(&k).expect("just inserted");
+        if e.series_asin.is_none() {
+            e.series_asin = w.series_asin.as_ref().map(|a| a.0.clone());
+        }
+        e.members.insert(w.asin.0.clone());
+        if held.contains(w.asin.0.as_str()) {
+            e.owned.insert(w.asin.0.clone());
         }
         if let Some(sa) = w.series_asin.as_ref()
             && watched_series.contains(&sa.0)
         {
-            entry.watched = true;
+            e.watched = true;
         }
     }
-    let mut out: Vec<SeriesRollupDto> = by_series.into_values().collect();
+
+    for b in books {
+        let Some(series) = b.series.as_ref() else {
+            continue;
+        };
+        if series.name.trim().is_empty() {
+            continue;
+        }
+        let k = acc(&mut by_series, &series.name);
+        let e = by_series.get_mut(&k).expect("just inserted");
+        // Same ASIN as a work → the same member, counted once.
+        let member = b
+            .external_ids
+            .asin
+            .as_ref()
+            .map_or_else(|| format!("book:{}", b.id), |a| a.0.clone());
+        e.members.insert(member.clone());
+        e.owned.insert(member);
+    }
+
+    let mut out: Vec<SeriesRollupDto> = by_series
+        .into_values()
+        .map(|a| SeriesRollupDto {
+            name: a.name,
+            series_asin: a.series_asin,
+            total: a.members.len(),
+            owned: a.owned.len(),
+            watched: a.watched,
+        })
+        .collect();
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    Ok(Json(out))
+    out
 }
 
 /// `GET /watchers` — all active watchers.
@@ -2474,6 +2556,115 @@ mod tests {
         assert_eq!(parse_byte_range(Some("bytes=50-40"), 100), None);
         assert_eq!(parse_byte_range(Some("bytes=0-1,5-9"), 100), None);
         assert_eq!(parse_byte_range(Some("elephants=1-2"), 100), None);
+    }
+
+    // --- SKADI-T-0651: series rollups merge library books with known works ---
+
+    fn work(asin: &str, series: &str) -> crate::work::Work {
+        let mut w = crate::work::Work::new(AsinId(asin.into()), asin);
+        w.series_name = Some(series.into());
+        w.series_asin = Some(AsinId("SERIES".into()));
+        w
+    }
+
+    fn lib_book(asin: Option<&str>, series: &str, position: Option<&str>) -> Book {
+        let mut b = Book::new(
+            ExternalIds {
+                asin: asin.map(|a| AsinId(a.into())),
+                ..Default::default()
+            },
+            asin.unwrap_or("no-asin"),
+            ProfileId::new(),
+            RootFolder::new("/audiobooks"),
+        );
+        b.series = Some(crate::author::SeriesLink {
+            series_id: skadi_core::BookSeriesId::new(),
+            name: series.into(),
+            position: position.map(str::to_string),
+        });
+        b
+    }
+
+    fn rollup(works: &[crate::work::Work], books: &[Book]) -> Vec<SeriesRollupDto> {
+        rollup_series(works, books, &std::collections::HashSet::new())
+    }
+
+    #[test]
+    fn a_work_and_a_library_book_with_different_asins_are_two_members() {
+        let r = rollup(
+            &[work("W1", "Saga")],
+            &[lib_book(Some("B1"), "Saga", Some("1"))],
+        );
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            (r[0].total, r[0].owned),
+            (2, 1),
+            "the library book is a member and owned"
+        );
+    }
+
+    #[test]
+    fn the_same_asin_as_a_work_and_a_book_is_one_member() {
+        let r = rollup(
+            &[work("B1", "Saga")],
+            &[lib_book(Some("B1"), "Saga", Some("1"))],
+        );
+        assert_eq!((r[0].total, r[0].owned), (1, 1));
+    }
+
+    #[test]
+    fn a_library_series_with_no_known_works_still_gets_a_rollup() {
+        let r = rollup(&[], &[lib_book(Some("B1"), "Unindexed Saga", Some("1"))]);
+        assert_eq!(
+            r.len(),
+            1,
+            "discovery never saw this series, the library did"
+        );
+        assert_eq!(r[0].name, "Unindexed Saga");
+        assert_eq!((r[0].total, r[0].owned), (1, 1));
+        assert_eq!(r[0].series_asin, None);
+    }
+
+    #[test]
+    fn library_books_join_by_name_ignoring_case_and_spacing() {
+        let r = rollup(
+            &[work("W1", "A Song of Ice and Fire")],
+            &[lib_book(Some("B1"), "a song of  ice and fire ", Some("1"))],
+        );
+        assert_eq!(r.len(), 1, "one series, not two");
+        assert_eq!(r[0].total, 2);
+    }
+
+    #[test]
+    fn a_library_book_without_an_asin_is_its_own_member() {
+        let r = rollup(
+            &[],
+            &[
+                lib_book(None, "Saga", Some("1")),
+                lib_book(None, "Saga", Some("2")),
+            ],
+        );
+        assert_eq!((r[0].total, r[0].owned), (2, 2));
+    }
+
+    /// The case that exposed it, from production data on 2026-09-30: the works
+    /// store knew two anthologies and not A Game of Thrones, and the rollup read
+    /// `total 2, owned 1`.
+    #[test]
+    fn a_song_of_ice_and_fire_counts_the_owned_first_novel() {
+        let asoiaf = "A Song of Ice and Fire";
+        let works = [work("B00GXJN3U6", asoiaf), work("B0756MFZTR", asoiaf)];
+        let books = [
+            lib_book(Some("B002UZZ93G"), asoiaf, Some("1")), // A Game of Thrones
+            lib_book(Some("B00GXJN3U6"), asoiaf, None),      // Dangerous Women
+        ];
+        let r = rollup(&works, &books);
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            r[0].total, 3,
+            "Dangerous Women + Book of Swords + A Game of Thrones"
+        );
+        assert_eq!(r[0].owned, 2, "A Game of Thrones now counts as owned");
     }
 
     #[test]

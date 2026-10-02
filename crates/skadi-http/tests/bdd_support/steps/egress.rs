@@ -317,24 +317,42 @@ async fn client_under_proxy(w: &mut World) {
 #[then(expr = "the client can be configured to egress via the proxy {string}")]
 async fn explicit_proxy(_w: &mut World, proxy: String) {
     use std::time::Duration;
-    let client = skadi_http::HttpClient::with_proxy(
+    // The proxy named in the scenario must at least build a client.
+    skadi_http::HttpClient::with_proxy(
         Duration::from_secs(5),
         skadi_http::RetryConfig::default(),
         &proxy,
         &["nas.local".to_string()],
     )
     .expect("a valid proxy URL builds a client");
-    // The proxy is real enough to be used: a request to a host that is not
-    // bypassed must go to it (nothing is listening, so it fails at connect —
-    // which is itself the proof that it did not go direct).
-    let err = client
-        .get_text("http://example.invalid/x")
-        .await
-        .expect_err("no proxy is listening, so this must fail");
-    assert!(
-        matches!(err, skadi_core::AppError::Network(_)),
-        "expected a transport failure through the proxy, got {err:?}"
-    );
+
+    // Then prove the traffic really goes to the proxy, with one we run here: a
+    // local mock answers the proxied request for a host that does not exist.
+    // A direct request could only fail, so an answer means it went via the
+    // proxy. This used to send the request to the scenario's proxy itself
+    // ("http://gluetun:8888"), which needed DNS for that name on whatever
+    // machine ran the suite — and once hung a release build for over two hours
+    // in CI — while proving nothing: going direct fails the same way.
+    let local_proxy = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::path("/x"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("via proxy"))
+        .mount(&local_proxy)
+        .await;
+    let client = skadi_http::HttpClient::with_proxy(
+        Duration::from_secs(5),
+        skadi_http::RetryConfig::default(),
+        &local_proxy.uri(),
+        &[],
+    )
+    .expect("client");
+    let body = tokio::time::timeout(
+        Duration::from_secs(30),
+        client.get_text("http://example.invalid/x"),
+    )
+    .await
+    .expect("a proxied request must not hang")
+    .expect("the proxy answers for a host that cannot be reached directly");
+    assert_eq!(body, "via proxy");
 
     // A malformed proxy is a config error, not a silent fall-back to direct
     // egress — silently ignoring it is how traffic leaks past a VPN.

@@ -17,6 +17,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +56,7 @@ jobs:
   test-unit:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: check
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +79,7 @@ jobs:
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: check
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +102,7 @@ jobs:
   test-store-dual-backend:
     name: Store (SQLite + Postgres)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: check
     services:
       postgres:
@@ -140,6 +144,9 @@ jobs:
   test-bdd:
     name: BDD (cucumber, @gap/@lab excluded)
     runs-on: ubuntu-latest
+    # A hung scenario once held a release for over two hours (SKADI-T-0669);
+    # GitHub's default is six. About 3x the normal maximum for each job.
+    timeout-minutes: 40
     needs: check
     steps:
       - uses: actions/checkout@v4
@@ -185,6 +192,7 @@ jobs:
   compose-config:
     name: Compose renders (base, +lab, +nas)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # No `needs: check` — this validates YAML and env interpolation, not Rust, so
     # it should still report when the code does not compile. That is exactly when
     # a deploy-time-only failure is most expensive to discover.
@@ -197,6 +205,7 @@ jobs:
   test-functional:
     name: Functional Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: check
     steps:
       - uses: actions/checkout@v4
@@ -218,6 +227,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Coverage is a report, not a gate. It failed every run for months while
     # every test job passed, which made red the resting state of this workflow —
     # so a real regression looked exactly like the standing failure, and telling
@@ -276,6 +286,7 @@ jobs:
     # platform nothing deploys to is the wrong trade (2026-09-23). Development
     # on macOS is still covered by `cargo check` locally.
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     needs: check
     steps:
       - uses: actions/checkout@v4

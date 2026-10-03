@@ -457,6 +457,10 @@ pub enum RejectReason {
     /// Movie year gate: the release names a year outside `request.year ± 1`
     /// (SKADI-T-0387).
     Year,
+    /// A dub or machine reading into a language this library does not want:
+    /// Russian/Ukrainian dub groups, `rus`/`ukr` tags, speech-synthesis audio
+    /// (SKADI-T-0671).
+    Language,
 }
 
 impl RejectReason {
@@ -473,6 +477,7 @@ impl RejectReason {
             Self::Relevance => "relevance",
             Self::Episode => "episode",
             Self::Year => "year",
+            Self::Language => "language",
         }
     }
 
@@ -953,6 +958,117 @@ fn not_an_audiobook(release_title: &str) -> bool {
     web_dl || episode || tokens.iter().any(|t| MARKERS.contains(t))
 }
 
+/// What a release name says about its audio language (SKADI-T-0671).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LanguageSignal {
+    /// English, multi-language, or nothing said — the normal case.
+    Fine,
+    /// Tagged only with another language. Kept, but ranked below every
+    /// [`Fine`](Self::Fine) release: the library does not record a title's
+    /// original language, so a Korean film tagged `KOREAN` must still be
+    /// grabbable when that is all there is.
+    ForeignOnly,
+    /// A dub or machine reading this library never wants.
+    Reject,
+}
+
+/// Read the audio language from a release name (SKADI-T-0671).
+///
+/// Rejects outright only on signals that are never a title's original audio
+/// here: the Russian/Ukrainian dub groups that a general tracker served for
+/// English shows on 2026-10-02 (ColdFilm, LostFilm …), bare `rus`/`ukr` tags,
+/// and speech-synthesis readings ("Yandex SpeechKit"). Any English, MULTi or
+/// dual-audio marker wins over a foreign tag. The script of the post is not a
+/// signal: "Терри Гудкайнд / Terry Goodkind - Confessor [Sam Tsoutsouvas]" is an
+/// English reading on a Russian tracker and stays [`Fine`](LanguageSignal::Fine).
+fn language_signal(release_title: &str) -> LanguageSignal {
+    const DUB_GROUPS: &[&str] = &[
+        "coldfilm",
+        "lostfilm",
+        "newstudio",
+        "baibako",
+        "alexfilm",
+        "jaskier",
+        "kubik",
+        "hdrezka",
+        "rezka",
+        "rudub",
+        "amedia",
+        "novafilm",
+        "ideafilm",
+    ];
+    const SYNTHETIC: &[&str] = &["speechkit", "tts"];
+    const RU_UK: &[&str] = &["rus", "ukr", "russian", "ukrainian"];
+    const ENGLISH: &[&str] = &["eng", "english", "multi", "dual", "dualaudio", "en"];
+    const FOREIGN: &[&str] = &[
+        "ita",
+        "italian",
+        "ger",
+        "german",
+        "deutsch",
+        "fre",
+        "french",
+        "truefrench",
+        "vff",
+        "vfq",
+        "vf2",
+        "spa",
+        "spanish",
+        "castellano",
+        "latino",
+        "pol",
+        "polish",
+        "lektor",
+        "cze",
+        "czech",
+        "hun",
+        "hungarian",
+        "tur",
+        "turkish",
+        "hindi",
+        "tamil",
+        "telugu",
+        "portuguese",
+        "dublado",
+        "nordic",
+        "swedish",
+        "danish",
+        "norwegian",
+        "finnish",
+        "korean",
+        "japanese",
+        "chinese",
+        "mandarin",
+        "cantonese",
+        "thai",
+        "vietnamese",
+        "arabic",
+        "hebrew",
+        "greek",
+        "dutch",
+    ];
+    let lower = release_title.to_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let has = |set: &[&str]| tokens.iter().any(|t| set.contains(t));
+    if has(DUB_GROUPS) || has(SYNTHETIC) {
+        return LanguageSignal::Reject;
+    }
+    // "Dual-Audio" splits into "dual" + "audio"; "ITA-ENG" into "ita" + "eng".
+    if has(ENGLISH) {
+        return LanguageSignal::Fine;
+    }
+    if has(RU_UK) {
+        return LanguageSignal::Reject;
+    }
+    if has(FOREIGN) {
+        return LanguageSignal::ForeignOnly;
+    }
+    LanguageSignal::Fine
+}
+
 /// Whether a release's Torznab category is a plausible top-level group for the
 /// wanted media kind (SKADI-T-0360). Torznab groups by thousands: 2000 Movies,
 /// 3000 Audio, 4000 PC/Games, 5000 TV, 6000 XXX, 7000 Books, 8000 Other. A game
@@ -1429,7 +1545,9 @@ pub fn decide_with(
     // rank, revision, fscore, priority, seeders, age). `above_floor` and
     // `seeder_band` are 0 for everything when the reachability policy is off,
     // which collapses the key to the quality-first order (SKADI-T-0598).
-    type Key = (u8, u8, u8, u8, usize, u8, i32, u32, u32, u32);
+    // `lang_ok` (SKADI-T-0671) leads: a release tagged only with a foreign
+    // language loses to any other, however relevant or high-quality it is.
+    type Key = (u8, u8, u8, u8, u8, usize, u8, i32, u32, u32, u32);
     let mut best: Option<(Key, usize)> = None;
     let mut accepted: Vec<(Key, usize)> = Vec::new();
     let want_titles = &state.request.titles;
@@ -1473,6 +1591,16 @@ pub fn decide_with(
             tally.reject(RejectReason::Size);
             continue;
         }
+        // Language (SKADI-T-0671): dubs this library never wants are dropped;
+        // a release tagged only with another language ranks below every other.
+        let lang_ok: u8 = match language_signal(&release.title) {
+            LanguageSignal::Reject => {
+                tally.reject(RejectReason::Language);
+                continue;
+            }
+            LanguageSignal::ForeignOnly => 0,
+            LanguageSignal::Fine => 1,
+        };
         let explanation = explain(release, scoring);
         // Accepted ⇒ the quality is allowed, so `quality_rank` is `Some`.
         let ranked = if explanation.accepted {
@@ -1610,6 +1738,7 @@ pub fn decide_with(
             (0, 0)
         };
         let key: Key = (
+            lang_ok,
             bucket,
             year_ok,
             above_floor,
@@ -5102,6 +5231,82 @@ mod tests {
         reparse_tv(std::slice::from_mut(&mut anime));
         assert_eq!(anime.parsed.resolution.as_deref(), Some("1080p"));
         assert_eq!(anime.parsed.absolute, vec![14]);
+    }
+
+    /// SKADI-T-0671: the release names served on 2026-10-02.
+    #[test]
+    fn language_signal_reads_the_production_names() {
+        use LanguageSignal::*;
+        for dub in [
+            "True Detective S03E01 1080p ColdFilm",
+            "The Terror S02E02 1080p rus LostFilm TV mkv",
+            "Patriot S01E06 1080p rus LostFilm TV mkv",
+            "Into the Badlands S03E14 720p WEB rus LostFilm TV",
+            "The Eleventh Rule of the Wizard, or the Confessor - Terry Goodkind [Audiobook, Yandex SpeechKit (Filipp), 2020]",
+        ] {
+            assert_eq!(language_signal(dub), Reject, "{dub}");
+        }
+        for english in [
+            "Терри Гудкайнд / Terry Goodkind - Одиннадцатое Правило, Исповедница / Confessor [Sam Tsoutsouvas, 2007]",
+            "Terry Goodkind - The Law of Nines / Терри Гудкайнд - Закон девяток [Марк Дикенс , 2009 , 128 kbps]",
+            "True Detective S03E02 Kiss Tomorrow Goodbye REPACK 720p AMZN WEBRip DDP5 1 x264-NTb",
+            "PLUTO S01 1080p NF WEB-DL DDP5.1 H 264-VARYG (Dual-Audio, Multi-Subs)",
+            "Paradise.2025.S01.1080p.ITA-ENG.MULTI.WEBRip.x265.AAC-V3SP4EV3R",
+            "The Terror S02E03 iTALiAN MULTi 1080p WEB x264 M109",
+            "Lazarus S01E06 DUBBED 1080p WEB H264-SuccessfulCrab EZTV",
+        ] {
+            assert_eq!(language_signal(english), Fine, "{english}");
+        }
+        assert_eq!(
+            language_signal("The.Wailing.2016.KOREAN.1080p.BluRay.x264"),
+            ForeignOnly
+        );
+        assert_eq!(
+            language_signal("Some Show S01E01 iTALiAN 1080p WEB"),
+            ForeignOnly
+        );
+    }
+
+    /// SKADI-T-0671 end to end: the Russian dub is rejected even with ten times
+    /// the seeders, and a release tagged only Italian loses to an English one
+    /// of lower quality — but wins when it is all there is.
+    #[test]
+    fn decide_drops_dubs_and_ranks_foreign_only_releases_last() {
+        let (profile, defs) = profile_with_two_ranks();
+        let scoring = Scoring {
+            indexer_flags: &[],
+            definitions: &defs,
+            profile: &profile,
+            formats: &[],
+            min_seeders: 0,
+            blocklisted: &HashSet::new(),
+            audiobook: None,
+            current_quality: None,
+            current_format_score: None,
+            current_unplayable: false,
+        };
+        let mut state = tv_state(
+            &[
+                "Lioness.S03E02.1080p.BluRay.x264-ColdFilm",
+                "Lioness.S03E02.1080p.BluRay.x264.iTALiAN-GRP",
+                "Lioness.S03E02.720p.BluRay.x264-RIGHT",
+            ],
+            scope(3, Some(2)),
+        );
+        state.candidates[0].seeders = Some(500);
+        decide(&mut state, &scoring).unwrap();
+        assert!(state.chosen.as_ref().unwrap().title.contains("RIGHT"));
+        assert_eq!(
+            state.tally.as_ref().unwrap().rejected.get("language"),
+            Some(&1)
+        );
+
+        let mut state = tv_state(
+            &["Lioness.S03E02.1080p.BluRay.x264.iTALiAN-GRP"],
+            scope(3, Some(2)),
+        );
+        decide(&mut state, &scoring).unwrap();
+        assert!(state.chosen.as_ref().unwrap().title.contains("iTALiAN"));
     }
 
     /// End to end through `decide`: the live 2026-09-05 shape. Wanted S3E2; the

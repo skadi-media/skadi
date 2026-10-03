@@ -203,6 +203,10 @@ pub fn remedy_for(gate: &str) -> Option<&'static str> {
             "Titles matched loosely but the author/title gate rejected them. Try \
              a manual search to confirm the right edition exists."
         }
+        "language" => {
+            "Results were dubs or machine readings in another language. An English \
+             release may not exist yet — try a manual search."
+        }
         "seeders" => {
             "Candidates exist but are under-seeded. Lower the minimum-seeders \
              setting or wait for a healthier release."

@@ -49,6 +49,32 @@ const SEARCH_FANOUT: usize = 6;
 /// a dead meta-search site does not.
 const INDEXER_SEARCH_BUDGET: Duration = Duration::from_secs(90);
 
+/// Searches one indexer may have in flight at once, across every acquire run
+/// (SKADI-T-0672).
+///
+/// Each indexer's rate limiter waits *inside* its `search`, so under a burst —
+/// adding sixteen series queued hundreds of episode searches on 2026-10-02 —
+/// a search spent its whole [`INDEXER_SEARCH_BUDGET`] queued behind the others
+/// and timed out without the site ever being slow: 283 failures that day. The
+/// permit is taken **before** the budget starts, so the queue forms here, the
+/// rate limiter only ever holds a couple, and the budget measures the indexer.
+const PER_INDEXER_INFLIGHT: usize = 2;
+
+/// The in-flight permits for indexer `id`, created on first use.
+fn indexer_permits(id: skadi_core::IndexerId) -> Arc<tokio::sync::Semaphore> {
+    static PERMITS: std::sync::LazyLock<
+        std::sync::Mutex<
+            std::collections::HashMap<skadi_core::IndexerId, Arc<tokio::sync::Semaphore>>,
+        >,
+    > = std::sync::LazyLock::new(Default::default);
+    PERMITS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(id)
+        .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(PER_INDEXER_INFLIGHT)))
+        .clone()
+}
+
 /// Defaults for the indexer search **circuit breaker** (SKADI-T-0308). Live values
 /// come from the config plane (`indexer_breaker_threshold` /
 /// `indexer_breaker_cooldown_secs`) via [`set_circuit_config`], refreshed each hunter
@@ -265,13 +291,22 @@ pub async fn search(state: &mut AcquireState, indexers: &[Arc<dyn Indexer>]) -> 
     let futs: Vec<_> = live
         .iter()
         .map(|ix| async move {
+            // Queue for a slot first, outside the budget (SKADI-T-0672).
+            let _permit = indexer_permits(ix.id()).acquire_owned().await;
             match tokio::time::timeout(INDEXER_SEARCH_BUDGET, ix.search(query)).await {
                 Ok(r) => r,
-                Err(_) => Err(AppError::Network(format!(
-                    "indexer {} exceeded the {}s search budget",
-                    ix.id(),
-                    INDEXER_SEARCH_BUDGET.as_secs()
-                ))),
+                Err(_) => {
+                    let msg = format!(
+                        "indexer {} exceeded the {}s search budget",
+                        ix.id(),
+                        INDEXER_SEARCH_BUDGET.as_secs()
+                    );
+                    // The timeout drops the indexer's future, so its own health
+                    // decorator never sees the failure; record it here or
+                    // `/indexers/health` shows the slowest indexer as healthy.
+                    indexer_health().record_failure(ix.id(), msg.clone());
+                    Err(AppError::Network(msg))
+                }
             }
         })
         .collect();
@@ -295,6 +330,8 @@ pub async fn search(state: &mut AcquireState, indexers: &[Arc<dyn Indexer>]) -> 
         );
     }
 
+    // Whether any indexer answered at all, even with nothing (SKADI-T-0672).
+    let answered = results.iter().any(Result::is_ok);
     let mut found: Vec<skadi_indexers::Release> = Vec::new();
     let mut last_err: Option<AppError> = None;
     for r in results {
@@ -315,9 +352,13 @@ pub async fn search(state: &mut AcquireState, indexers: &[Arc<dyn Indexer>]) -> 
     });
     found.dedup_by(|a, b| a.title == b.title && a.fetch == b.fetch);
 
-    // Every attempted indexer errored and nothing came back → surface the error.
+    // Every attempted indexer errored → surface the error. When any indexer
+    // answered, an empty result is "nothing found" (decide reports it), not the
+    // network error of whichever indexer happened to time out — that error sent
+    // the item round the network-retry path and named a slow site as the cause
+    // of a release that does not exist yet (SKADI-T-0672).
     if found.is_empty() {
-        if let Some(e) = last_err {
+        if !answered && let Some(e) = last_err {
             return Err(e);
         }
         if attempted == 0 {
@@ -3792,6 +3833,114 @@ mod tests {
             search(&mut state, &indexers).await,
             Err(AppError::Network(_))
         ));
+    }
+
+    /// An indexer that answers after `delay`, counting how many of its searches
+    /// run at once (SKADI-T-0672).
+    struct SlowIndexer {
+        id: IndexerId,
+        delay: Duration,
+        result: Vec<Release>,
+        inflight: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Indexer for SlowIndexer {
+        fn id(&self) -> IndexerId {
+            self.id
+        }
+        fn protocol(&self) -> Protocol {
+            Protocol::Torrent
+        }
+        fn supports(&self, kind: MediaKind) -> bool {
+            kind == MediaKind::Movie
+        }
+        async fn test(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn capabilities(&self) -> Result<IndexerCaps> {
+            Ok(IndexerCaps {
+                supports_rss: true,
+                supports_search: true,
+                id_params: BTreeSet::new(),
+                supports_aggregate_ids: false,
+                text_search: TextSearch::Raw,
+                categories: vec![],
+            })
+        }
+        async fn search(&self, _query: &dyn SearchQuery) -> Result<Vec<Release>> {
+            use std::sync::atomic::Ordering::SeqCst;
+            let now = self.inflight.fetch_add(1, SeqCst) + 1;
+            self.peak.fetch_max(now, SeqCst);
+            tokio::time::sleep(self.delay).await;
+            self.inflight.fetch_sub(1, SeqCst);
+            Ok(self.result.clone())
+        }
+    }
+
+    fn slow_ix(delay_secs: u64, result: Vec<Release>) -> Arc<SlowIndexer> {
+        Arc::new(SlowIndexer {
+            id: IndexerId::new(),
+            delay: Duration::from_secs(delay_secs),
+            result,
+            inflight: Arc::default(),
+            peak: Arc::default(),
+        })
+    }
+
+    /// SKADI-T-0672: one indexer timing out while another answers with nothing
+    /// is "nothing found", not a network error; the timeout is in the health
+    /// telemetry; and a timeout with nothing else answering still errors.
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_beside_an_empty_answer_is_nothing_found_and_is_recorded() {
+        let slow = slow_ix(600, vec![]);
+        let slow_id = slow.id;
+        let mut state = state_for(&[]);
+        let indexers: Vec<Arc<dyn Indexer>> = vec![slow.clone(), ix(MediaKind::Movie, vec![])];
+        search(&mut state, &indexers).await.unwrap();
+        assert!(state.candidates.is_empty());
+        let health = indexer_health()
+            .get(slow_id)
+            .expect("the timeout is recorded");
+        assert!(health.failure_count >= 1, "{health:?}");
+
+        let mut state = state_for(&[]);
+        let only_slow: Vec<Arc<dyn Indexer>> = vec![slow_ix(600, vec![])];
+        assert!(matches!(
+            search(&mut state, &only_slow).await,
+            Err(AppError::Network(_))
+        ));
+    }
+
+    /// SKADI-T-0672: a burst of searches against one indexer runs at most
+    /// `PER_INDEXER_INFLIGHT` at a time, and the queueing does not count against
+    /// the budget — every search completes although together they take far
+    /// longer than 90 s.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_queues_outside_the_budget() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let probe = slow_ix(40, vec![release("Movie.1999.1080p.BluRay.x264-GRP", 10)]);
+        let indexers: Vec<Arc<dyn Indexer>> = vec![probe.clone()];
+        let runs: Vec<_> = (0..8)
+            .map(|_| {
+                let indexers = indexers.clone();
+                tokio::spawn(async move {
+                    let mut state = state_for(&[]);
+                    search(&mut state, &indexers)
+                        .await
+                        .map(|()| state.candidates.len())
+                })
+            })
+            .collect();
+        for r in runs {
+            assert_eq!(
+                r.await.unwrap().unwrap(),
+                1,
+                "no search timed out in the queue"
+            );
+        }
+        assert_eq!(probe.peak.load(SeqCst), PER_INDEXER_INFLIGHT);
     }
 
     // --- decide ---

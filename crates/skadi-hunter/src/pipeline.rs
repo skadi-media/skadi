@@ -886,6 +886,11 @@ fn audiobook_bucket(
     // release. A real audiobook release names its author; junk that only shares
     // the title word ("Fallen" → "Evanescence – Fallen", "Wasteland" → "Wasteland
     // 3-HOODLUM") has author_hits == 0 and is rejected rather than grabbed.
+    // A release that names itself as another kind of media is not a book,
+    // whatever its title shares with the wanted one (SKADI-T-0670).
+    if not_an_audiobook(release_title) {
+        return None;
+    }
     let r = skadi_quality::title_relevance(book_titles, release_title);
     let author_ok = r.author_tokens == 0 || r.author_hits >= 1;
     if skadi_quality::parse_audiobook(release_title).book_pack {
@@ -910,6 +915,42 @@ fn audiobook_bucket(
     } else {
         (r.coverage >= MIN_TITLE_COVERAGE && author_ok).then_some((r.precision * 4.0).round() as u8)
     }
+}
+
+/// Whether a release title marks itself as software, video, a game or an
+/// episode (SKADI-T-0670). These came through for audiobooks on 2026-10-02 from
+/// a general tracker whose results carry no category: "DAEMON Tools Ultra …
+/// x64 Pre Cracked", "… Chimera XXX 1080p MP4", "Malice 1993 1080p", "Unsouled
+/// NSZ". Whole-token matches only, so a book title that merely contains the
+/// letters ("Crackdown", "Episodes") is unaffected.
+fn not_an_audiobook(release_title: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        // Software.
+        "x64", "x86", "win64", "win32", "cracked", "crack", "keygen", "portable", "macos",
+        // Adult video.
+        "xxx", // Video: resolutions, sources and codecs no audiobook carries.
+        "480p", "576p", "720p", "1080p", "2160p", "4k", "bluray", "bdrip", "brrip", "webrip",
+        "webdl", "hdtv", "dvdrip", "x264", "x265", "h264", "h265", "hevc", "xvid", "remux",
+        // Console / PC game images and scene game groups.
+        "nsz", "nsp", "xci", "pkg", "codex", "skidrow", "fitgirl", "dodi", "plaza", "hoodlum",
+    ];
+    let lower = release_title.to_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    // "WEB-DL" splits into "web" + "dl".
+    let web_dl = tokens.windows(2).any(|w| w == ["web", "dl"]);
+    // An episode code (S01E02) is TV, never a book.
+    let episode = tokens.iter().any(|t| {
+        let b = t.as_bytes();
+        b.len() >= 6
+            && b[0] == b's'
+            && b[1..3].iter().all(u8::is_ascii_digit)
+            && b[3] == b'e'
+            && b[4..6].iter().all(u8::is_ascii_digit)
+    });
+    web_dl || episode || tokens.iter().any(|t| MARKERS.contains(t))
 }
 
 /// Whether a release's Torznab category is a plausible top-level group for the
@@ -3057,6 +3098,78 @@ mod tests {
             audiobook_bucket("The Wheel of Time - Books 1-14", &book_titles, series),
             None
         );
+    }
+
+    /// SKADI-T-0670: the releases grabbed in production, each for a book whose
+    /// title it shared one word with. With the author alias every one is
+    /// rejected; the name check rejects the four that announce another medium
+    /// even without it; the real releases still pass.
+    #[test]
+    fn audiobook_bucket_rejects_the_production_junk() {
+        let w = |t: &str, a: &str| vec![t.to_string(), format!("{t} {a}")];
+        let cases = [
+            (
+                "Daemon",
+                "Daniel Suarez",
+                "DAEMON Tools Ultra 1072 x64 Pre Cracked 2025 New",
+                "Daemon - Daniel Suarez",
+            ),
+            (
+                "Chimera",
+                "Mira Grant",
+                "Milfty 25 12 19 Kyaa Chimera XXX 1080p MP4 WRB [XC]",
+                "Mira Grant - Chimera (Parasitology 3) [M4B]",
+            ),
+            (
+                "Scourged",
+                "Kevin Hearne",
+                "[TR24][OF][LDR] Pathogenic Virulence - Scourged - 2024 (Slam/Brutal Death Metal)",
+                "Kevin Hearne - Staked & Scourged (Iron Druid 8-9)",
+            ),
+            (
+                "Malice",
+                "John Gwynne",
+                "Malice 1993 1080p",
+                "John Gwynne - Malice (The Faithful and the Fallen 1)",
+            ),
+            (
+                "Unsouled",
+                "Will Wight",
+                "Unsouled NSZ",
+                "Will Wight - Unsouled, Cradle Book 1",
+            ),
+        ];
+        for (title, author, junk, real) in cases {
+            assert_eq!(
+                audiobook_bucket(junk, &w(title, author), None),
+                None,
+                "{junk}"
+            );
+            assert!(
+                audiobook_bucket(real, &w(title, author), None).is_some(),
+                "{real}"
+            );
+        }
+        // Without the author alias the author gate is waived — the name check
+        // is what stops these.
+        for junk in [
+            "DAEMON Tools Ultra 1072 x64 Pre Cracked 2025 New",
+            "Milfty 25 12 19 Kyaa Chimera XXX 1080p MP4 WRB [XC]",
+            "Malice 1993 1080p",
+            "Unsouled NSZ",
+        ] {
+            assert!(not_an_audiobook(junk), "{junk}");
+        }
+        for book in [
+            "Daemon - Daniel Suarez",
+            "Crackdown - unabridged",
+            "Episodes - a novel [M4B]",
+            "The Expanse S01 (Leviathan Wakes, Caliban's War) MP3",
+        ] {
+            assert!(!not_an_audiobook(book), "{book}");
+        }
+        assert!(not_an_audiobook("True Detective S03E01 1080p ColdFilm"));
+        assert!(not_an_audiobook("Tokyo Vice S02 COMPLETE WEB-DL"));
     }
 
     #[test]

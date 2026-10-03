@@ -39,10 +39,10 @@ use uuid::Uuid;
 
 use skadi_api::{ApiError, HttpModule};
 use skadi_core::{
-    AcquisitionStatus, AppError, AsinId, AuthorId, BookFileId, BookId, ExternalIds, MediaKind,
-    ProfileId, QualityId, RootFolder,
+    AcquisitionStatus, AppError, AsinId, AuthorId, BookFileId, BookId, MediaKind, ProfileId,
+    QualityId, RootFolder,
 };
-use skadi_hunter::{AcquireSeed, SearchSpec, start_acquire};
+use skadi_hunter::{AcquireSeed, start_acquire};
 use skadi_metadata::{AudibleCatalogProvider, AudnexusProvider, ExternalId, MetadataProvider};
 use skadi_store::{BlocklistRepo, ConfigRepo, DomainStateRepo, SettingsRepo, Store};
 
@@ -1333,44 +1333,11 @@ async fn delete_book(
 
 // --- manual acquire ---
 
-/// Build the acquire seed for one (book, file) — the single definition of what
-/// an audiobook search looks like, shared by the manual acquire endpoint and
-/// search-on-add. Mirrors `skadi_movies::http::acquire_seed`.
+/// The acquire seed for one (book, file) on the interactive paths (manual
+/// acquire, search on add). Delegates to [`crate::wanted::book_seed`] so these
+/// paths carry the author and series exactly as the sweep does (SKADI-T-0670).
 fn acquire_seed(book: &Book, file: &BookFile) -> AcquireSeed {
-    // Titles: prefer the bare title plus the "title subtitle" combination so
-    // id-less indexers have a couple of aliases to match on.
-    let mut titles = vec![book.title.clone()];
-    if let Some(sub) = &book.subtitle {
-        titles.push(format!("{} {}", book.title, sub));
-    }
-    AcquireSeed {
-        acquirable: file.acquirable_ref(),
-        request: SearchSpec {
-            // Sweep-driven; the interactive paths override this just before
-            // searching (SKADI-T-0539).
-            trigger: skadi_hunter::SearchTrigger::Automatic,
-            kind: MediaKind::Audiobook,
-            titles,
-            year: book.year,
-            external_ids: ExternalIds {
-                asin: book.external_ids.asin.clone(),
-                ..Default::default()
-            },
-            categories: crate::module::AUDIOBOOK_SEARCH_CATEGORIES.to_vec(),
-            tv: None,
-            series: None,
-            // Filled in by `steps::search` from the item's tags
-            // (SKADI-T-0556) — a database read, so it cannot happen in these
-            // pure seed builders.
-            tags: None,
-        },
-        profile: book.profile,
-        // Manual/interactive acquire is a first-acquisition path; upgrades flow
-        // through the sweep's `upgradable()` (SKADI-T-0182 / SKADI-T-0186).
-        current_quality: None,
-        current_format_score: None,
-        current_unplayable: false,
-    }
+    crate::wanted::book_seed(book, file, None)
 }
 
 /// Resolve (book, file) and verify the file belongs to the book — the common
@@ -2552,6 +2519,7 @@ mod tests {
     //! scripted Audnexus server, acquire/releases) lives in `tests/http.rs`.
 
     use super::*;
+    use skadi_core::ExternalIds;
 
     // The Range parser moved to `skadi_api::ranged` (SKADI-T-0574) so movies and
     // television share it rather than growing copies. These assertions stay here
@@ -2774,24 +2742,33 @@ mod tests {
         assert_eq!(seed.acquirable, file.acquirable_ref());
     }
 
+    /// SKADI-T-0670: search on add carries the author alias (so `decide`'s
+    /// author gate applies) and the series, exactly as the sweep does.
     #[test]
-    fn acquire_seed_adds_subtitle_alias() {
+    fn acquire_seed_carries_the_author_and_series_like_the_sweep() {
         let mut book = Book::new(
             ExternalIds::default(),
-            "The Way of Kings",
+            "Daemon",
             ProfileId::new(),
             RootFolder::new("/audiobooks"),
         );
-        book.subtitle = Some("Book One".into());
+        book.authors = vec!["Daniel Suarez".into()];
+        book.series = Some(crate::author::SeriesLink {
+            series_id: skadi_core::BookSeriesId::new(),
+            name: "Daemon".into(),
+            position: Some("1".into()),
+        });
         let file = BookFile::missing(book.id);
         let seed = acquire_seed(&book, &file);
         assert_eq!(
             seed.request.titles,
             vec![
-                "The Way of Kings".to_string(),
-                "The Way of Kings Book One".to_string()
+                "Daemon".to_string(),
+                "Daemon Daniel Suarez".to_string(),
+                "Daemon".to_string()
             ]
         );
+        assert_eq!(seed.request.series.as_deref(), Some("Daemon"));
     }
 }
 

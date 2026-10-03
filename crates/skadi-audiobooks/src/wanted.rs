@@ -70,32 +70,7 @@ impl AudiobookWantedQuery {
         file: &BookFile,
         current: Option<(QualityId, i32)>,
     ) -> AcquireSeed {
-        AcquireSeed {
-            acquirable: file.acquirable_ref(),
-            request: SearchSpec {
-                // Sweep-driven; the interactive paths override this just before
-                // searching (SKADI-T-0539).
-                trigger: skadi_hunter::SearchTrigger::Automatic,
-                kind: MediaKind::Audiobook,
-                titles: build_titles(book),
-                year: book.year,
-                external_ids: ExternalIds {
-                    asin: book.external_ids.asin.clone(),
-                    ..Default::default()
-                },
-                categories: crate::module::AUDIOBOOK_SEARCH_CATEGORIES.to_vec(),
-                tv: None,
-                series: book.series.as_ref().map(|s| s.name.clone()),
-                // Filled in by `steps::search` from the item's tags
-                // (SKADI-T-0556) — a database read, so it cannot happen in these
-                // pure seed builders.
-                tags: None,
-            },
-            profile: book.profile,
-            current_quality: current.map(|(q, _)| q),
-            current_format_score: current.map(|(_, s)| s),
-            current_unplayable: false,
-        }
+        book_seed(book, file, current)
     }
 
     fn rank_of(&self, quality_id: QualityId) -> Option<usize> {
@@ -113,6 +88,52 @@ impl AudiobookWantedQuery {
             .iter()
             .position(|q| *q == self.scoring.profile.cutoff)
             .unwrap_or(usize::MAX)
+    }
+}
+
+/// The acquire seed for `file` of `book` — **the** definition of an audiobook
+/// search, shared by the sweep and by every interactive path (search on add,
+/// manual acquire). `current` is the `(quality, format_score)` it already holds
+/// for an *upgrade* seed, `None` for a first acquisition — threaded so the
+/// hunter's `decide` only grabs a strictly-better release (SKADI-T-0182,
+/// SKADI-T-0186).
+///
+/// There used to be a second builder for the interactive paths that sent the
+/// bare title (plus "title subtitle") and no author. `decide`'s identity gate
+/// takes the author from the "title author" alias and is waived when there is
+/// none, so search-on-add matched any release that shared one title word: a
+/// cracked "DAEMON Tools" for *Daemon*, an adult video for *Chimera*, a metal
+/// album for *Scourged* (SKADI-T-0670). One builder, so both paths gate alike.
+pub(crate) fn book_seed(
+    book: &Book,
+    file: &BookFile,
+    current: Option<(QualityId, i32)>,
+) -> AcquireSeed {
+    AcquireSeed {
+        acquirable: file.acquirable_ref(),
+        request: SearchSpec {
+            // Sweep-driven; the interactive paths override this just before
+            // searching (SKADI-T-0539).
+            trigger: skadi_hunter::SearchTrigger::Automatic,
+            kind: MediaKind::Audiobook,
+            titles: build_titles(book),
+            year: book.year,
+            external_ids: ExternalIds {
+                asin: book.external_ids.asin.clone(),
+                ..Default::default()
+            },
+            categories: crate::module::AUDIOBOOK_SEARCH_CATEGORIES.to_vec(),
+            tv: None,
+            series: book.series.as_ref().map(|s| s.name.clone()),
+            // Filled in by `steps::search` from the item's tags
+            // (SKADI-T-0556) — a database read, so it cannot happen in these
+            // pure seed builders.
+            tags: None,
+        },
+        profile: book.profile,
+        current_quality: current.map(|(q, _)| q),
+        current_format_score: current.map(|(_, s)| s),
+        current_unplayable: false,
     }
 }
 

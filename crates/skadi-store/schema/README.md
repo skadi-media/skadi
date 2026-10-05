@@ -1,4 +1,4 @@
-# skadi-store schema — logical DDL workflow (SKADI-I-0015)
+# skadi-store schema — logical DDL workflow
 
 skadi-store and skadi-movies target **both** SQLite and Postgres through
 [`diesel-dualdb`](https://github.com/colliery-io/diesel-dualdb). Instead of

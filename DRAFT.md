@@ -567,9 +567,9 @@ without fighting the tool.
 - **Indexers**: Torznab + Newznab (covers Jackett/Prowlarr-compatible indexers
   and the vast majority of usenet).
 - **Downloaders**: one torrent client + SABnzbd (one torrent, one usenet).
-  *As built (SKADI-T-0517): a single built-in torrent client that runs inside
+  *As built: a single built-in torrent client that runs inside
   the VPN namespace, so no external client is configured at all. Usenet is
-  still open — SKADI-T-0509.*
+  still open.*
 - **Notify**: webhook only. Discord/email/Pushover are later impls of the
   same trait.
 - **API**: HTTP only.

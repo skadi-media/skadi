@@ -1,6 +1,6 @@
 # Skadi Design Language — "Cold Nordic"
 
-Token-first dark theme (SKADI-I-0035). Slate surfaces, an ice/teal/violet
+Token-first dark theme. Slate surfaces, an ice/teal/violet
 **aurora** accent set, and a **gold** "owned / cutoff" accent. This package is
 the *portable design language* extracted from `crates/skadi-web/style.css` — the
 tokens, type, and base layer. It does **not** contain components: the Skadi UI is

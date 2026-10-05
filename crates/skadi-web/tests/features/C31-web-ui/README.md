@@ -1,4 +1,4 @@
-# C31 web UI — executable-spec features (SKADI-I-0057 pass P6)
+# C31 web UI — executable-spec features
 
 `skadi-web` is a Leptos/wasm crate outside the cargo workspace, so there is no
 cucumber runner here. These `.feature` files are the executable spec text; the

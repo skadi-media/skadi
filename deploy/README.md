@@ -10,14 +10,14 @@ One `docker compose up -d` brings up the whole appliance:
 | `gluetun` | VPN tunnel + firewall + HTTP proxy | the daemon's native indexer searches egress through it (port 8888) |
 | `flaresolverr` | CloudFlare solver for native indexers | **no network of its own** — lives inside gluetun (port 8191) |
 
-> **Indexers are native** (SKADI-I-0036): Skadi's built-in Cardigann engine
+> **Indexers are native**: Skadi's built-in Cardigann engine
 > replaces Prowlarr — add trackers from the catalog in the UI (**Indexers →
 > "+ Add tracker"**). Their searches ride gluetun's VPN proxy; CloudFlare-gated
 > ones are solved by FlareSolverr from the same VPN exit IP.
 
 The daemon serves a web UI at **`http://<host>:8080/`** (the same origin as
 the API). It binds **`0.0.0.0` by default** so phones on your LAN can pair and
-download books/APK for the native player (SKADI-I-0049). The UI injects its API
+download books/APK for the native player. The UI injects its API
 token to any visitor that reaches it, so keep the port on your trusted home LAN
 and **do not port-forward it** — on Docker Desktop `0.0.0.0` also covers
 VPN/Tailscale interfaces and IPv6. Set `SKADI_BIND=127.0.0.1` in `.env` to lock
@@ -76,7 +76,7 @@ curl -s http://127.0.0.1:${SKADI_PORT:-8080}/api/v1/health   # {"status":"ok","v
 # Native-app serving (only if you ran deploy/publish-apk.sh): the APK manifest
 # must resolve, not 404. A 404 here almost always means the `./apk` bind-mount
 # pointed at the wrong dir — run compose from deploy/ (or set --project-directory
-# to deploy/), NOT the repo root, or ./apk resolves to <repo>/apk (SKADI-T-0346).
+# to deploy/), NOT the repo root, or ./apk resolves to <repo>/apk.
 curl -s http://127.0.0.1:${SKADI_PORT:-8080}/app/manifest.json   # → {"file":"skadi-N.apk",...}
 ```
 
@@ -203,7 +203,7 @@ SKADI=skadi   # or: alias skadi='docker compose exec skadi skadi'
    names (e.g. `"cutoff": "Bluray-1080p"`) or ids to customize; invalid
    combinations are rejected at create time.
 
-   > There is **no root folder to register** (SKADI-I-0045): skadi owns the
+   > There is **no root folder to register**: skadi owns the
    > layout under its dedicated library root (`SKADI_LIBRARY_ROOT`,
    > `/mnt/storage/skadi` by default) — movies land in `/mnt/storage/skadi/movie`,
    > TV in `.../television/`, audiobooks in `.../audiobook/`.
@@ -234,7 +234,7 @@ The **`storage`** NFS volume (writable, on your NAS at
 worker and skadi**. skadi writes **only** under its **dedicated library root**,
 `SKADI_LIBRARY_ROOT` (default **`/mnt/storage/skadi`**) — a skadi-only subfolder,
 so on a **shared NAS** it never touches your other folders. skadi owns the layout
-under *its* root (SKADI-I-0045); there is no root folder to register:
+under *its* root; there is no root folder to register:
 
 ```
 /mnt/storage/              ← your shared NAS export (your movies/, downloads/, … untouched)
@@ -260,7 +260,7 @@ under the one `storage` mount and that can't happen.
 
 ### Adopting an existing library (migration)
 
-Import is now a **reorg-via-link move** (SKADI-T-0303): each matched file is
+Import is now a **reorg-via-link move**: each matched file is
 hardlinked into the canonical `movie/`·`television/`·`audiobook/` path and the
 **old path is dropped** (same export ⇒ a free move, no copy). So adopt your
 existing library by scanning it **through the writable `/mnt/storage` mount** —
@@ -290,9 +290,7 @@ docker compose exec skadi sh -c \
 ## Metadata
 
 With no `SKADI_TMDB_API_KEY`, Skadi uses Servarr's public metadata API
-keylessly — acceptable for private use per **ADR SKADI-A-0001** (tracked in
-Kairos on the `skadi-adrs` board); read it before publishing this project
-anywhere. Setting the key switches to TMDB directly.
+keylessly. Setting the key switches to TMDB directly.
 
 ## Web UI
 
@@ -450,7 +448,7 @@ hang, check `docker system df` first.
 the lab project) inspects running state, healthchecks, OOM kills, log caps,
 ghost networks and `/api/v1/health` without changing anything.
 
-## Memory budget and fuses (SKADI-T-0566)
+## Memory budget and fuses
 
 Three services carry a `mem_limit` in the base file. They are **fuses, not
 tuning**: each turns a leak into one container restarting with an obvious cause,
@@ -470,9 +468,9 @@ Two things worth knowing before changing these:
 - **FlareSolverr's cap is deliberately higher than the NAS overlay's 512m.** It
   was sized from measurement on this host, where the container is routinely
   around 850 MiB; 512m would OOM it on sight. That the NAS runs it that tight is
-  very likely why Chromium dies mid-solve there (SKADI-T-0488).
-- **The worker's 1g is the same fuse the NAS overlay documents.** SKADI-T-0392
-  was a worker that reached ~9 GB; at ~535 MiB with a full library there is
+  very likely why Chromium dies mid-solve there.
+- **The worker's 1g is the same fuse the NAS overlay documents.** A previous
+  leak was a worker that reached ~9 GB; at ~535 MiB with a full library there is
   roughly 2× headroom, which is enough to ride out a burst and tight enough that
   a genuine regression trips it rather than hiding.
 
@@ -485,7 +483,7 @@ question.
 Applying a change to these means recreating the affected containers, so do it
 when the worker is not mid-restore.
 
-## Database backup and restore (SKADI-T-0481)
+## Database backup and restore
 
 The `postgres-backup` sidecar takes a `pg_dump -Fc` on a timer and prunes old
 dumps. It runs by default with the rest of the stack — the library rows (what is
@@ -553,10 +551,10 @@ binary is not: downgrade the image to match, or the daemon will refuse a schema
 it does not know.
 
 This is the raw-database half. The app-level config backup (settings, indexers,
-profiles, via the API) is SKADI-T-0463 and is separate — restoring both is what
+profiles, via the API) is separate — restoring both is what
 reconstructs a full install.
 
-## Lab stack (isolated copy for experiments, SKADI-T-0393)
+## Lab stack (isolated copy for experiments)
 
 `angreal lab up` runs a second, independent copy of this stack as compose project
 `skadi-lab`: `docker-compose.lab.yml` overlays the same base file with its own
@@ -571,7 +569,7 @@ behind a `vpn` profile and are not started, so the lab worker has NO kill switch
 and the DHT is disabled (`LAB_DISABLE_DHT=1`). Use it for local / synthetic
 torrents only — `cargo run --example synth_library` in the worker crate makes 300
 of them plus a `seed-rows.sql` to load. Knobs: `LAB_BLOCKING_BURST=N` fires N
-blocking-pool jobs at worker start (SKADI-T-0392 fault injection);
+blocking-pool jobs at worker start (fault injection);
 `deploy/lab/memwatch.sh <container> <secs> <csv>` samples RSS/threads/fds.
 `--from-prod` tags the running prod images as `:lab` instead of building (tag
 BOTH images first, or compose silently starts a full build for the missing one).
@@ -581,7 +579,7 @@ the base file interpolates them before the overlay removes those volumes.
 `deploy/lab/features/*.feature` hold the (unexecuted) Gherkin description of the
 expected ops behaviour for this stack, the lab and the NAS overlay.
 
-## Running on the NAS (Synology DS1821+, SKADI-I-0056)
+## Running on the NAS (Synology DS1821+)
 
 The stack can run ON the storage host instead of reaching it over NFS. Same
 compose file plus `docker-compose.nas.yml` (local bind mounts, `mem_limit`s,
@@ -659,9 +657,9 @@ recreate without `--no-deps` (running deps are left alone).
 
 Memory (4 GB box, DSM ~1 GB): skadi ~340 MiB, postgres ~230, flaresolverr ~330,
 gluetun ≤512, worker ~150 idle / ~1 GiB under 38 concurrent downloads (measured
-on cut-over day, SKADI-T-0392) — caps are in the overlay (`NAS_MEM_*`); the
+on cut-over day) — caps are in the overlay (`NAS_MEM_*`); the
 worker's limit is a fuse, not a budget, and was raised to 1.5 GiB under load.
-`SKADI_WORKER_MAX_ACTIVE=8` is now set in `.env.nas.example` (SKADI-T-0489) —
+`SKADI_WORKER_MAX_ACTIVE=8` is now set in `.env.nas.example` —
 without it the worker runs whatever the hunter queues. The cap is also enforced
 over a session restore, which librqbit otherwise brings up in full regardless of
 the setting. flaresolverr's healthcheck is relaxed in
@@ -679,8 +677,8 @@ different volumes; they coexist.
 ## Remote access (Tailscale)
 
 The stack can join a [Tailscale](https://tailscale.com) tailnet so the daemon is
-reachable from anywhere without a port forward or a public server
-(SKADI-T-0599). A `tailscale` sidecar shares the daemon container's network
+reachable from anywhere without a port forward or a public server. A
+`tailscale` sidecar shares the daemon container's network
 namespace, so the daemon's port 8080 answers at the node's tailnet address;
 WireGuard encrypts it and Tailscale punches through both NATs, falling back to
 a relay when it cannot.

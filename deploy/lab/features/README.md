@@ -1,10 +1,10 @@
-# Ops feature files (SKADI-I-0057 pass P7 — C37 Deploy Stack)
+# Ops feature files (C37 Deploy Stack)
 
 **Status: documentation only — NOT executed by any runner.**
 
 These `.feature` files describe the *expected* operational behaviour of the
 deploy stack (`deploy/docker-compose.yml` + overlays, the `angreal deploy|lab|nas`
-task groups, CI/GHCR). They follow the SKADI-I-0057 BDD conventions
+task groups, CI/GHCR). They follow the BDD conventions
 (`@C37`, exactly one of `@passing | @gap | @bug`, `@lab` for scenarios that need
 a Docker host) but there is no cucumber runner for ops in this pass: nothing under
 `deploy/lab/features/` is compiled, collected by `angreal test bdd`, or run in CI.
@@ -12,7 +12,7 @@ a Docker host) but there is no cucumber runner for ops in this pass: nothing und
 Tag meaning here:
 
 - `@passing` — behaviour verified by reading the artefacts and/or by the
-  2026-09-06 cut-over/rollback evidence recorded in SKADI-I-0056; where a claim
+  2026-09-06 cut-over/rollback evidence; where a claim
   could not be re-run in this pass (Docker Desktop was down) it says so.
 - `@gap` — expected servarr/LSIO-parity behaviour the stack does not have.
 - `@bug` — the stack does the wrong thing; the scenario asserts the correct

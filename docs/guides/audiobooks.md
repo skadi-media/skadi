@@ -92,9 +92,7 @@ and adds them automatically (as monitored, `Missing` books the hunter acquires).
 Because Audnexus has no "list books by author" endpoint, discovery lists the
 author's catalog from the **Audible catalog API**
 (`api.audible.com/1.0/catalog/products?author=…`, keyless — the same upstream
-Audnexus itself derives from) and enriches each new ASIN through Audnexus. See
-[ADR&nbsp;SKADI-A-0001] for the keyless/private-use posture that governs both
-endpoints.
+Audnexus itself derives from) and enriches each new ASIN through Audnexus.
 
 Toggle monitoring from an author's detail page, or when adding the author.
 
@@ -116,4 +114,3 @@ Once added, a book's Audnexus-sourced fields are refreshed on a schedule (behind
 a per-provider circuit breaker, so a failing upstream isn't hammered). Your
 user-controlled fields (monitored state, profile, root) are preserved.
 
-[ADR&nbsp;SKADI-A-0001]: ../index.md

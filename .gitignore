@@ -45,7 +45,7 @@ lcov.info
 **/*.orig
 
 # Metis ephemeral state
-.metis/.index-dirty
+.metis/
 
 # Documentation build output
 /site/

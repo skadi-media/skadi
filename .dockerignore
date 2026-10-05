@@ -15,7 +15,6 @@ ds-bundle/
 web-e2e/
 deploy/
 .git/
-.metis/
 .angreal/
 .claude/
 docs/

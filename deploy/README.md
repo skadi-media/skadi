@@ -290,9 +290,9 @@ docker compose exec skadi sh -c \
 ## Metadata
 
 With no `SKADI_TMDB_API_KEY`, Skadi uses Servarr's public metadata API
-keylessly — acceptable for private use per **ADR SKADI-A-0001**
-(`.metis/adrs/`); read it before publishing this project anywhere. Setting
-the key switches to TMDB directly.
+keylessly — acceptable for private use per **ADR SKADI-A-0001** (tracked in
+Kairos on the `skadi-adrs` board); read it before publishing this project
+anywhere. Setting the key switches to TMDB directly.
 
 ## Web UI
 

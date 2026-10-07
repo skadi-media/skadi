@@ -2738,3 +2738,45 @@ fn an_errored_row_from_the_api_gets_the_error_badge_and_shows_why() {
     assert!(StateFilter::Only(RowState::Stalled).matches(&stalled));
     assert_eq!(row_badge(&dl("d", "downloading", None)), None);
 }
+
+#[wasm_bindgen_test]
+fn ten_selected_transfers_pause_as_exactly_those_ten_and_remove_with_files_asks_once() {
+    use skadi_web::downloads::{
+        BulkAction, Selection, SortState, StateFilter, bulk_confirm_message, bulk_targets,
+        prune_selection, toggle_all, visible,
+    };
+    let mut rows: Vec<_> = (0..12)
+        .map(|i| dl(&format!("d{i:02}"), "downloading", None))
+        .collect();
+    rows.push(dl("failed", "error", None));
+    let name = |d: &skadi_web::api::Download| d.acquirable_ref.clone();
+    let shown = visible(
+        &rows,
+        StateFilter::All,
+        SortState::default(),
+        SortState::default(),
+        &name,
+    )
+    .active;
+    let chosen: Selection = (0..10).map(|i| format!("d{i:02}")).collect();
+    // A poll with the same rows keeps the selection.
+    assert_eq!(prune_selection(&chosen, &rows), chosen);
+    let mut paused = bulk_targets(BulkAction::Pause, &chosen, &shown);
+    paused.sort();
+    assert_eq!(
+        paused,
+        (0..10).map(|i| format!("d{i:02}")).collect::<Vec<_>>()
+    );
+
+    // Select all: the failed row is selected but has nothing to pause.
+    let mut all = Selection::new();
+    toggle_all(&mut all, &shown);
+    assert_eq!(bulk_targets(BulkAction::Pause, &all, &shown).len(), 12);
+    let n = bulk_targets(BulkAction::RemoveWithFiles, &all, &shown).len();
+    assert_eq!(n, 13);
+    assert!(
+        bulk_confirm_message(BulkAction::RemoveWithFiles, n)
+            .unwrap()
+            .starts_with("Remove 13 transfers AND delete")
+    );
+}

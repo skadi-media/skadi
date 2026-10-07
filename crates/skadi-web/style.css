@@ -2110,3 +2110,13 @@ p.genres.muted {
 .dl-row-compact .dl-error { white-space: normal; overflow-wrap: anywhere; }
 .seed-row.st-errored { flex-wrap: wrap; }
 .seed-row .seed-error { flex-basis: 100%; font-size: 0.75rem; color: var(--bad); overflow-wrap: anywhere; }
+
+/* Downloads multi-select and bulk bar (SKADI-T-0688). A checkbox column leads
+   the active table; the bar shows while any row on show is selected. */
+.dl-header, .dl-row-compact { grid-template-columns: 22px 1fr 70px 100px 80px 80px 55px 55px 50px; }
+.dl-check { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.dl-check input { margin: 0; cursor: pointer; }
+.dl-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.6rem; margin: 0.4rem 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.82rem; }
+.dl-bulk-count { color: var(--fg-bright); margin-right: 0.4rem; }
+.dl-bulk .dl-toolbar-btn.danger { color: var(--bad); border-color: rgba(240, 100, 100, 0.4); }
+.dl-bulk .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }

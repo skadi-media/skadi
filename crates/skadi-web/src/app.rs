@@ -804,7 +804,9 @@ fn fmt_free_disk(free: Option<u64>, total: Option<u64>) -> String {
 /// `/downloads` and renders per-torrent progress + speed / ETA / peers / ratio.
 #[component]
 fn DownloadsSection() -> impl IntoView {
-    use crate::downloads::{self as dlm, RowState, SortKey, SortState, StateFilter};
+    use crate::downloads::{
+        self as dlm, BulkAction, RowState, SelectAll, SortKey, SortState, StateFilter,
+    };
     use crate::movies::size_human;
     use std::collections::HashMap;
 
@@ -826,6 +828,19 @@ fn DownloadsSection() -> impl IntoView {
     let seeding_sort = RwSignal::new(SortState::decode(
         local_get(dlm::SEEDING_SORT_STORAGE_KEY).as_deref(),
     ));
+
+    // Multi-select (SKADI-T-0688): the ids of the selected active rows, in a
+    // signal apart from the polled rows so a poll keeps it. Pruned on each poll
+    // to the rows still in the active table.
+    let selected = RwSignal::new(dlm::Selection::new());
+    let bulk_busy = RwSignal::new(false);
+    let bulk_msg = RwSignal::new(None::<String>);
+    Effect::new(move |_| {
+        let pruned = jobs.with(|js| selected.with_untracked(|s| dlm::prune_selection(s, js)));
+        if selected.with_untracked(|s| *s != pruned) {
+            selected.set(pruned);
+        }
+    });
 
     // Re-fetch the list now (after a control action), so the UI reflects it without
     // waiting for the next poll tick.
@@ -910,6 +925,98 @@ fn DownloadsSection() -> impl IntoView {
                 {label}{move || sort.get().arrow(key)}
             </span>
         }
+    };
+
+    // Run one bulk action over the selected rows on show that offer it: one call
+    // of the per-row endpoint each, in turn, then one refetch (SKADI-T-0688).
+    let run_bulk = move |action: BulkAction| {
+        let ids = selected
+            .with_untracked(|s| shown.with_untracked(|v| dlm::bulk_targets(action, s, &v.active)));
+        if ids.is_empty() || bulk_busy.get_untracked() {
+            return;
+        }
+        if let Some(question) = dlm::bulk_confirm_message(action, ids.len()) {
+            // T-0694: use the in-app ConfirmDialog here once it lands.
+            if !window_confirm(&question) {
+                return;
+            }
+        }
+        bulk_busy.set(true);
+        bulk_msg.set(None);
+        spawn_local(async move {
+            let (mut done, mut failed) = (0, 0);
+            for id in &ids {
+                let r = match action {
+                    BulkAction::Pause => api::pause_download(id).await,
+                    BulkAction::Resume => api::resume_download(id).await,
+                    BulkAction::Remove => api::remove_download(id, false).await,
+                    BulkAction::RemoveWithFiles => api::remove_download(id, true).await,
+                };
+                if r.is_ok() {
+                    done += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+            if action.is_destructive() {
+                selected.update(|s| {
+                    for id in &ids {
+                        s.remove(id);
+                    }
+                });
+            }
+            bulk_msg.set(dlm::bulk_result_message(action, done, failed));
+            bulk_busy.set(false);
+            refetch();
+        });
+    };
+
+    // The bulk bar, while any row on show is selected (SKADI-T-0688). Each
+    // button names how many of the selection it acts on.
+    let bulk_bar = move || {
+        if filter.get() == StateFilter::Only(RowState::Seeding) {
+            return ().into_any();
+        }
+        let v = shown.get();
+        let sel = selected.get();
+        let picked = dlm::selected_rows(&sel, &v.active).len();
+        if picked == 0 {
+            return bulk_msg
+                .get()
+                .map(|m| view! { <div class="dl-bulk"><span class="bad">{m}</span></div> })
+                .into_any();
+        }
+        let busy = bulk_busy.get();
+        let buttons = dlm::BULK_ACTIONS
+            .into_iter()
+            .map(|a| {
+                let n = dlm::bulk_targets(a, &sel, &v.active).len();
+                let cls = if a == BulkAction::RemoveWithFiles {
+                    "dl-toolbar-btn danger"
+                } else {
+                    "dl-toolbar-btn"
+                };
+                view! {
+                    <button type="button" class=cls disabled=busy || n == 0
+                        on:click=move |_| run_bulk(a)>
+                        {format!("{} ({n})", a.label())}
+                    </button>
+                }
+            })
+            .collect_view();
+        let on_clear = move |_| {
+            selected.set(dlm::Selection::new());
+            bulk_msg.set(None);
+        };
+        view! {
+            <div class="dl-bulk" role="toolbar" aria-label="Selected transfers">
+                <span class="dl-bulk-count">{format!("{picked} selected")}</span>
+                {buttons}
+                <button type="button" class="dl-toolbar-btn" on:click=on_clear>"Clear"</button>
+                {bulk_msg.get().map(|m| view! { <span class="bad">{m}</span> })}
+            </div>
+        }
+        .into_any()
     };
 
     // State filter chips with counts over the whole list (SKADI-T-0686).
@@ -1005,6 +1112,18 @@ fn DownloadsSection() -> impl IntoView {
                 let added_str = added_label(j.created_at.as_deref(), now_ms);
                 let added_title = j.created_at.clone().unwrap_or_default();
 
+                // Row checkbox (SKADI-T-0688): its own reactive read, so a
+                // toggle does not rebuild the table.
+                let id_sel = j.id.clone();
+                let id_chk = j.id.clone();
+                let check = view! {
+                    <label class="dl-check">
+                        <input type="checkbox" aria-label=format!("Select {full_name}")
+                            prop:checked=move || selected.with(|s| s.contains(&id_chk))
+                            on:change=move |_| selected.update(|s| dlm::toggle_selected(s, &id_sel))/>
+                    </label>
+                };
+
                 // Action handlers
                 let id_pr = j.id.clone();
                 let on_pause_resume = move |_| {
@@ -1055,6 +1174,7 @@ fn DownloadsSection() -> impl IntoView {
 
                 view! {
                     <div class=row_cls>
+                        {check}
                         <span class="dl-name" title=full_name>{badge}{label}</span>
                         <span class="dl-size mono tnum">{size_str}</span>
                         <span class="dl-progress">
@@ -1086,9 +1206,23 @@ fn DownloadsSection() -> impl IntoView {
             .into_iter()
             .map(|(key, label)| sort_header(active_sort, dlm::ACTIVE_SORT_STORAGE_KEY, key, label))
             .collect_view();
+        // Select-all over the rows on show only (the current filter).
+        let all_state =
+            move || shown.with(|v| selected.with(|s| dlm::select_all_state(s, &v.active)));
+        let on_all = move |_| {
+            shown.with_untracked(|v| selected.update(|s| dlm::toggle_all(s, &v.active)));
+        };
         view! {
             <div class="dl-table">
-                <div class="dl-header">{header}</div>
+                <div class="dl-header">
+                    <label class="dl-check">
+                        <input type="checkbox" aria-label="Select all shown"
+                            prop:checked=move || all_state() == SelectAll::All
+                            prop:indeterminate=move || all_state() == SelectAll::Some
+                            on:change=on_all/>
+                    </label>
+                    {header}
+                </div>
                 {rows}
             </div>
         }
@@ -1274,6 +1408,7 @@ fn DownloadsSection() -> impl IntoView {
         <section class="provider-section dl-section">
             {toolbar}
             {chips}
+            {bulk_bar}
             {active_rows}
             {seeding_rows}
             {move || (!jobs.get().is_empty()).then_some(()).map(|_| view! {

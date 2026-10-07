@@ -7,9 +7,11 @@
 //! Every row has exactly one [`RowState`] ([`row_state`]), so the chip counts of
 //! [`state_counts`] add up to the "All" count. The row badges ([`row_badge`],
 //! SKADI-T-0687) come from the same state, so a badge always matches its chip;
-//! bulk select (SKADI-T-0688) keys off the row `id`.
+//! bulk select (SKADI-T-0688, [`Selection`], [`bulk_targets`]) keys off the
+//! row `id`.
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use crate::api::Download;
 
@@ -397,6 +399,159 @@ pub fn visible(
     Visible { active, seeding }
 }
 
+// ---- Multi-select and bulk actions (SKADI-T-0688) ----
+//
+// The selection is a set of `Download.id`s held in a signal of its own, apart
+// from the polled rows, so a poll refresh keeps it. Only the active table has
+// per-row actions (the Seeding list has none), so only its rows can be
+// selected, and the bulk actions are the per-row actions: Pause / Resume where
+// a row offers it, Remove, Remove with files.
+
+/// The ids of the selected rows.
+pub type Selection = HashSet<String>;
+
+/// Keep only the ids that are still selectable: the row is still in the list
+/// and still in the active table (a row that went to Seeding or left the
+/// client drops out). Called on each poll.
+pub fn prune_selection(sel: &Selection, rows: &[Download]) -> Selection {
+    rows.iter()
+        .filter(|d| d.status != "seeding" && sel.contains(&d.id))
+        .map(|d| d.id.clone())
+        .collect()
+}
+
+/// Select `id`, or unselect it when it is selected.
+pub fn toggle_selected(sel: &mut Selection, id: &str) {
+    if !sel.remove(id) {
+        sel.insert(id.to_string());
+    }
+}
+
+/// The state of the select-all box over the rows on show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectAll {
+    None,
+    Some,
+    All,
+}
+
+/// How many of the `shown` rows are selected, as the select-all box shows it.
+/// No rows on show is `None`.
+pub fn select_all_state(sel: &Selection, shown: &[Download]) -> SelectAll {
+    let n = shown.iter().filter(|d| sel.contains(&d.id)).count();
+    match n {
+        0 => SelectAll::None,
+        n if n == shown.len() => SelectAll::All,
+        _ => SelectAll::Some,
+    }
+}
+
+/// The select-all box was clicked. When every row on show is selected, they
+/// are all unselected; else every row on show is selected. Rows the filter
+/// hides are not touched: select-all is scoped to the current filter.
+pub fn toggle_all(sel: &mut Selection, shown: &[Download]) {
+    if select_all_state(sel, shown) == SelectAll::All {
+        for d in shown {
+            sel.remove(&d.id);
+        }
+    } else {
+        sel.extend(shown.iter().map(|d| d.id.clone()));
+    }
+}
+
+/// The selected rows among those on show, in on-screen order. A selected row
+/// that the filter hides now is left out: a bulk action works only on what the
+/// operator can see.
+pub fn selected_rows<'a>(sel: &Selection, shown: &'a [Download]) -> Vec<&'a Download> {
+    shown.iter().filter(|d| sel.contains(&d.id)).collect()
+}
+
+/// An action of the bulk bar. Each one is a per-row action, fanned out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAction {
+    Pause,
+    Resume,
+    /// Remove from the client, keep the files.
+    Remove,
+    /// Remove and delete the downloaded files.
+    RemoveWithFiles,
+}
+
+/// The bar's order.
+pub const BULK_ACTIONS: [BulkAction; 4] = [
+    BulkAction::Pause,
+    BulkAction::Resume,
+    BulkAction::Remove,
+    BulkAction::RemoveWithFiles,
+];
+
+impl BulkAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            BulkAction::Pause => "Pause",
+            BulkAction::Resume => "Resume",
+            BulkAction::Remove => "Remove",
+            BulkAction::RemoveWithFiles => "Remove with files",
+        }
+    }
+
+    /// Whether `d` offers this action as a row action. A failed row (status
+    /// `error`) has nothing to pause or resume; Pause is offered on a row that
+    /// is not paused, Resume on a paused one; every row can be removed.
+    pub fn applies_to(self, d: &Download) -> bool {
+        match self {
+            BulkAction::Pause => d.status != "error" && d.status != "paused",
+            BulkAction::Resume => d.status == "paused",
+            BulkAction::Remove | BulkAction::RemoveWithFiles => true,
+        }
+    }
+
+    /// Both removes ask before they run, as the row buttons do.
+    pub fn is_destructive(self) -> bool {
+        matches!(self, BulkAction::Remove | BulkAction::RemoveWithFiles)
+    }
+}
+
+/// The ids `action` runs on: the selected rows on show that offer it, in
+/// on-screen order.
+pub fn bulk_targets(action: BulkAction, sel: &Selection, shown: &[Download]) -> Vec<String> {
+    selected_rows(sel, shown)
+        .into_iter()
+        .filter(|d| action.applies_to(d))
+        .map(|d| d.id.clone())
+        .collect()
+}
+
+fn transfers(n: usize) -> String {
+    if n == 1 {
+        "1 transfer".into()
+    } else {
+        format!("{n} transfers")
+    }
+}
+
+/// The one question a destructive bulk action asks for the whole selection;
+/// it names the count. `None` for an action that does not ask.
+pub fn bulk_confirm_message(action: BulkAction, n: usize) -> Option<String> {
+    match action {
+        BulkAction::Remove => Some(format!(
+            "Remove {} from the download client? (keeps any downloaded files)",
+            transfers(n)
+        )),
+        BulkAction::RemoveWithFiles => Some(format!(
+            "Remove {} AND delete their downloaded files? This can't be undone.",
+            transfers(n)
+        )),
+        BulkAction::Pause | BulkAction::Resume => None,
+    }
+}
+
+/// The line the bar shows after a fan-out, from the counts of calls that went
+/// through and that failed. `None` when all went through.
+pub fn bulk_result_message(action: BulkAction, done: usize, failed: usize) -> Option<String> {
+    (failed > 0).then(|| format!("{}: {failed} of {} failed.", action.label(), done + failed))
+}
+
 /// The "Added" cell: a compact age (`5m`, `3h`, `2d`) from the seconds since
 /// the job was enqueued. Unknown (no `created_at`, unparsable) is `—`; a clock
 /// a little ahead of the daemon's is `now`.
@@ -436,6 +591,98 @@ mod tests {
             status: status.into(),
             ..Default::default()
         }
+    }
+
+    fn sel(ids: &[&str]) -> Selection {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn pausing_ten_selected_transfers_targets_exactly_those_ten() {
+        let rows: Vec<Download> = (0..12)
+            .map(|i| row(&format!("r{i}"), "downloading"))
+            .collect();
+        let chosen: Vec<String> = (0..10).map(|i| format!("r{i}")).collect();
+        let s: Selection = chosen.iter().cloned().collect();
+        assert_eq!(bulk_targets(BulkAction::Pause, &s, &rows), chosen);
+    }
+
+    #[test]
+    fn pause_skips_failed_and_paused_rows_and_resume_takes_only_paused() {
+        let rows = vec![
+            row("a", "downloading"),
+            row("b", "error"),
+            row("c", "paused"),
+            row("d", "stalled"),
+            row("e", "queued"),
+        ];
+        let s = sel(&["a", "b", "c", "d", "e"]);
+        assert_eq!(bulk_targets(BulkAction::Pause, &s, &rows), ["a", "d", "e"]);
+        assert_eq!(bulk_targets(BulkAction::Resume, &s, &rows), ["c"]);
+        assert_eq!(
+            bulk_targets(BulkAction::RemoveWithFiles, &s, &rows),
+            ["a", "b", "c", "d", "e"]
+        );
+    }
+
+    #[test]
+    fn select_all_is_scoped_to_the_rows_on_show() {
+        let shown = vec![row("a", "paused"), row("b", "paused")];
+        // "z" is selected but the filter hides it.
+        let mut s = sel(&["z"]);
+        assert_eq!(select_all_state(&s, &shown), SelectAll::None);
+        toggle_all(&mut s, &shown);
+        assert_eq!(s, sel(&["a", "b", "z"]));
+        assert_eq!(select_all_state(&s, &shown), SelectAll::All);
+        // A bulk action does not reach the hidden row.
+        assert_eq!(bulk_targets(BulkAction::Remove, &s, &shown), ["a", "b"]);
+        toggle_all(&mut s, &shown);
+        assert_eq!(s, sel(&["z"]));
+        toggle_selected(&mut s, "a");
+        assert_eq!(select_all_state(&s, &shown), SelectAll::Some);
+        toggle_selected(&mut s, "a");
+        assert_eq!(select_all_state(&s, &shown), SelectAll::None);
+        assert_eq!(select_all_state(&s, &[]), SelectAll::None);
+    }
+
+    #[test]
+    fn the_selection_survives_a_poll_but_drops_gone_and_seeding_rows() {
+        let s = sel(&["a", "b", "c"]);
+        let polled = vec![
+            row("a", "downloading"),
+            row("b", "seeding"),
+            row("d", "queued"),
+        ];
+        assert_eq!(prune_selection(&s, &polled), sel(&["a"]));
+    }
+
+    #[test]
+    fn the_destructive_actions_ask_once_and_name_the_count() {
+        assert_eq!(
+            bulk_confirm_message(BulkAction::RemoveWithFiles, 7).as_deref(),
+            Some("Remove 7 transfers AND delete their downloaded files? This can't be undone.")
+        );
+        assert!(
+            bulk_confirm_message(BulkAction::Remove, 1)
+                .unwrap()
+                .contains("Remove 1 transfer from")
+        );
+        assert_eq!(bulk_confirm_message(BulkAction::Pause, 3), None);
+        assert_eq!(bulk_confirm_message(BulkAction::Resume, 3), None);
+        assert!(
+            BULK_ACTIONS
+                .iter()
+                .all(|a| a.is_destructive() == bulk_confirm_message(*a, 2).is_some())
+        );
+    }
+
+    #[test]
+    fn a_partial_fan_out_failure_is_reported() {
+        assert_eq!(bulk_result_message(BulkAction::Pause, 10, 0), None);
+        assert_eq!(
+            bulk_result_message(BulkAction::Pause, 8, 2).as_deref(),
+            Some("Pause: 2 of 10 failed.")
+        );
     }
 
     #[test]

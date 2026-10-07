@@ -3,18 +3,17 @@
 //! Two read-only endpoints the Home dashboard ([[SKADI-T-0072]]) renders as
 //! badges:
 //!
-//! - `GET /health/checks` — a flat list of `{ name, status: ok|warn|fail,
-//!   detail }` covering the daemon version, DB reachability, each domain's
-//!   enabled state, and every configured indexer/downloader's reachability
-//!   (reusing the provider `test()` path). Provider checks run concurrently with
-//!   a per-provider timeout so one slow/dead provider can't hang the endpoint.
+//! - `GET /health/checks` — the results of the [`crate::health_checks`]
+//!   registry (SKADI-T-0679): one `{ id, label, severity, message, remediation,
+//!   checked_at }` per check, plus the old `{ name, status, detail }` as a
+//!   projection. Checks run concurrently, each within its own budget, so one
+//!   slow/dead provider can't hang the endpoint.
 //! - `GET /root-folders` — per root folder: path, existence, writability, and
 //!   free/total bytes (via `statvfs`), so the UI can warn before a download
 //!   fills the disk (a real risk on the space-limited deploy host).
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
@@ -24,51 +23,11 @@ use axum::routing::get;
 use serde::Serialize;
 
 use skadi_core::AppError;
-use skadi_store::{DomainStateRepo, SettingsRepo, Store};
+use skadi_store::{DomainStateRepo, Store};
 
 use crate::error::ApiError;
-use crate::providers::build_one;
-use crate::state::{AppState, DomainDescriptor};
-
-/// Per-provider reachability timeout — a slow/dead provider reports `fail`
-/// rather than hanging the whole endpoint. 30 s, not 10 (SKADI-T-0587): a
-/// CloudFlare-fronted tracker answers through FlareSolverr, whose solve alone
-/// routinely takes 10–20 s, so the shorter budget reported nine of nineteen
-/// working indexers as failing.
-const PROVIDER_TEST_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Consecutive failures at which an indexer's health check answers from the cached
-/// health registry instead of a live `test()` (SKADI-T-0308). Live-testing a dead
-/// CloudFlare tracker serializes behind the single-threaded FlareSolverr and made the
-/// whole `/health/checks` page take ~10s; once the search path has marked it down this
-/// many times we trust that. Matches the search circuit-breaker default.
-const CHECK_CACHED_FAILS: u32 = 3;
-
-/// One health check result, rendered as a badge by the UI.
-#[derive(Serialize, Debug, Clone)]
-pub struct Check {
-    pub name: String,
-    /// `ok` | `warn` | `fail`.
-    pub status: &'static str,
-    pub detail: String,
-}
-
-impl Check {
-    fn ok(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Check {
-            name: name.into(),
-            status: "ok",
-            detail: detail.into(),
-        }
-    }
-    fn fail(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Check {
-            name: name.into(),
-            status: "fail",
-            detail: detail.into(),
-        }
-    }
-}
+use crate::health_checks::{CheckContext, HealthRegistry};
+use crate::state::AppState;
 
 /// Free-space + health report for one configured root folder (SKADI-T-0232). Status is
 /// the shared `skadi_core::probe_root_status`; `usable`/`problem` give the UI a single
@@ -259,8 +218,8 @@ fn store(state: &AppState) -> Result<&Store, ApiError> {
 }
 
 async fn health_checks(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
-    let checks = run_health_checks(store(&state)?, &state.domains).await;
-    Ok(Json(checks))
+    let ctx = CheckContext::from_state(&state)?;
+    Ok(Json(HealthRegistry::builtin().run_all(&ctx).await))
 }
 
 async fn root_folders(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
@@ -314,82 +273,8 @@ fn immediate_child_dirs(root: &Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Aggregate the daemon health checks. Order: daemon version, database, each
-/// domain, then providers (sorted by name). Never errors — a failed sub-check
-/// becomes a `fail`/`warn` entry, not an HTTP error, so the dashboard always
-/// renders.
-pub async fn run_health_checks(store: &Store, domains: &[DomainDescriptor]) -> Vec<Check> {
-    let mut checks = vec![Check::ok(
-        "daemon",
-        format!("skadi {}", env!("CARGO_PKG_VERSION")),
-    )];
-
-    // Database reachability: a cheap read that touches the connection.
-    match store.list_settings("profiles").await {
-        Ok(_) => checks.push(Check::ok("database", "reachable")),
-        Err(e) => checks.push(Check::fail("database", format!("{e}"))),
-    }
-
-    // Only enabled domains surface in Health — a disabled domain isn't a warning
-    // to act on, and showing it here contradicted the sidebar/dashboard, which
-    // list enabled domains only.
-    for d in domains {
-        let enabled = store
-            .get(&d.name)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|s| s.enabled);
-        if enabled {
-            checks.push(Check::ok(format!("domain:{}", d.name), "enabled"));
-        }
-    }
-
-    // The library root (SKADI-T-0467/0430): every import lands here, so a
-    // missing, non-directory or read-only root is the single most consequential
-    // misconfiguration in the stack — and it used to be invisible on the health
-    // page until an import failed.
-    checks.push(root_check(store).await);
-
-    // The download worker (SKADI-T-0467). It runs out-of-process, in the VPN
-    // namespace, and reaches the daemon only through the database, so its
-    // heartbeat row is the only thing that says it is alive.
-    checks.push(worker_check(store).await);
-
-    checks.extend(provider_checks(store).await);
-    checks
-}
-
-/// How stale a worker heartbeat may be before the worker counts as silent. The
-/// worker ticks every few seconds; two minutes is well clear of a slow tick and
-/// still notices a wedged or dead worker promptly.
-const WORKER_SILENT_AFTER: chrono::Duration = chrono::Duration::minutes(2);
-
-/// Health of the configured library root.
-async fn root_check(store: &Store) -> Check {
-    let path = match library_root_path(store).await {
-        Ok(p) => p,
-        Err(e) => return Check::fail("root", format!("library.root unreadable: {e:?}")),
-    };
-    match probe_root_bounded(&path).await {
-        Some(status) => match status.problem() {
-            None => Check::ok("root", format!("{path} is writable")),
-            Some(problem) => Check::fail("root", format!("{path}: {problem}")),
-        },
-        // A health endpoint that hangs is worse than one that reports a hang
-        // (SKADI-T-0430, NFR-ROOTS.1).
-        None => Check::fail(
-            "root",
-            format!(
-                "{path}: did not answer within {}s — a hung or disconnected mount is the usual cause",
-                ROOT_PROBE_TIMEOUT.as_secs()
-            ),
-        ),
-    }
-}
-
 /// How long a filesystem probe may take before health gives up on it.
-const ROOT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const ROOT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Probe a root off the runtime and with a deadline (SKADI-T-0430).
 ///
@@ -399,114 +284,12 @@ const ROOT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 /// so the whole endpoint would hang with it. `None` means the probe timed out;
 /// the blocking thread is left to finish on its own, which it will when the
 /// mount recovers.
-async fn probe_root_bounded(path: &str) -> Option<skadi_core::RootFolderStatus> {
+pub(crate) async fn probe_root_bounded(path: &str) -> Option<skadi_core::RootFolderStatus> {
     let probe_path = std::path::PathBuf::from(path);
     let handle = tokio::task::spawn_blocking(move || skadi_core::probe_root_status(&probe_path));
     match tokio::time::timeout(ROOT_PROBE_TIMEOUT, handle).await {
         Ok(joined) => joined.ok(),
         Err(_) => None,
-    }
-}
-
-/// Liveness of the download worker, from its heartbeat row (SKADI-T-0288).
-async fn worker_check(store: &Store) -> Check {
-    use skadi_store::WorkerStatusRepo;
-    match store.latest_worker_status().await {
-        Err(e) => Check::fail("worker", format!("heartbeat unreadable: {e}")),
-        Ok(None) => Check::fail(
-            "worker",
-            "no download worker has ever checked in — nothing will download",
-        ),
-        Ok(Some(w)) if w.is_fresh(WORKER_SILENT_AFTER) => Check::ok(
-            "worker",
-            format!(
-                "{} (v{}) last seen {}",
-                w.worker_id,
-                w.version,
-                w.last_seen_at.to_rfc3339()
-            ),
-        ),
-        Ok(Some(w)) => Check::fail(
-            "worker",
-            format!(
-                "{} last checked in {} — silent for more than {} minutes",
-                w.worker_id,
-                w.last_seen_at.to_rfc3339(),
-                WORKER_SILENT_AFTER.num_minutes()
-            ),
-        ),
-    }
-}
-
-/// Reachability of every configured indexer/downloader, run concurrently with a
-/// per-provider timeout. Results are sorted by name for a stable response.
-async fn provider_checks(store: &Store) -> Vec<Check> {
-    let mut targets: Vec<(&'static str, String, String)> = Vec::new();
-    for kind in ["indexers", "downloaders"] {
-        for row in store.list_settings(kind).await.unwrap_or_default() {
-            let name = row
-                .body
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| row.id.clone());
-            targets.push((kind, row.id.clone(), name));
-        }
-    }
-
-    let mut set = tokio::task::JoinSet::new();
-    let mut cached: Vec<Check> = Vec::new();
-    for (kind, id, name) in targets {
-        let label = format!("{}:{}", singular(kind), name);
-        // Known-down indexer → answer from the cached health registry instead of a
-        // live test (SKADI-T-0308). Avoids serializing dead CloudFlare trackers behind
-        // FlareSolverr, which was making this endpoint take ~10s.
-        if kind == "indexers"
-            && let Some(h) = uuid::Uuid::parse_str(&id)
-                .ok()
-                .map(skadi_core::IndexerId::from)
-                .and_then(|iid| skadi_indexers::indexer_health().get(iid))
-            && h.consecutive_failures >= CHECK_CACHED_FAILS
-        {
-            let reason = h
-                .last_error
-                .unwrap_or_else(|| "unreachable (circuit open)".into());
-            cached.push(Check::fail(label, reason));
-            continue;
-        }
-        let store = store.clone();
-        set.spawn(async move {
-            match build_one(&store, kind, &id).await {
-                Ok(provider) => {
-                    match tokio::time::timeout(PROVIDER_TEST_TIMEOUT, provider.test()).await {
-                        Ok(Ok(())) => Check::ok(label, "reachable"),
-                        Ok(Err(e)) => Check::fail(label, format!("{e}")),
-                        Err(_) => Check::fail(
-                            label,
-                            format!("timed out after {}s", PROVIDER_TEST_TIMEOUT.as_secs()),
-                        ),
-                    }
-                }
-                Err(e) => Check::fail(label, format!("{e}")),
-            }
-        });
-    }
-
-    let mut checks = cached;
-    while let Some(joined) = set.join_next().await {
-        if let Ok(check) = joined {
-            checks.push(check);
-        }
-    }
-    checks.sort_by(|a, b| a.name.cmp(&b.name));
-    checks
-}
-
-fn singular(kind: &str) -> &str {
-    match kind {
-        "indexers" => "indexer",
-        "downloaders" => "downloader",
-        other => other,
     }
 }
 
@@ -539,7 +322,7 @@ pub async fn root_folder_reports(store: &Store) -> Result<Vec<RootFolderReport>,
 }
 
 /// The single `library.root` path string from the config plane (SKADI-T-0302).
-async fn library_root_path(store: &Store) -> Result<String, ApiError> {
+pub(crate) async fn library_root_path(store: &Store) -> Result<String, ApiError> {
     let view = crate::load_config_view(store).await?;
     Ok(view
         .get_path("library.root")

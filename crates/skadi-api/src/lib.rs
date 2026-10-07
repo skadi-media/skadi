@@ -23,6 +23,7 @@ pub mod domains;
 pub mod error;
 pub mod fs;
 pub mod health;
+pub mod health_checks;
 pub mod household;
 pub mod http_module;
 pub mod import_lists;
@@ -49,9 +50,10 @@ pub use bootstrap::{
     bootstrap, ensure_cloacina_database, load_config_view, seed_config_from_env, seed_mode_presets,
 };
 pub use config::{BIND_ADDR_ENV, Config, DATABASE_URL_ENV};
-pub use diagnostics::{Check, RootFolderReport, diagnostics_router};
+pub use diagnostics::{RootFolderReport, diagnostics_router};
 pub use domains::domains_router;
 pub use error::{ApiError, ErrorBody};
+pub use health_checks::{CheckResult, HealthCheck, HealthRegistry, Severity};
 pub use http_module::HttpModule;
 pub use import_lists_http::import_lists_router;
 pub use library::{

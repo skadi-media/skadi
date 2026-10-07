@@ -29,7 +29,7 @@ Feature: C34 health check model, cache, warnings and config sanity
 
   # ---- the result model (SKADI-T-0679) --------------------------------------
 
-  @C34 @gap
+  @C34 @passing
   Scenario: every check result carries a severity, a message, a remediation and checked_at
     When the health checks have run
     And the client requests GET "/api/v1/health/checks"
@@ -38,7 +38,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     And every health check severity is one of "ok,warn,error"
     And the health check "database" has severity "ok"
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a failing check says how to fix it
     When the health checks have run
     And the client requests GET "/api/v1/health/checks"
@@ -154,7 +154,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the health check "domain:movies" message contains "3"
     And the health check "domain:movies" has a remediation
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a stale download-worker heartbeat is an error check
     Given the download worker "worker-a" last heartbeated 10 minutes ago
     When the health checks have run

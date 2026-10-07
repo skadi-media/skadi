@@ -20,7 +20,9 @@ The daemon's only health route is **`GET /api/v1/health`** (unauthenticated,
 liveness only — it does not ping the database). A bare `/health` is answered by
 the web UI's single-page-app fallback with `200` and `index.html`, so it proves
 nothing. `/api/v1/health/checks` (bearer token required) is the diagnostics
-view. Neither the daemon nor the worker has a compose `healthcheck`; only
+view: one entry per check with an `id`, a `label`, a `severity`
+(`ok`/`warn`/`error`), a `message`, a `remediation` (how to fix it; `null` when
+ok) and `checked_at`. Neither the daemon nor the worker has a compose `healthcheck`; only
 gluetun, flaresolverr and postgres do — `docker compose ps` shows those three.
 
 ## Bring-up

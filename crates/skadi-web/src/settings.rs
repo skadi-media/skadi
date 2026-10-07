@@ -598,7 +598,6 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
             })
             .take(60)
             .map(|d| {
-                let pick = pick;
                 let d_click = d.clone();
                 let privacy = d.privacy.clone();
                 let cats = d.categories.len();

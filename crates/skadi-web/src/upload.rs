@@ -379,7 +379,7 @@ fn JobRow(job: Job) -> impl IntoView {
                     matches!(state.get(), JobState::Sending | JobState::Waiting)
                         .then(|| {
                             view! {
-                                <button type="button" class="btn-link" on:click=cancel.clone()>
+                                <button type="button" class="btn-link" on:click=cancel>
                                     "Cancel"
                                 </button>
                             }

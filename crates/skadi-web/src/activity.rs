@@ -29,11 +29,6 @@ fn trace_color(event: &str) -> &'static str {
     }
 }
 
-/// `HH:MM:SS` from an RFC-3339 timestamp, for the event log.
-fn clock(rfc3339: &str) -> String {
-    rfc3339.get(11..19).unwrap_or("").to_string()
-}
-
 /// Trim an RFC-3339 timestamp to `YYYY-MM-DD HH:MM` for compact display.
 fn short_time(rfc3339: &str) -> String {
     let date = rfc3339.get(0..10).unwrap_or("");
@@ -554,10 +549,11 @@ pub fn series_key(label: &str) -> (String, Option<String>) {
         if is_ep {
             return (head.to_string(), Some(tail.to_string()));
         }
-        if let Some((h2, word)) = head.rsplit_once(' ') {
-            if word == "Season" && tail.chars().all(|c| c.is_ascii_digit()) {
-                return (h2.to_string(), Some(format!("Season {tail}")));
-            }
+        if let Some((h2, word)) = head.rsplit_once(' ')
+            && word == "Season"
+            && tail.chars().all(|c| c.is_ascii_digit())
+        {
+            return (h2.to_string(), Some(format!("Season {tail}")));
         }
     }
     (label.to_string(), None)
@@ -583,11 +579,12 @@ pub fn collapse_runs(runs: Vec<RunSummary>, name: impl Fn(&str) -> String) -> Ve
         let label = name(&r.acquirable_ref);
         let (show, part) = series_key(&label);
         let item = part.unwrap_or_else(|| label.clone());
-        if let Some(last) = out.last_mut() {
-            if last.label == show && last.head.event == r.event {
-                last.items.push(item);
-                continue;
-            }
+        if let Some(last) = out.last_mut()
+            && last.label == show
+            && last.head.event == r.event
+        {
+            last.items.push(item);
+            continue;
         }
         out.push(RunGroup {
             head: r,
@@ -848,7 +845,7 @@ pub fn ActivityPage() -> impl IntoView {
                             // candidates are being weighed; once a release is
                             // chosen (grab onward) show its title + decision.
                             let candidates = (gi == 1)
-                                .then(|| r.candidates_considered)
+                                .then_some(r.candidates_considered)
                                 .flatten()
                                 .map(|n| {
                                     let plural = if n == 1 { "" } else { "s" };

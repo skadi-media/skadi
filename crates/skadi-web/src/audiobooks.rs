@@ -566,7 +566,7 @@ fn author_body<F: Fn() + Copy + 'static>(
         }
     }
     if !tail.is_empty() {
-        tail.sort_by(|a, b| a.title_key().cmp(&b.title_key()));
+        tail.sort_by_key(|a| a.title_key());
         subs.push(
             view! {
                 <div class="lib-subcluster">

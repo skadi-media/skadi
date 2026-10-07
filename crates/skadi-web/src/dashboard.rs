@@ -234,10 +234,8 @@ pub fn Dashboard() -> impl IntoView {
         // role, so fetching them unconditionally meant a member's Overview
         // fired four 403s before they touched anything (SKADI-T-0639).
         spawn_local(async move {
-            if is_admin {
-                if let Ok(c) = api::health_checks().await {
-                    checks.set(c);
-                }
+            if is_admin && let Ok(c) = api::health_checks().await {
+                checks.set(c);
             }
             checks_loaded.set(true);
         });

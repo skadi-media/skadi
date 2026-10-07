@@ -1265,9 +1265,11 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
         let (mapped, total, extras) = count_g.file_counts(&ov);
         // Extras are bonus content — they have no episode to capture, so they
         // never count against "fully captured" (SKADI-T-0329).
-        let extras_note = (extras > 0)
-            .then(|| format!(" · {extras} extra{}", if extras == 1 { "" } else { "s" }))
-            .unwrap_or_default();
+        let extras_note = if extras > 0 {
+            format!(" · {extras} extra{}", if extras == 1 { "" } else { "s" })
+        } else {
+            String::new()
+        };
         if !verified {
             return view! {
                 <span
@@ -1605,7 +1607,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                 // just its header, so a library of hundreds of shows (each with
                 // hundreds of episodes) stays light instead of pre-building tens of
                 // thousands of DOM nodes (SKADI-T-0324 perf).
-                {move || (!collapsed.get()).then(|| body())}
+                {move || (!collapsed.get()).then(&body)}
             </div>
         </div>
     }

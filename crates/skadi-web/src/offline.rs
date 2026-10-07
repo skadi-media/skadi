@@ -195,7 +195,7 @@ where
             &JsValue::from_str(INDEX),
             cb.as_ref().unchecked_ref(),
         )
-        .map_err(|e| err(e))?;
+        .map_err(err)?;
     JsFuture::from(js_sys::Promise::from(promise))
         .await
         .map_err(err)?;

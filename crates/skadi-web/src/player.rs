@@ -418,10 +418,10 @@ pub fn PlayerPage() -> impl IntoView {
     let sleep_timeout = StoredValue::new(None::<i32>);
     let clear_sleep_timeout = move || {
         sleep_timeout.update_value(|slot| {
-            if let Some(id) = slot.take() {
-                if let Some(w) = web_sys::window() {
-                    w.clear_timeout_with_handle(id);
-                }
+            if let Some(id) = slot.take()
+                && let Some(w) = web_sys::window()
+            {
+                w.clear_timeout_with_handle(id);
             }
         });
     };
@@ -436,13 +436,13 @@ pub fn PlayerPage() -> impl IntoView {
                     let _ = a.pause();
                 }
             });
-            if let Some(w) = web_sys::window() {
-                if let Ok(id) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+            if let Some(w) = web_sys::window()
+                && let Ok(id) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
                     cb.as_ref().unchecked_ref(),
                     ms,
-                ) {
-                    sleep_timeout.set_value(Some(id));
-                }
+                )
+            {
+                sleep_timeout.set_value(Some(id));
             }
             // Leak the one-shot closure (a re-arm/cleanup cancels the timeout by
             // id); one tiny closure per arm, matching media_session_actions.

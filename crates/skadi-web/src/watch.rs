@@ -121,7 +121,7 @@ pub fn playability(mi: Option<&api::MediaInfo>, can: impl Fn(&str) -> bool) -> P
     if codecs.is_empty() {
         return Playability::Ok;
     }
-    let any = codecs.iter().any(|c| audio_mime(c).is_some_and(|m| can(m)));
+    let any = codecs.iter().any(|c| audio_mime(c).is_some_and(&can));
     if !any {
         return Playability::Warn(format!(
             "This browser can't decode the audio ({}): the picture will play with no sound. The Android app plays it with sound.",
@@ -309,10 +309,10 @@ fn Watch(item: WatchItem) -> impl IntoView {
     });
     let on_loaded = move |_| {
         apply_subs();
-        if let Some(v) = video.get() {
-            if let Some(at) = resume_at(load_position(&restore_key), v.duration()) {
-                v.set_current_time(at);
-            }
+        if let Some(v) = video.get()
+            && let Some(at) = resume_at(load_position(&restore_key), v.duration())
+        {
+            v.set_current_time(at);
         }
     };
     // Save on a coarse cadence: `timeupdate` fires several times a second and

@@ -150,13 +150,12 @@ impl Downloader for DbDownloader {
             DownloadJobStatus::Error => DownloadStatus::Failed {
                 reason: job.error.unwrap_or_else(|| "download error".into()),
             },
-            // Teardown states only occur after the daemon itself asked to remove
-            // the job, so it isn't normally polling status then; surface as a
-            // terminal failure rather than a phantom in-progress transfer.
+            // Teardown states: someone asked to remove the job. The hunter polls
+            // only a transfer it still watches, so seeing one here means the
+            // operator removed it under a live run (SKADI-T-0691). Terminal, but
+            // not the release's fault, so it is told apart from `Failed`.
             DownloadJobStatus::RemoveRequested | DownloadJobStatus::Removed => {
-                DownloadStatus::Failed {
-                    reason: "download removed".into(),
-                }
+                DownloadStatus::Removed
             }
         })
     }
@@ -286,11 +285,9 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, handle.native_id);
         assert!(pending[0].delete_data);
-        // Status surfaces teardown as a terminal failure.
-        assert!(matches!(
-            dl.status(&handle).await.unwrap(),
-            DownloadStatus::Failed { .. }
-        ));
+        // Status surfaces teardown as `Removed`, not as a failure of the
+        // release (SKADI-T-0691).
+        assert_eq!(dl.status(&handle).await.unwrap(), DownloadStatus::Removed);
     }
 
     #[tokio::test]

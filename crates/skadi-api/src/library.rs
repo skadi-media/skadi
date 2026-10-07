@@ -305,6 +305,7 @@ pub fn library_router() -> Router<Arc<AppState>> {
         .route("/library/genres", get(genres))
         .route("/search-all", post(search_all))
         .route("/activity", get(activity))
+        .route("/activity/{acquirable_ref}/retry", post(activity_retry))
         .route("/traces", get(traces))
         .route("/history", get(history))
         .route("/history/counts", get(history_counts))
@@ -589,6 +590,73 @@ async fn activity(
         }
     }
     Ok(Json(runs))
+}
+
+/// `POST /activity/{acquirable_ref}/retry` — give up on a live run's transfer
+/// and search for the item again at once (SKADI-T-0691), the Retry action of
+/// an Activity row.
+///
+/// Marks the run retry-requested in the in-flight tracker and asks for its
+/// download row to be removed, partial data and all. The hunter's `monitor`
+/// then sees the transfer `Removed`, ends the run without blocklisting the
+/// release, and leaves the item due now, so the next sweep searches afresh.
+/// `202` with the `download_id`; `404` when no run is in flight for the ref;
+/// `409` when the run has no transfer yet (it is still searching or deciding,
+/// so there is nothing to retry).
+///
+/// The other row actions need no route of their own: Pause / Resume / Remove
+/// act on `download_id` through `/downloads/{id}…`, and Remove and blocklist
+/// adds the run's release (from `/decisions?acquirable=`) to `/blocklist`
+/// first. Admin only, like the rest of `/activity` (`household::path_allowed`).
+async fn activity_retry(
+    State(state): State<Arc<AppState>>,
+    Path(acquirable_ref): Path<String>,
+) -> std::result::Result<axum::response::Response, ApiError> {
+    use skadi_store::{DownloadJobRepo, DownloadJobStatus};
+    let tracker = skadi_hunter::tracker();
+    let run = tracker.get(&acquirable_ref).ok_or_else(|| {
+        ApiError(skadi_core::AppError::NotFound(format!(
+            "no acquire run in flight for {acquirable_ref}"
+        )))
+    })?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or_else(|| ApiError(skadi_core::AppError::Internal("no store configured".into())))?;
+    let mut runs = [run];
+    if skadi_hunter::tracker::wants_downloads(&runs) {
+        let jobs = store
+            .list_downloads_with_status(&[
+                DownloadJobStatus::Queued,
+                DownloadJobStatus::Downloading,
+                DownloadJobStatus::Paused,
+                DownloadJobStatus::Stalled,
+            ])
+            .await?;
+        skadi_hunter::tracker::merge_downloads(&mut runs, &jobs);
+    }
+    let [run] = runs;
+    let Some(download_id) = run.download_id else {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "no_transfer",
+                "message": format!(
+                    "the run is {} and has no transfer yet; there is nothing to retry",
+                    run.current_stage
+                ),
+            })),
+        )
+            .into_response());
+    };
+    // Flag first: the hunter reads it when it sees the removal.
+    tracker.request_retry(&acquirable_ref);
+    store.request_remove(&download_id, true).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "download_id": download_id })),
+    )
+        .into_response())
 }
 
 /// One persistent history row on the wire (SKADI-T-0082).

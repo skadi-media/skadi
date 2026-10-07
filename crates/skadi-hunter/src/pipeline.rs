@@ -1992,6 +1992,12 @@ pub async fn monitor(
                 // `FailureReason::DownloadFailed`.
                 return Err(AppError::Internal(format!("download failed: {reason}")));
             }
+            DownloadStatus::Removed => {
+                // Terminal like `Failed`, but the operator took it down: the
+                // caller must not blame the release (SKADI-T-0691).
+                state.transfer_removed = true;
+                return Err(AppError::Internal("download removed".into()));
+            }
             DownloadStatus::Downloading { progress: p } => {
                 if let Some(sink) = progress {
                     sink.report(p).await;

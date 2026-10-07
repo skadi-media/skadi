@@ -836,3 +836,70 @@ async fn only_the_admin_can_preview_or_run_a_manual_import() {
         );
     }
 }
+
+/// The Activity row actions (SKADI-T-0691) are the admin's alone: the queue
+/// itself, the new Retry route, and every existing endpoint the row composes
+/// (Pause / Resume / Remove on `/downloads/{id}`, the release key from
+/// `/decisions`, `POST /blocklist`). A kid, member or contributor is refused
+/// each at the gate (Admin short-circuits `path_allowed`, so only these roles
+/// can show a hole); the admin gets past it.
+#[tokio::test]
+async fn only_the_admin_can_act_on_an_activity_row() {
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let body = serde_json::json!({"release_key": "btih:0691", "title": "x"});
+    let routes = [
+        ("GET", "/api/v1/activity"),
+        ("POST", "/api/v1/activity/ed-0691/retry"),
+        ("POST", "/api/v1/downloads/dl-0691/pause"),
+        ("POST", "/api/v1/downloads/dl-0691/resume"),
+        ("DELETE", "/api/v1/downloads/dl-0691?delete_data=true"),
+        ("GET", "/api/v1/decisions?acquirable=ed-0691"),
+        ("POST", "/api/v1/blocklist"),
+    ];
+    for (name, role) in [("Kai", "kid"), ("Mo", "member"), ("Cy", "contributor")] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            Some("operator-token"),
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        let tok = created["token"].as_str().unwrap().to_string();
+        for (method, uri) in routes {
+            let (st, got) = call(&state, method, uri, Some(&tok), Some(body.clone())).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "{method} {uri} as {role}: {got}");
+            assert_eq!(got["message"], "not allowed on this account");
+        }
+    }
+    // The admin passes the gate. The retry answers 404 (no such run), the
+    // others whatever their handler says about the made-up ids, never 403.
+    for (method, uri) in routes {
+        let (st, got) = call(
+            &state,
+            method,
+            uri,
+            Some("operator-token"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_ne!(st, StatusCode::FORBIDDEN, "{method} {uri} as admin: {got}");
+        assert_ne!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} as admin: {got}"
+        );
+    }
+    let (st, _) = call(
+        &state,
+        "POST",
+        "/api/v1/activity/ed-0691/retry",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

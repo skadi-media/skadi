@@ -451,6 +451,58 @@ async fn record_failed_and_blocklist(state: &AcquireState, reason: FailureReason
     write_retry_failed_with(&svc, state, reason, blocked).await;
 }
 
+/// End a run whose transfer the operator removed (SKADI-T-0691): Remove,
+/// Remove and blocklist, or Retry on an Activity row, or Remove on the
+/// Downloads page. The release is not at fault, so this never auto-blocks it.
+/// When it should be searched again is the operator's call:
+///
+/// - **Retry** ([`request_retry`](crate::tracker::InFlightTracker::request_retry))
+///   or **Remove and blocklist** (the release is on the blocklist now): due
+///   immediately. The next sweep searches afresh, and a blocked release cannot
+///   be picked again, so it takes a different one.
+/// - **Remove** alone: the usual transfer backoff. Retrying at once would most
+///   likely grab the same release the operator just took down.
+async fn record_removed(state: &AcquireState) {
+    let svc = services_for(state.request.kind);
+    let retry = crate::tracker::tracker().retry_requested(&state.acquirable.0);
+    let blocked = match state.chosen.as_ref() {
+        Some(chosen) => svc
+            .store
+            .is_blocked(&skadi_indexers::release_key(chosen))
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
+    let title = state
+        .chosen
+        .as_ref()
+        .map(|r| r.title.as_str())
+        .unwrap_or("");
+    let then = if retry {
+        "searching again on the next sweep"
+    } else if blocked {
+        "blocklisted, the next sweep picks another release"
+    } else {
+        "searching again after the backoff"
+    };
+    crate::trace::emit(
+        state.request.kind,
+        &state.acquirable.0,
+        "downloading",
+        "download_removed",
+        format!("removed \"{title}\" on request; {then}"),
+        None,
+    )
+    .await;
+    write_retry_failed_with(
+        &svc,
+        state,
+        FailureReason::Other("download removed on request".into()),
+        retry || blocked,
+    )
+    .await;
+}
+
 /// The operator's automatic-blocklist policy for `kind` (SKADI-T-0529).
 struct BlocklistPolicy {
     /// Auto-block on a hard failure at all.
@@ -1101,6 +1153,17 @@ pub async fn monitor(context: &mut Context<Value>) -> Result<()> {
         // Cloacina would burn the whole retry budget re-polling a dead download,
         // each re-writing the failure (the activity-log storm). The next sweep
         // re-acquires after the backoff (flaky-source recovery).
+        if let AppError::Internal(_) = e
+            && state.transfer_removed
+        {
+            // The operator removed the transfer (SKADI-T-0691): terminal, but
+            // the release did nothing wrong, so no auto-block.
+            record_removed(&state).await;
+            state.terminal_failure = true;
+            store_state(context, &state)?;
+            leave_run(&state);
+            return Ok(());
+        }
         if let AppError::Internal(_) = e {
             // Terminal download failure: the release is at fault — blocklist it so
             // the next sweep grabs the next-best candidate, not this dead one

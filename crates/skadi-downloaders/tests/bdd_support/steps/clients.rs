@@ -307,6 +307,11 @@ fn is_failed(w: &mut World, needle: String) {
     }
 }
 
+#[then("the status is removed")]
+fn is_removed(w: &mut World) {
+    assert_eq!(status_of(w), &DownloadStatus::Removed, "{:?}", w.status);
+}
+
 #[then("the status lookup reports not found")]
 fn not_found(w: &mut World) {
     match w.status.as_ref().expect("a status was read") {

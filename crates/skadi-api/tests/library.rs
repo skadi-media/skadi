@@ -844,3 +844,216 @@ async fn downloads_lists_the_recent_failures_bounded_to_fifty() {
         assert!(msg.starts_with("tracker said no"), "{msg}");
     }
 }
+
+async fn call_json(
+    state: &Arc<AppState>,
+    method: &str,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let res = skadi_api::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// A live run at `downloading` whose transfer is the download row returned
+/// (written with its target, as the hunter does at snatch).
+async fn downloading_run(db: &TestDb, aref: &str, release: &str) -> skadi_store::DownloadJob {
+    use skadi_store::{DownloadJobRepo, NewDownloadJob};
+    let job = db
+        .store
+        .enqueue(&NewDownloadJob {
+            acquirable_ref: release.into(),
+            source: format!("magnet:?xt=urn:btih:{aref}"),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+    db.store
+        .set_download_target(&job.id, "movie", aref)
+        .await
+        .unwrap();
+    let t = skadi_hunter::tracker();
+    t.finish(aref);
+    t.start(format!("run-{aref}"), MediaKind::Movie, aref);
+    t.set_chosen(aref, Some(release.into()), 2);
+    t.set_stage(aref, "downloading");
+    job
+}
+
+fn run_in<'a>(runs: &'a serde_json::Value, aref: &str) -> &'a serde_json::Value {
+    runs.as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["acquirable_ref"] == aref)
+        .expect("run listed")
+}
+
+/// Pause and Resume on an Activity row go through `/downloads/{id}/…` with the
+/// run's `download_id`, and `/activity` shows the transfer's status, so the row
+/// can offer the other one on the next poll (SKADI-T-0691).
+#[tokio::test]
+async fn an_activity_row_pauses_and_resumes_its_transfer_by_download_id() {
+    let (state, db) = state(true).await;
+    let aref = "ref-0691-pause";
+    let job = downloading_run(&db, aref, "Movie.0691.Pause.1080p").await;
+
+    let (_, runs) = call(&state, "/api/v1/activity").await;
+    let run = run_in(&runs, aref);
+    assert_eq!(run["download_id"], job.id.as_str());
+    assert_eq!(run["download_status"], "queued");
+
+    let (s, _) = call_method(
+        &state,
+        "POST",
+        &format!("/api/v1/downloads/{}/pause", job.id),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let (_, runs) = call(&state, "/api/v1/activity").await;
+    assert_eq!(run_in(&runs, aref)["download_status"], "paused");
+
+    let (s, _) = call_method(
+        &state,
+        "POST",
+        &format!("/api/v1/downloads/{}/resume", job.id),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let (_, runs) = call(&state, "/api/v1/activity").await;
+    assert_eq!(run_in(&runs, aref)["download_status"], "queued");
+
+    skadi_hunter::tracker().finish(aref);
+}
+
+/// Remove and blocklist, as the Activity row does it with the endpoints that
+/// exist (SKADI-T-0691): the run's release key from `/decisions?acquirable=`,
+/// `POST /blocklist`, then `DELETE /downloads/{id}?delete_data=true`. The
+/// release ends up blocked (so the next sweep cannot pick it: the hunter test
+/// `remove_and_blocklist_from_activity_makes_the_next_sweep_take_another_release`
+/// proves that half), and the transfer drops off the run on the next poll.
+#[tokio::test]
+async fn remove_and_blocklist_from_an_activity_row_blocks_the_release_and_drops_the_transfer() {
+    use skadi_store::{BlocklistRepo, DecisionEntry, DecisionHistoryRepo, DownloadJobRepo};
+    let (state, db) = state(true).await;
+    let aref = "ref-0691-remove";
+    let release = "Movie.0691.Remove.1080p";
+    let job = downloading_run(&db, aref, release).await;
+    db.store
+        .record_decision(&DecisionEntry {
+            id: "d-0691".into(),
+            at: chrono::Utc::now(),
+            kind: "movie".into(),
+            acquirable_ref: aref.into(),
+            title: release.into(),
+            quality: Some("Bluray-1080p".into()),
+            decision: Some("Accept".into()),
+            format_score: 0,
+            explanation: "{}".into(),
+            release_key: Some("btih:0691remove".into()),
+        })
+        .await
+        .unwrap();
+
+    let (s, decisions) = call(&state, &format!("/api/v1/decisions?acquirable={aref}")).await;
+    assert_eq!(s, StatusCode::OK);
+    let key = decisions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|d| d["release_key"].as_str())
+        .expect("the run's release key")
+        .to_string();
+    let (s, _) = call_json(
+        &state,
+        "POST",
+        "/api/v1/blocklist",
+        serde_json::json!({
+            "release_key": key,
+            "title": release,
+            "acquirable_ref": aref,
+            "reason": "removed from the queue",
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let (s, _) = call_method(
+        &state,
+        "DELETE",
+        &format!("/api/v1/downloads/{}?delete_data=true", job.id),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+
+    assert!(db.store.is_blocked("btih:0691remove").await.unwrap());
+    let pending = db.store.list_remove_requested().await.unwrap();
+    let row = pending
+        .iter()
+        .find(|j| j.id == job.id)
+        .expect("remove requested");
+    assert!(row.delete_data, "a queue removal drops the partial data");
+    // Next poll: the run (still tracked until the hunter notices) has no
+    // transfer, so the row offers no transfer actions any more.
+    let (_, runs) = call(&state, "/api/v1/activity").await;
+    assert!(run_in(&runs, aref).get("download_id").is_none());
+
+    skadi_hunter::tracker().finish(aref);
+}
+
+/// `POST /activity/{ref}/retry` (SKADI-T-0691): flags the run for an immediate
+/// fresh search and removes its transfer; 404 with no run, 409 with no
+/// transfer yet.
+#[tokio::test]
+async fn retry_from_activity_flags_the_run_and_removes_its_transfer() {
+    use skadi_store::DownloadJobRepo;
+    let (state, db) = state(true).await;
+    let aref = "ref-0691-retry";
+    let job = downloading_run(&db, aref, "Movie.0691.Retry.1080p").await;
+
+    let (s, body) = call_method(&state, "POST", &format!("/api/v1/activity/{aref}/retry")).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["download_id"], job.id.as_str());
+    assert!(skadi_hunter::tracker().retry_requested(aref));
+    let pending = db.store.list_remove_requested().await.unwrap();
+    let row = pending
+        .iter()
+        .find(|j| j.id == job.id)
+        .expect("remove requested");
+    assert!(row.delete_data);
+    let (_, runs) = call(&state, "/api/v1/activity").await;
+    assert_eq!(run_in(&runs, aref)["retry_requested"], true);
+    skadi_hunter::tracker().finish(aref);
+
+    let (s, _) = call_method(&state, "POST", "/api/v1/activity/ref-0691-none/retry").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let searching = "ref-0691-searching";
+    let t = skadi_hunter::tracker();
+    t.finish(searching);
+    t.start("run-0691-s", MediaKind::Movie, searching);
+    t.set_stage(searching, "searching");
+    let (s, body) = call_method(
+        &state,
+        "POST",
+        &format!("/api/v1/activity/{searching}/retry"),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "no_transfer");
+    assert!(!t.retry_requested(searching));
+    t.finish(searching);
+}

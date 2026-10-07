@@ -1162,11 +1162,21 @@ pub async fn block_release(
     title: &str,
     acquirable_ref: &str,
 ) -> Result<(), ApiError> {
+    block_release_because(release_key, title, acquirable_ref, "manual").await
+}
+
+/// [`block_release`] with the `reason` the blocklist shows (SKADI-T-0691).
+pub async fn block_release_because(
+    release_key: &str,
+    title: &str,
+    acquirable_ref: &str,
+    reason: &str,
+) -> Result<(), ApiError> {
     let body = serde_json::json!({
         "release_key": release_key,
         "title": title,
         "acquirable_ref": acquirable_ref,
-        "reason": "manual",
+        "reason": reason,
     });
     let resp = post(&format!("{API_BASE}/blocklist"))
         .json(&body)?
@@ -1985,6 +1995,47 @@ pub struct ActivityRun {
     pub eta_seconds: Option<i64>,
     #[serde(default)]
     pub down_speed_bps: Option<i64>,
+    /// The download row's status (`queued` / `downloading` / `paused` /
+    /// `stalled`), merged like the fields above (SKADI-T-0691).
+    #[serde(default)]
+    pub download_status: Option<String>,
+    /// The operator asked for a retry; the transfer is being removed and the
+    /// run ends on the hunter's next look (SKADI-T-0691).
+    #[serde(default)]
+    pub retry_requested: bool,
+}
+
+/// `POST /activity/{ref}/retry` — drop a live run's transfer and search for
+/// the item again at once (SKADI-T-0691). Admin only.
+pub async fn retry_activity_run(acquirable_ref: &str) -> Result<(), ApiError> {
+    let resp = post(&format!("{API_BASE}/activity/{acquirable_ref}/retry"))
+        .send()
+        .await
+        .noted()?;
+    write_ok("retry", resp).await
+}
+
+/// One persisted decision, the fields the Activity row needs (mirror of a
+/// subset of skadi-api `DecisionDto`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct DecisionRow {
+    /// The chosen release title.
+    pub title: String,
+    /// The grabbed release's blocklist key; `None` for old rows.
+    #[serde(default)]
+    pub release_key: Option<String>,
+}
+
+/// `GET /decisions?acquirable=` — the decisions for one item, newest first.
+pub async fn decisions_for(acquirable_ref: &str) -> Result<Vec<DecisionRow>, ApiError> {
+    let resp = get(&format!("{API_BASE}/decisions?acquirable={acquirable_ref}"))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("decisions -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<Vec<DecisionRow>>().await?)
 }
 
 /// One persistent history row (mirror of skadi-api `HistoryDto`).

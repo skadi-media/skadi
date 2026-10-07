@@ -248,6 +248,11 @@ pub struct AcquireState {
     /// recovering a flaky source (SKADI-I-0017).
     #[serde(default)]
     pub terminal_failure: bool,
+    /// Set by `monitor` when the transfer was removed on request (the operator
+    /// removed it from Activity or Downloads) instead of failing on its own
+    /// (SKADI-T-0691). The run then ends without auto-blocklisting the release.
+    #[serde(default)]
+    pub transfer_removed: bool,
     /// How many times this acquirable has *already* failed not-found (search
     /// returned nothing / no suitable release) before this run — read from the
     /// prior `Failed.attempts` when `search` starts. Drives the escalating
@@ -317,6 +322,7 @@ impl AcquireState {
             completed_paths: None,
             outcome: None,
             terminal_failure: false,
+            transfer_removed: false,
             prior_not_found_attempts: 0,
             manual: false,
             run_id: None,

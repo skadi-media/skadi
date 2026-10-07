@@ -635,6 +635,159 @@ pub fn run_progress(r: &api::ActivityRun) -> Option<(f64, String)> {
     ))
 }
 
+/// What an Activity row can do to its run's transfer (SKADI-T-0691).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    /// `POST /downloads/{id}/pause`.
+    Pause,
+    /// `POST /downloads/{id}/resume`.
+    Resume,
+    /// `DELETE /downloads/{id}?delete_data=true`: the hunter searches again
+    /// after the usual backoff, and the release stays grabbable.
+    Remove,
+    /// Blocklist the run's release (`/decisions` → `POST /blocklist`), then
+    /// remove: the next sweep takes a different release.
+    RemoveAndBlocklist,
+    /// `POST /activity/{ref}/retry`: drop the transfer and search again now.
+    Retry,
+}
+
+/// The transfer statuses a pause applies to (the store pauses only these).
+const PAUSABLE: [&str; 2] = ["queued", "downloading"];
+
+impl RowAction {
+    /// The button text.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            RowAction::Pause => "Pause",
+            RowAction::Resume => "Resume",
+            RowAction::Remove => "Remove",
+            RowAction::RemoveAndBlocklist => "Remove + blocklist",
+            RowAction::Retry => "Retry",
+        }
+    }
+
+    /// The button tooltip: what happens next.
+    #[must_use]
+    pub fn hint(self) -> &'static str {
+        match self {
+            RowAction::Pause => "Pause the transfer",
+            RowAction::Resume => "Resume the transfer",
+            RowAction::Remove => {
+                "Drop the transfer; the item is searched again after the usual wait"
+            }
+            RowAction::RemoveAndBlocklist => {
+                "Drop the transfer and blocklist this release; the next sweep picks another"
+            }
+            RowAction::Retry => "Drop the transfer and search for the item again now",
+        }
+    }
+
+    /// Whether the action throws work away, so it asks first.
+    #[must_use]
+    pub fn is_destructive(self) -> bool {
+        !matches!(self, RowAction::Pause | RowAction::Resume)
+    }
+}
+
+/// The actions an Activity row offers (SKADI-T-0691): only to the admin (the
+/// routes are admin-only), only for a run with a transfer (`download_id`),
+/// and none once a retry is under way. Pause for a queued or downloading
+/// transfer, Resume for a paused one; a stalled one can be neither.
+#[must_use]
+pub fn row_actions(run: &api::ActivityRun, role: Option<&str>) -> Vec<RowAction> {
+    if role != Some("admin") || run.download_id.is_none() || run.retry_requested {
+        return Vec::new();
+    }
+    let status = run.download_status.as_deref().unwrap_or("");
+    let mut out = Vec::new();
+    if PAUSABLE.contains(&status) {
+        out.push(RowAction::Pause);
+    } else if status == "paused" {
+        out.push(RowAction::Resume);
+    }
+    out.extend([
+        RowAction::Retry,
+        RowAction::Remove,
+        RowAction::RemoveAndBlocklist,
+    ]);
+    out
+}
+
+/// The question a destructive action asks first; `None` for Pause / Resume.
+#[must_use]
+pub fn confirm_message(action: RowAction, name: &str) -> Option<String> {
+    match action {
+        RowAction::Pause | RowAction::Resume => None,
+        RowAction::Remove => Some(format!(
+            "Remove the transfer for \"{name}\" and delete what it has downloaded? \
+             The item is searched again after the usual wait, and may get the same release."
+        )),
+        RowAction::RemoveAndBlocklist => Some(format!(
+            "Remove the transfer for \"{name}\", delete what it has downloaded, and \
+             blocklist the release? The next sweep picks a different one."
+        )),
+        RowAction::Retry => Some(format!(
+            "Drop the transfer for \"{name}\" (deleting what it has downloaded) and \
+             search for it again now?"
+        )),
+    }
+}
+
+/// The run's release to blocklist: the newest decision that carries a key,
+/// with its title. `None` when no decision recorded one (rows from before
+/// SKADI-T-0196), and Remove + blocklist then refuses rather than remove only.
+#[must_use]
+pub fn release_to_block(decisions: &[api::DecisionRow]) -> Option<(String, String)> {
+    decisions.iter().find_map(|d| {
+        d.release_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .map(|k| (k.clone(), d.title.clone()))
+    })
+}
+
+/// The blocklist reason a Remove + blocklist writes.
+pub const BLOCK_REASON: &str = "removed from the queue";
+
+/// The line under the row after an action went through.
+#[must_use]
+pub fn done_message(action: RowAction) -> &'static str {
+    match action {
+        RowAction::Pause => "Paused.",
+        RowAction::Resume => "Resumed.",
+        RowAction::Remove => "Removed. The item is searched again after the usual wait.",
+        RowAction::RemoveAndBlocklist => {
+            "Removed and blocklisted. The next sweep picks another release."
+        }
+        RowAction::Retry => "Retrying: the next sweep searches for it again.",
+    }
+}
+
+/// Carry out `action` on `run` against the API (SKADI-T-0691). Remove +
+/// blocklist blocks before it removes: the hunter reads the blocklist when it
+/// sees the removal, to decide whether the item is due at once.
+async fn perform(action: RowAction, run: &api::ActivityRun) -> Result<(), api::ApiError> {
+    let id = run.download_id.clone().unwrap_or_default();
+    match action {
+        RowAction::Pause => api::pause_download(&id).await,
+        RowAction::Resume => api::resume_download(&id).await,
+        RowAction::Remove => api::remove_download(&id, true).await,
+        RowAction::Retry => api::retry_activity_run(&run.acquirable_ref).await,
+        RowAction::RemoveAndBlocklist => {
+            let decisions = api::decisions_for(&run.acquirable_ref).await?;
+            let Some((key, title)) = release_to_block(&decisions) else {
+                return Err(api::ApiError(
+                    "No release on record for this run to blocklist; nothing was removed.".into(),
+                ));
+            };
+            api::block_release_because(&key, &title, &run.acquirable_ref, BLOCK_REASON).await?;
+            api::remove_download(&id, true).await
+        }
+    }
+}
+
 #[component]
 pub fn ActivityPage() -> impl IntoView {
     let runs = RwSignal::new(Vec::<api::ActivityRun>::new());
@@ -646,6 +799,12 @@ pub fn ActivityPage() -> impl IntoView {
     let titles = RwSignal::new(HashMap::<String, String>::new());
     let error = RwSignal::new(None::<String>);
     let alive = RwSignal::new(true);
+    // Row actions (SKADI-T-0691): admin only, read from the shell's role so an
+    // unresolved role offers nothing. `busy` holds the ref being acted on; the
+    // outcome line sits above the board, since a removed run leaves it.
+    let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let busy = RwSignal::new(None::<String>);
+    let action_msg = RwSignal::new(None::<(bool, String)>);
 
     Effect::new(move |_| {
         // Resolve titles once (the library rarely changes mid-watch). Both domains:
@@ -779,6 +938,60 @@ pub fn ActivityPage() -> impl IntoView {
                             // item itself did not resolve, that title is the
                             // best name there is, so it leads (SKADI-T-0580).
                             let chosen_title = (gi >= 2).then(|| r.chosen_title.clone()).flatten();
+                            let name = resolved
+                                .clone()
+                                .or_else(|| chosen_title.clone())
+                                .unwrap_or_else(|| r.acquirable_ref.clone());
+                            let actions = row_actions(&r, role.and_then(|s| s.get()).as_deref());
+                            let actions_view = (!actions.is_empty()).then(|| {
+                                let buttons = actions
+                                    .into_iter()
+                                    .map(|a| {
+                                        let run = r.clone();
+                                        let name = name.clone();
+                                        let aref = r.acquirable_ref.clone();
+                                        let on_click = move |_| {
+                                            if let Some(question) = confirm_message(a, &name) {
+                                                // T-0694: use the in-app ConfirmDialog here once it lands.
+                                                if !crate::settings::window_confirm(&question) {
+                                                    return;
+                                                }
+                                            }
+                                            let run = run.clone();
+                                            let name = name.clone();
+                                            busy.set(Some(run.acquirable_ref.clone()));
+                                            spawn_local(async move {
+                                                let outcome = match perform(a, &run).await {
+                                                    Ok(()) => (true, format!("{name}: {}", done_message(a))),
+                                                    Err(e) => (false, format!("{name}: {e}")),
+                                                };
+                                                action_msg.set(Some(outcome));
+                                                busy.set(None);
+                                                // Show the effect now rather than on the next tick.
+                                                if let Ok(fresh) = api::activity().await {
+                                                    runs.set(fresh);
+                                                }
+                                            });
+                                        };
+                                        let cls = if a.is_destructive() { "run-action danger" } else { "run-action" };
+                                        view! {
+                                            <button
+                                                type="button"
+                                                class=cls
+                                                title=a.hint()
+                                                disabled=move || busy.get().as_deref() == Some(aref.as_str())
+                                                on:click=on_click
+                                            >
+                                                {a.label()}
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view();
+                                view! { <span class="run-actions">{buttons}</span> }
+                            });
+                            let retrying = r.retry_requested.then(|| {
+                                view! { <span class="stage-doing muted">"retrying…"</span> }
+                            });
                             let label_view = match resolved.or_else(|| chosen_title.clone()) {
                                 Some(t) => view! { <strong>{t}</strong> }.into_any(),
                                 None => {
@@ -846,7 +1059,9 @@ pub fn ActivityPage() -> impl IntoView {
                                     {chosen}
                                     {decision}
                                     {progress}
+                                    {retrying}
                                     <span class="muted stage-when">{started}</span>
+                                    {actions_view}
                                 </div>
                             }
                         })
@@ -984,6 +1199,10 @@ pub fn ActivityPage() -> impl IntoView {
         </div>
 
         {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+        {move || action_msg.get().map(|(ok, text)| {
+            let cls = if ok { "run-action-msg ok" } else { "run-action-msg bad" };
+            view! { <p class=cls role="status">{text}</p> }
+        })}
         <div class="stage-bar">{stage_bar}</div>
         <div class="stage-board">{stage_board}</div>
 
@@ -1020,6 +1239,94 @@ mod tests {
         assert_eq!(
             run_progress(&r),
             Some((25.0, "25% · 2 KB/s · 2h 1m".into()))
+        );
+    }
+
+    fn transfer(status: &str) -> api::ActivityRun {
+        run(serde_json::json!({
+            "run_id": "r", "acquirable_ref": "ed-1", "current_stage": "downloading",
+            "download_id": "d1", "download_status": status
+        }))
+    }
+
+    #[test]
+    fn row_actions_are_the_admins_and_need_a_transfer() {
+        let full = [
+            RowAction::Pause,
+            RowAction::Retry,
+            RowAction::Remove,
+            RowAction::RemoveAndBlocklist,
+        ];
+        assert_eq!(row_actions(&transfer("downloading"), Some("admin")), full);
+        // Admin short-circuits the API gate, so the other roles are the test:
+        // none of them, nor an unresolved role, is offered anything.
+        for role in [None, Some("member"), Some("kid"), Some("contributor")] {
+            assert!(
+                row_actions(&transfer("downloading"), role).is_empty(),
+                "{role:?}"
+            );
+        }
+        // No transfer yet (searching / deciding): nothing to act on.
+        let searching = run(serde_json::json!({
+            "run_id": "r", "acquirable_ref": "ed-1", "current_stage": "searching"
+        }));
+        assert!(row_actions(&searching, Some("admin")).is_empty());
+        // A retry under way: the row waits for the hunter.
+        let mut retrying = transfer("downloading");
+        retrying.retry_requested = true;
+        assert!(row_actions(&retrying, Some("admin")).is_empty());
+    }
+
+    #[test]
+    fn pause_or_resume_follows_the_transfer_status() {
+        let first = |s: &str| row_actions(&transfer(s), Some("admin")).first().copied();
+        assert_eq!(first("queued"), Some(RowAction::Pause));
+        assert_eq!(first("downloading"), Some(RowAction::Pause));
+        assert_eq!(first("paused"), Some(RowAction::Resume));
+        // The store cannot pause a stalled transfer, so neither is offered.
+        assert_eq!(first("stalled"), Some(RowAction::Retry));
+    }
+
+    #[test]
+    fn destructive_actions_ask_first() {
+        for a in [RowAction::Pause, RowAction::Resume] {
+            assert!(!a.is_destructive());
+            assert_eq!(confirm_message(a, "Dune"), None);
+        }
+        for a in [
+            RowAction::Remove,
+            RowAction::RemoveAndBlocklist,
+            RowAction::Retry,
+        ] {
+            assert!(a.is_destructive());
+            let q = confirm_message(a, "Dune").unwrap();
+            assert!(q.contains("\"Dune\""), "{q}");
+        }
+        assert!(
+            confirm_message(RowAction::RemoveAndBlocklist, "Dune")
+                .unwrap()
+                .contains("blocklist")
+        );
+    }
+
+    #[test]
+    fn the_release_to_block_is_the_newest_decision_with_a_key() {
+        let d = |title: &str, key: Option<&str>| api::DecisionRow {
+            title: title.into(),
+            release_key: key.map(str::to_string),
+        };
+        assert_eq!(release_to_block(&[]), None);
+        assert_eq!(
+            release_to_block(&[d("Old", None), d("Blank", Some(""))]),
+            None
+        );
+        assert_eq!(
+            release_to_block(&[
+                d("Legacy", None),
+                d("New.1080p", Some("btih:n")),
+                d("Old", Some("btih:o"))
+            ]),
+            Some(("btih:n".into(), "New.1080p".into()))
         );
     }
 

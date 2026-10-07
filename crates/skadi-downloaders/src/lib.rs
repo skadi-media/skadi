@@ -33,9 +33,20 @@ pub struct DownloadHandle {
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum DownloadStatus {
     Queued,
-    Downloading { progress: f32 },
-    Completed { files: Vec<PathBuf> },
-    Failed { reason: String },
+    Downloading {
+        progress: f32,
+    },
+    Completed {
+        files: Vec<PathBuf>,
+    },
+    Failed {
+        reason: String,
+    },
+    /// The transfer was taken down on request (the operator removed it from
+    /// the Downloads page or an Activity row) rather than failing on its own
+    /// (SKADI-T-0691). Terminal like [`Failed`](Self::Failed), but the release
+    /// is not at fault, so the hunter must not auto-blocklist it.
+    Removed,
 }
 
 /// A configured download client.

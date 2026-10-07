@@ -2139,3 +2139,10 @@ p.genres.muted {
 .seed-plan-kind.replace { color: var(--warn); }
 .seed-plan-kind.reject { color: var(--bad); }
 .seed-import-panel .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
+/* Activity row actions (SKADI-T-0691): admin-only buttons at the row's end;
+   the outcome line sits above the board, since a removed run leaves it. */
+.run-actions { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.run-action { font-size: 0.72rem; padding: 0.1rem 0.45rem; }
+.run-action-msg { margin: 0 0 0.5rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.run-action-msg.ok { color: var(--ok); }
+.run-action-msg.bad { color: var(--bad); }

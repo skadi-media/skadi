@@ -96,7 +96,7 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     And the hunter removes the download deleting its data
     Then the queue holds a remove request for the job with delete_data true
     When the hunter reads the status
-    Then the status is failed with a reason containing "download removed"
+    Then the status is removed
     And the download is no longer in flight from the hunter's view
 
   @C16 @passing
@@ -107,7 +107,7 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     Then the queue holds a remove request for the job with delete_data false
     When the worker marks the job removed
     And the hunter reads the status
-    Then the status is failed with a reason containing "download removed"
+    Then the status is removed
 
   @C16 @passing
   Scenario: an unknown handle is not found

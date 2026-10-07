@@ -99,6 +99,17 @@ pub struct RunMeta {
     /// Current download rate, bytes per second.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub down_speed_bps: Option<i64>,
+    /// The download row's status (`queued` / `downloading` / `paused` /
+    /// `stalled`), merged like the fields above (SKADI-T-0691), so a client can
+    /// offer Pause or Resume for the transfer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_status: Option<String>,
+    /// The operator asked for this run to be retried from Activity
+    /// (SKADI-T-0691): its transfer is being removed, and when `monitor` sees
+    /// the removal it schedules the item for an immediate fresh search instead
+    /// of the usual backoff. Stored in the tracker (unlike the merged fields).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retry_requested: bool,
     /// The last `Downloading{progress}` flushed to the status sink, so the
     /// per-poll heartbeat can be throttled across `monitor` executions.
     #[serde(skip)]
@@ -166,6 +177,8 @@ impl RunMeta {
             downloaded_bytes: None,
             eta_seconds: None,
             down_speed_bps: None,
+            download_status: None,
+            retry_requested: false,
             last_flushed: None,
         }
     }
@@ -237,6 +250,41 @@ impl InFlightTracker {
         self.runs
             .read()
             .map(|runs| runs.contains_key(acquirable_ref))
+            .unwrap_or(false)
+    }
+
+    /// One run's snapshot, if tracked (SKADI-T-0691).
+    #[must_use]
+    pub fn get(&self, acquirable_ref: &str) -> Option<RunMeta> {
+        self.runs
+            .read()
+            .ok()
+            .and_then(|runs| runs.get(acquirable_ref).cloned())
+    }
+
+    /// Mark the run for `acquirable_ref` as retry-requested (SKADI-T-0691).
+    /// Returns `false` when no run is tracked for it.
+    pub fn request_retry(&self, acquirable_ref: &str) -> bool {
+        let Ok(mut runs) = self.runs.write() else {
+            return false;
+        };
+        match runs.get_mut(acquirable_ref) {
+            Some(meta) => {
+                meta.retry_requested = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the operator asked for this run to be retried
+    /// ([`request_retry`](Self::request_retry)).
+    #[must_use]
+    pub fn retry_requested(&self, acquirable_ref: &str) -> bool {
+        self.runs
+            .read()
+            .ok()
+            .and_then(|runs| runs.get(acquirable_ref).map(|m| m.retry_requested))
             .unwrap_or(false)
     }
 
@@ -666,6 +714,7 @@ pub fn merge_downloads(runs: &mut [RunMeta], jobs: &[skadi_store::DownloadJob]) 
         run.downloaded_bytes = Some(j.progress_bytes.max(0));
         run.eta_seconds = j.eta_seconds.filter(|e| *e >= 0);
         run.down_speed_bps = j.down_speed_bps;
+        run.download_status = Some(j.status.as_str().to_string());
     }
 }
 
@@ -953,6 +1002,7 @@ mod tests {
         assert_eq!(a.downloaded_bytes, Some(250));
         assert_eq!(a.eta_seconds, Some(600));
         assert_eq!(a.down_speed_bps, Some(2048));
+        assert_eq!(a.download_status.as_deref(), Some("downloading"));
         // Matched by release title; size unknown yet stays absent.
         let b = get("ed-title");
         assert_eq!(b.download_id.as_deref(), Some("d2"));
@@ -961,6 +1011,22 @@ mod tests {
         assert!(get("ed-searching").download_id.is_none());
         // The tracker itself never stores merged fields.
         assert!(t.snapshot().iter().all(|m| m.download_id.is_none()));
+    }
+
+    #[test]
+    fn a_retry_request_marks_only_a_tracked_run_and_is_served() {
+        let t = InFlightTracker::default();
+        assert!(!t.request_retry("nope"), "no run, nothing to mark");
+        t.start("a", MediaKind::Movie, "ed-r");
+        assert!(!t.retry_requested("ed-r"));
+        assert!(t.request_retry("ed-r"));
+        assert!(t.retry_requested("ed-r"));
+        assert!(t.get("ed-r").unwrap().retry_requested);
+        let json = serde_json::to_value(t.get("ed-r").unwrap()).unwrap();
+        assert_eq!(json["retry_requested"], true);
+        // Finishing the run drops the request with it.
+        t.finish("ed-r");
+        assert!(!t.retry_requested("ed-r"));
     }
 
     #[test]

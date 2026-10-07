@@ -3634,3 +3634,284 @@ async fn a_rejected_import_is_recorded_as_failed_on_the_download_row() {
         job.import_error
     );
 }
+
+// ---------------------------------------------------------------------------
+// Operator actions from an Activity row (SKADI-T-0691). The operator removes a
+// live run's transfer: on its own (Remove), after blocklisting its release
+// (Remove and blocklist), or to search afresh (Retry). The downloader below
+// plays the operator's part on its first status poll — exactly what the API
+// does to the store and tracker — then reports the transfer `Removed`, as the
+// built-in client does for a `remove_requested` row.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum OperatorAction {
+    Remove,
+    RemoveAndBlocklist,
+    Retry,
+}
+
+/// Fetches the "bad" (1080p) release until the operator takes it down; the
+/// good (720p) one completes.
+struct OperatorRemovesDownloader {
+    id: DownloaderId,
+    good_file: std::path::PathBuf,
+    store: Store,
+    action: OperatorAction,
+    acquirable: String,
+    bad_key: String,
+    bad_title: String,
+}
+#[async_trait]
+impl Downloader for OperatorRemovesDownloader {
+    fn id(&self) -> DownloaderId {
+        self.id
+    }
+    fn protocol(&self) -> Protocol {
+        Protocol::Torrent
+    }
+    async fn test(&self) -> SkadiResult<()> {
+        Ok(())
+    }
+    async fn add(&self, r: &Release, c: &Category) -> SkadiResult<DownloadHandle> {
+        let tag = if r.title.contains("1080p") {
+            "bad"
+        } else {
+            "good"
+        };
+        Ok(DownloadHandle {
+            native_id: tag.into(),
+            category: format!("{}", c.0),
+        })
+    }
+    async fn status(&self, h: &DownloadHandle) -> SkadiResult<DownloadStatus> {
+        if h.native_id != "bad" {
+            return Ok(DownloadStatus::Completed {
+                files: vec![self.good_file.clone()],
+            });
+        }
+        match self.action {
+            OperatorAction::Remove => {}
+            OperatorAction::RemoveAndBlocklist => {
+                // What the Activity row does first: block the run's release
+                // (POST /blocklist, with the key from /decisions).
+                self.store
+                    .block(&skadi_store::NewBlocklistEntry {
+                        release_key: self.bad_key.clone(),
+                        title: self.bad_title.clone(),
+                        acquirable_ref: Some(self.acquirable.clone()),
+                        indexer: None,
+                        reason: Some("removed from the queue".into()),
+                        expires_at: None,
+                    })
+                    .await?;
+            }
+            OperatorAction::Retry => {
+                assert!(skadi_hunter::tracker().request_retry(&self.acquirable));
+            }
+        }
+        Ok(DownloadStatus::Removed)
+    }
+    async fn remove(&self, _: &DownloadHandle, _: bool) -> SkadiResult<()> {
+        Ok(())
+    }
+}
+
+/// One item with two candidates, the best (1080p) fetched first; the operator
+/// takes its transfer down with `action`. Runs one acquire, then a second one
+/// (the next sweep), and returns what the test needs to judge them.
+struct RemovalRun {
+    store: Store,
+    status: Arc<InMemoryStatusSink>,
+    acquirable: AcquirableRef,
+    bad_key: String,
+    good_key: String,
+    lo: skadi_core::QualityId,
+    /// The status right after the first run (the removal).
+    after_removal: Option<AcquisitionStatus>,
+    /// The blocklist right after the first run.
+    blocked_after_removal: Vec<skadi_store::BlocklistEntry>,
+}
+
+async fn run_operator_removal(action: OperatorAction, second_run: bool) -> RemovalRun {
+    let dir = tempfile::tempdir().unwrap();
+    let library = dir.path().join("library");
+    std::fs::create_dir_all(&library).unwrap();
+    let good_src = dir.path().join("Movie.2020.720p.BluRay.x264-OPS.mkv");
+    std::fs::write(&good_src, b"video").unwrap();
+    let skadi_url = format!("sqlite://{}", dir.path().join("skadi.db").display());
+    let store = skadi_store::Store::connect(&skadi_url).unwrap();
+    store.run_migrations().await.unwrap();
+
+    let defs = default_definitions();
+    let find = |name: &str| defs.iter().find(|q| q.name == name).expect(name).id;
+    let lo = find("Bluray-720p");
+    let hi = find("Bluray-1080p");
+    let profile = QualityProfile {
+        id: ProfileId::new(),
+        name: "operator-remove".into(),
+        allowed: vec![lo, hi],
+        cutoff: hi,
+        upgrade_allowed: false,
+        formats: vec![],
+        min_format_score: 0,
+    };
+    let bad_title = "Movie.2020.1080p.BluRay.x264-OPS";
+    let good_title = "Movie.2020.720p.BluRay.x264-OPS";
+    let mk = |title: &str, hash: &str, size: i64, seeders: u32| Release {
+        indexer: IndexerId::new(),
+        title: title.into(),
+        fetch: ReleaseFetch::Magnet(format!("magnet:?xt=urn:btih:{hash}")),
+        size: size as u64,
+        published: Utc::now(),
+        seeders: Some(seeders),
+        categories: Vec::new(),
+        parsed: parse(title),
+    };
+    let bad = mk(bad_title, "opsbad1080", 8_000_000_000, 99);
+    let good = mk(good_title, "opsgood720", 5_000_000_000, 50);
+    let bad_key = skadi_indexers::release_key(&bad);
+    let good_key = skadi_indexers::release_key(&good);
+    let acquirable = AcquirableRef(format!("ed-ops-{action:?}").to_lowercase());
+
+    let status = Arc::new(InMemoryStatusSink::new());
+    let services = Arc::new(HunterServices {
+        kind: skadi_core::MediaKind::Movie,
+        store: store.clone(),
+        status: status.clone(),
+        indexers: vec![Arc::new(MultiIndexer {
+            id: IndexerId::new(),
+            releases: vec![bad, good],
+        })],
+        downloaders: vec![Arc::new(OperatorRemovesDownloader {
+            id: DownloaderId::new(),
+            good_file: good_src.clone(),
+            store: store.clone(),
+            action,
+            acquirable: acquirable.0.clone(),
+            bad_key: bad_key.clone(),
+            bad_title: bad_title.into(),
+        })],
+        importer: Arc::new(DefaultImporter::new(PlaceInDir::crediting(
+            library.clone(),
+            &acquirable.0,
+        ))) as Arc<dyn Importer>,
+        importer_factory: None,
+        notifiers: vec![],
+        scoring: ScoringConfig {
+            definitions: defs,
+            profile: profile.clone(),
+            formats: vec![],
+            min_seeders: 0,
+            audiobook: None,
+        },
+    });
+    reset_services();
+    set_services(services);
+
+    let target = cloacina_target_for(&skadi_url).unwrap();
+    let runner = build_runner_for(&target).await.unwrap();
+    let mk_seed = || AcquireSeed {
+        acquirable: acquirable.clone(),
+        request: SearchSpec {
+            trigger: Default::default(),
+            kind: MediaKind::Movie,
+            titles: vec!["Movie".into()],
+            year: Some(2020),
+            external_ids: ExternalIds::default(),
+            categories: vec![Category(2000)],
+            tv: None,
+            series: None,
+            tags: None,
+        },
+        profile: profile.id,
+        current_quality: None,
+        current_format_score: None,
+        current_unplayable: false,
+    };
+
+    let first = start_acquire_2(&runner, mk_seed()).await.unwrap();
+    assert!(matches!(first, Outcome2::Started(_)), "{first:?}");
+    drain_tracker().await;
+    let after_removal = status.get_status(&acquirable).await.unwrap();
+    let blocked_after_removal = store.list_blocklist().await.unwrap();
+    if second_run {
+        let next = start_acquire_2(&runner, mk_seed()).await.unwrap();
+        assert!(matches!(next, Outcome2::Started(_)), "{next:?}");
+        drain_tracker().await;
+    }
+    runner.shutdown().await.unwrap();
+    // Keep the temp dir alive until the runner is down.
+    drop(dir);
+    RemovalRun {
+        store,
+        status,
+        acquirable,
+        bad_key,
+        good_key,
+        lo,
+        after_removal,
+        blocked_after_removal,
+    }
+}
+
+fn retry_at(status: &Option<AcquisitionStatus>) -> chrono::DateTime<Utc> {
+    match status {
+        Some(AcquisitionStatus::Failed {
+            retry_at: Some(at), ..
+        }) => *at,
+        other => panic!("expected Failed with a retry_at, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial(hunter_registry)]
+async fn remove_and_blocklist_from_activity_makes_the_next_sweep_take_another_release() {
+    let r = run_operator_removal(OperatorAction::RemoveAndBlocklist, true).await;
+    // The operator's block is the only one: the hunter did not add its own
+    // auto-block on top (the removal was not the release's failure).
+    let keys: Vec<_> = r
+        .blocked_after_removal
+        .iter()
+        .map(|e| (e.release_key.clone(), e.reason.clone()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![(r.bad_key.clone(), Some("removed from the queue".into()))]
+    );
+    // Due at once: the bad release cannot come back, so there is nothing to
+    // back off from.
+    assert!(retry_at(&r.after_removal) <= Utc::now());
+    // The next sweep chose the other release and imported it.
+    let last = r.status.get_status(&r.acquirable).await.unwrap();
+    assert!(
+        matches!(last, Some(AcquisitionStatus::Imported { quality, .. }) if quality == r.lo),
+        "the next sweep should import the 720p release, got {last:?}"
+    );
+    let blocked = r.store.blocked_keys().await.unwrap();
+    assert!(blocked.contains(&r.bad_key));
+    assert!(!blocked.contains(&r.good_key));
+}
+
+#[tokio::test]
+#[serial_test::serial(hunter_registry)]
+async fn a_plain_remove_from_activity_blocklists_nothing_and_backs_off() {
+    let r = run_operator_removal(OperatorAction::Remove, false).await;
+    assert!(
+        r.blocked_after_removal.is_empty(),
+        "a remove without blocklist must leave the release grabbable: {:?}",
+        r.blocked_after_removal
+    );
+    assert!(
+        retry_at(&r.after_removal) > Utc::now(),
+        "a plain remove waits out the transfer backoff"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial(hunter_registry)]
+async fn retry_from_activity_blocklists_nothing_and_searches_again_at_once() {
+    let r = run_operator_removal(OperatorAction::Retry, false).await;
+    assert!(r.blocked_after_removal.is_empty());
+    assert!(retry_at(&r.after_removal) <= Utc::now());
+}

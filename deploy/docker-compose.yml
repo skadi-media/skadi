@@ -457,6 +457,10 @@ services:
       # audiobooks under audiobook/, downloads under downloads/{complete,incomplete}.
       # There is no root-folder picker any more. Defaults to the shared NFS mount.
       SKADI_LIBRARY_ROOT: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}
+      # Opt-in: register the checked-in default set of public trackers on boot
+      # (SKADI-T-0703). Empty = off; `angreal deploy init --default-indexers`
+      # writes `true` to .env.
+      SKADI_DEFAULT_INDEXERS: ${SKADI_DEFAULT_INDEXERS:-}
       RUST_LOG: ${RUST_LOG:-info}
       # Published native-app builds (deploy/publish-apk.sh) served at /app/*
       # for LAN sideload install (SKADI-T-0340).

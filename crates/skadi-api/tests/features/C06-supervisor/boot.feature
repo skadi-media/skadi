@@ -2,7 +2,7 @@ Feature: Domain registry & supervisor — daemon bootstrap (C06)
   Boot order: ensure the cloacina database (Postgres only) -> skadi-store
   migrations -> seed env into the config table -> a disabled domains row per
   compiled-in module -> each domain's migrations -> one-time mode presets ->
-  ensure the opinionated default providers. Idempotent on every restart.
+  first-boot provisioning (first-boot.feature). Idempotent on every restart.
 
   Background:
     Given a daemon running in open mode

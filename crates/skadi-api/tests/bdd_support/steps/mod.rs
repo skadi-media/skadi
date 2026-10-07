@@ -1,6 +1,7 @@
 //! Step definition modules — one per topic. Register new modules here.
 pub mod checks;
 pub mod data;
+pub mod first_boot;
 pub mod foundation;
 pub mod health;
 pub mod http;

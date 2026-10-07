@@ -181,6 +181,165 @@ def _DEP_wait_healthy(timeout_s=180):
     return False
 
 
+# First run (SKADI-T-0703): the secrets `angreal deploy init` generates.
+# (variable in .env, file under deploy/secrets/, bytes of randomness → hex)
+DEP_INIT_SECRETS = [
+    ("POSTGRES_PASSWORD", "postgres_password", 16),
+    ("SKADI_API_TOKEN", "skadi_api_token", 24),
+    ("SKADI_SECRET_KEY", "skadi_secret_key", 32),
+]
+# Written empty in --secrets mode: the overlay mounts it, and tailscale treats
+# an empty file as "no key" (the profile is off unless COMPOSE_PROFILES says so).
+DEP_INIT_EMPTY_FILES = ["tailscale_authkey"]
+
+
+def _DEP_render_env(example, values):
+    """`example` (the text of .env.example) with each `KEY=` line of a key in
+    `values` set to its value. A commented `#KEY=…` line is uncommented when
+    no plain line for that key exists. Every other line is kept as it is."""
+    plain = set()
+    for line in example.splitlines():
+        if "=" in line and not line.startswith("#"):
+            plain.add(line.split("=", 1)[0].strip())
+    out = []
+    done = set()
+    for line in example.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        key = None
+        if "=" in stripped:
+            head = stripped.split("=", 1)[0]
+            if not head.startswith("#"):
+                key = head.strip()
+            elif head[1:].strip() not in plain and " " not in head[1:].strip():
+                key = head[1:].strip()
+        if key in values and key not in done:
+            out.append(f"{key}={values[key]}\n")
+            done.add(key)
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def _DEP_write_new(path, text, mode):
+    """Create `path` with `text`; fail if it exists (O_EXCL, so a race cannot
+    overwrite a file that appeared after the check)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    os.chmod(path, mode)
+
+
+@deploy()
+@angreal.command(
+    name="init",
+    about="write deploy/.env (or deploy/secrets/*) with generated secrets; never overwrites",
+    tool=angreal.ToolDescription(
+        """
+        First run of a new install: write deploy/.env from deploy/.env.example
+        with POSTGRES_PASSWORD, SKADI_API_TOKEN and SKADI_SECRET_KEY generated.
+        With --secrets, the three values go to files under deploy/secrets/
+        instead (the secrets-from-files overlay) and stay empty in .env.
+
+        ## When to use
+        - Once, on a new host, before the first `angreal deploy up`.
+
+        ## Notes
+        - Refuses to run when deploy/.env exists, or when a secret file that it
+          would write exists. It never overwrites a secret: a changed
+          POSTGRES_PASSWORD locks the stack out of its database.
+        - After it, edit the VPN and storage values in .env, then run
+          `angreal deploy up`. The daemon registers the built-in downloader,
+          creates the default profiles and enables the domains on its first boot.
+        - --default-indexers sets SKADI_DEFAULT_INDEXERS=true.
+        - --deploy-dir writes into another directory (a scratch copy for tests).
+        """,
+        risk_level="safe",
+    ),
+)
+@angreal.argument(
+    name="secrets", long="secrets", takes_value=False, is_flag=True,
+    help="write the secrets to deploy/secrets/* files, not to .env",
+)
+@angreal.argument(
+    name="default_indexers", long="default-indexers", takes_value=False, is_flag=True,
+    help="set SKADI_DEFAULT_INDEXERS=true: register the checked-in public trackers on first boot",
+)
+@angreal.argument(
+    name="deploy_dir", long="deploy-dir", takes_value=True,
+    help="the directory to write into (default: deploy/ of this checkout)",
+)
+def init(secrets=False, default_indexers=False, deploy_dir=None):
+    import secrets as _secrets
+
+    target = os.path.abspath(deploy_dir) if deploy_dir else DEP_DEPLOY_DIR
+    env_path = os.path.join(target, ".env")
+    secrets_dir = os.path.join(target, "secrets")
+    example_path = os.path.join(target, ".env.example")
+    if not os.path.exists(example_path):
+        example_path = os.path.join(DEP_DEPLOY_DIR, ".env.example")
+
+    if os.path.exists(env_path):
+        print(
+            f"{env_path} exists. init does not overwrite it: new secrets would\n"
+            "lock the stack out of its database. Edit the file, or move it away\n"
+            "first if you really want a new one.",
+            file=sys.stderr, flush=True,
+        )
+        raise SystemExit(1)
+    if secrets:
+        names = [f for _, f, _ in DEP_INIT_SECRETS] + DEP_INIT_EMPTY_FILES
+        there = [n for n in names if os.path.exists(os.path.join(secrets_dir, n))]
+        if there:
+            print(
+                f"{secrets_dir} already holds: {', '.join(there)}\n"
+                "init does not overwrite a secret file.",
+                file=sys.stderr, flush=True,
+            )
+            raise SystemExit(1)
+    elif os.path.isdir(secrets_dir):
+        print(
+            f"{secrets_dir} exists, so `angreal deploy` applies the secrets overlay\n"
+            "and would ignore secrets written to .env. Run `angreal deploy init\n"
+            "--secrets`, or move that directory away.",
+            file=sys.stderr, flush=True,
+        )
+        raise SystemExit(1)
+
+    with open(example_path) as fh:
+        example = fh.read()
+    generated = {var: _secrets.token_hex(n) for var, _, n in DEP_INIT_SECRETS}
+    values = {}
+    if secrets:
+        os.makedirs(secrets_dir, mode=0o700, exist_ok=True)
+        os.chmod(secrets_dir, 0o700)
+        for var, name, _ in DEP_INIT_SECRETS:
+            # 0444: the containers run as other uids (postgres 999, skadi PUID);
+            # the 0700 directory keeps other host users out.
+            _DEP_write_new(os.path.join(secrets_dir, name), generated[var] + "\n", 0o444)
+            values[var] = ""
+        for name in DEP_INIT_EMPTY_FILES:
+            _DEP_write_new(os.path.join(secrets_dir, name), "", 0o444)
+    else:
+        values.update(generated)
+    if default_indexers:
+        values["SKADI_DEFAULT_INDEXERS"] = "true"
+    _DEP_write_new(env_path, _DEP_render_env(example, values), 0o600)
+
+    where = secrets_dir + "/" if secrets else env_path
+    print(f"wrote {env_path}", flush=True)
+    print(f"generated POSTGRES_PASSWORD, SKADI_API_TOKEN and SKADI_SECRET_KEY in {where}")
+    print(
+        "\nNext:\n"
+        f"  1. Edit {env_path}: the VPN values (VPN_SERVICE_PROVIDER, OPENVPN_USER /\n"
+        "     OPENVPN_PASSWORD or the WireGuard values) and the storage values\n"
+        "     (STORAGE_NFS_ADDR, STORAGE_NFS_PATH, SKADI_LIBRARY_ROOT).\n"
+        "  2. angreal deploy up\n"
+        "Keep a copy of the secrets in your password manager.",
+        flush=True,
+    )
+    return 0
+
+
 @deploy()
 @angreal.command(
     name="up",

@@ -23,8 +23,7 @@ and **do not port-forward it** — on Docker Desktop `0.0.0.0` also covers
 VPN/Tailscale interfaces and IPv6. Set `SKADI_BIND=127.0.0.1` in `.env` to lock
 it back to this machine. It's built into the image automatically — see
 [Web UI](#web-ui)
-below. The first-run walkthrough can be done entirely in the browser
-(Settings → providers, Config → profile/domains) instead of the CLI.
+below. A first run needs no CLI steps: see [First run](#first-run).
 
 **The safety property:** the download worker shares gluetun's network namespace
 (`network_mode: service:gluetun`). Its only route to the internet is the VPN
@@ -46,7 +45,7 @@ reach it is a warning: it is probably outside the namespace. The daemon's
 each other: the daemon enqueues a row in the `downloads` table, the worker (in
 the VPN namespace) claims it, downloads via librqbit, and writes progress back.
 So the worker publishes no port; it only reaches Postgres. You register a
-built-in **skadi** downloader (no host, no secret) — see the walkthrough.
+built-in **skadi** downloader (no host, no secret); the first boot registers it.
 
 ## Prerequisites
 
@@ -60,50 +59,42 @@ built-in **skadi** downloader (no host, no secret) — see the walkthrough.
 ## Setup
 
 ```sh
-cd deploy
-cp .env.example .env
-$EDITOR .env           # fill in VPN creds, generate the three secrets
-                       # (or put them in files: see "Secrets from files")
-docker compose up -d --build
+angreal deploy init        # writes deploy/.env with generated secrets
+$EDITOR deploy/.env        # set the VPN values and the storage values
+angreal deploy up          # starts the stack and waits for /api/v1/health/ready
 ```
 
-Generate the secrets the file asks for:
+`angreal deploy init` copies `.env.example` to `.env` and puts generated values
+in `POSTGRES_PASSWORD`, `SKADI_API_TOKEN` and `SKADI_SECRET_KEY`. It does not
+overwrite an existing `.env` or secret file: a new `POSTGRES_PASSWORD` locks the
+stack out of its database. Options:
 
-```sh
-openssl rand -hex 16   # POSTGRES_PASSWORD
-openssl rand -hex 24   # SKADI_API_TOKEN
-openssl rand -hex 32   # SKADI_SECRET_KEY  (to change it later, see "Rotating SKADI_SECRET_KEY")
-```
+- `--secrets` writes the three secrets to files under `deploy/secrets/` and
+  leaves them empty in `.env` (see [Secrets from files](#secrets-from-files)).
+- `--default-indexers` sets `SKADI_DEFAULT_INDEXERS=true` (see below).
 
-Watch it come up (gluetun must be healthy before the worker/flaresolverr start):
+In `.env`, set the VPN values (`VPN_SERVICE_PROVIDER`, `OPENVPN_USER` and
+`OPENVPN_PASSWORD`, or the WireGuard values) and the storage values
+(`STORAGE_NFS_ADDR`, `STORAGE_NFS_PATH`, `SKADI_LIBRARY_ROOT`). Without angreal,
+copy `.env.example` to `.env`, put `openssl rand -hex 16`, `-hex 24` and `-hex 32`
+in the three secrets, and run `docker compose up -d --build` in `deploy/`.
 
-```sh
-docker compose ps
-docker compose logs -f gluetun                    # until "healthy"
-docker compose logs -f skadi-downloader-worker    # "db agent started"
-curl -s http://127.0.0.1:${SKADI_PORT:-8080}/api/v1/health   # {"status":"ok","version":"…"}
+The first `up` waits on gluetun's VPN healthcheck, so it can take a minute or
+two. `angreal deploy status` shows the containers and the readiness probe. The
+only health route is `/api/v1/health` (liveness) and `/api/v1/health/ready`
+(readiness). A bare `/health` is the web UI and always answers 200.
 
-# Native-app serving (only if you ran deploy/publish-apk.sh): the APK manifest
-# must resolve, not 404. A 404 here almost always means the `./apk` bind-mount
-# pointed at the wrong dir — run compose from deploy/ (or set --project-directory
-# to deploy/), NOT the repo root, or ./apk resolves to <repo>/apk.
-curl -s http://127.0.0.1:${SKADI_PORT:-8080}/app/manifest.json   # → {"file":"skadi-N.apk",...}
-```
-
-> **Health URL.** The daemon's only health route is **`/api/v1/health`**
-> (unauthenticated liveness — it does not ping the database). A bare `/health`
-> is answered by the web UI's SPA fallback with `index.html` and `200`, so it
-> proves nothing; `angreal deploy up` currently polls that path, so treat its
-> "healthy" as "the HTTP listener is up" and confirm with the curl above.
-> `SKADI_PORT` is the host port from `.env` (8080 in the example; the container
-> port is always 8080).
-
-Prefer the angreal wrappers for day-to-day work — they pin the compose file,
+Prefer the angreal wrappers for day-to-day work. They pin the compose file,
 never `down -v`, and prune the builder cache after image builds:
 
 ```sh
-angreal deploy up | down | status | logs [-s svc] | build [-s svc] | redeploy [-s svc]
+angreal deploy init | up | down | status | logs [-s svc] | build [-s svc] | redeploy [-s svc]
 ```
+
+If you ran `deploy/publish-apk.sh`, check that
+`curl -s http://127.0.0.1:${SKADI_PORT:-8080}/app/manifest.json` gives
+`{"file":"skadi-N.apk",...}`. A 404 means the `./apk` mount points at the wrong
+directory: run compose from `deploy/` (or with `--project-directory deploy`).
 
 ## Secrets from files
 
@@ -294,81 +285,33 @@ WireGuard config) and updating `WIREGUARD_PRIVATE_KEY` + `WIREGUARD_ADDRESSES` i
 4.4.x) — if you run on such a host, pin `qmcgaw/gluetun:v3.38.0` with its digest
 instead (modern kernels are unaffected).
 
-## First-run walkthrough
+## First run
 
-All commands talk to the API; export once:
+There are no CLI steps. On each boot the daemon adds only what is missing, and it
+logs each action (`first boot: …` in `angreal deploy logs`):
 
-```sh
-export SKADI_API_URL=http://127.0.0.1:8080
-export SKADI_API_TOKEN=<value from .env>
-SKADI=skadi   # or: alias skadi='docker compose exec skadi skadi'
-```
+| when | the daemon does |
+|---|---|
+| there is no download client | registers the built-in **skadi** downloader (downloads under `<SKADI_LIBRARY_ROOT>/downloads`) |
+| there is no quality profile | creates the default profiles (Any, SD, HD-720p, HD-1080p, HD-720p/1080p, Ultra-HD) |
+| the database is new | enables each domain (movies, TV, audiobooks) whose folder under `SKADI_LIBRARY_ROOT` exists or can be created |
+| `SKADI_DEFAULT_INDEXERS=true` | registers each tracker of the checked-in public set (The Pirate Bay, YTS, 1337x, LimeTorrents, EZTV, AudioBook Bay) that the database has never had |
 
-1. **The downloader.** Register the built-in **skadi** downloader — the
-   worker is already running in the VPN namespace and draining the queue. No
-   host, no password:
+An install that already has these is not changed. A domain that you disable, or
+a default tracker that you remove, stays that way after a restart. If the
+library root was not mounted on the first boot, no domain is enabled: enable
+them on the Config page.
 
-   ```sh
-   skadi settings add downloaders '{
-     "kind": "skadi",
-     "name": "built-in"
-   }'
-   skadi settings test downloaders <id-from-create>   # round-trips the queue
-   ```
+The default trackers are off unless you ask for them. Without them, add trackers
+in the UI (**Indexers → "+ Add tracker"**) before a search can find anything.
+The definitions ship in the image (`crates/skadi-indexers/bundled/`), and the
+list is `DEFAULT_INDEXERS` in `crates/skadi-indexers/src/definitions.rs`.
 
-   > There is no other download client to choose. The built-in worker is the
-   > only one, which is what lets the stack guarantee that every byte of torrent
-   > traffic rides the tunnel.
-
-2. **An indexer** — add a native tracker from the catalog in the UI (Indexers →
-   "+ Add tracker"), or register a Torznab endpoint via the CLI:
-
-   ```sh
-   skadi settings add indexers '{
-     "kind": "torznab",
-     "name": "my-indexer",
-     "base_url": "https://<indexer-host>",
-     "categories": [2000],
-     "api_key": "<key>"
-   }'
-   skadi settings test indexers <id>
-   ```
-
-3. **Profile, enable movies:**
-
-   ```sh
-   skadi settings add profiles '{ "name": "default" }'
-   skadi domain enable movies
-   ```
-
-   A name-only profile is stored as the **Standard** profile (720p and up,
-   cutoff Bluray-1080p, upgrades on). Pass `allowed`/`cutoff` as quality
-   names (e.g. `"cutoff": "Bluray-1080p"`) or ids to customize; invalid
-   combinations are rejected at create time.
-
-   > There is **no root folder to register**: skadi owns the
-   > layout under its dedicated library root (`SKADI_LIBRARY_ROOT`,
-   > `/mnt/storage/skadi` by default) — movies land in `/mnt/storage/skadi/movie`,
-   > TV in `.../television/`, audiobooks in `.../audiobook/`.
-
-4. **Add a movie — the search starts immediately:**
-
-   ```sh
-   skadi add-movie --tmdb-id 603     # the profile defaults to the registered one
-   skadi activity                    # watch the acquire run
-   skadi library                     # imported!
-   ```
-
-   Add `--no-search` to register without searching; `skadi acquire
-   <movie-id> <edition-id>` re-triggers manually any time.
-
-   Under the hood: `acquire` enqueues a `downloads` row → the worker claims it
-   and downloads over the VPN into `/mnt/storage/skadi/downloads/complete` → the importer
-   hardlinks the completed file into `/mnt/storage/skadi/movie`. Follow the worker with
-   `docker compose logs -f skadi-downloader-worker`.
-
-   The supervisor reconciles provider settings every ~5s — changes via
-   `skadi settings …` go live without restarting anything.
+Then add a movie in the UI (or `skadi add-movie --tmdb-id 603`). The search
+starts at once. The worker downloads over the VPN into
+`<SKADI_LIBRARY_ROOT>/downloads/complete`, and the importer hardlinks the file
+into `<SKADI_LIBRARY_ROOT>/movie`. skadi owns the layout under its library root:
+there is no root folder to register.
 
 ## Paths (important)
 

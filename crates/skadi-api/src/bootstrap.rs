@@ -104,17 +104,23 @@ pub async fn bootstrap(config: &Config, registry: &[Arc<dyn DomainModule>]) -> R
         run_blocking(move || apply_sqlite_migrations(&path, sets)).await?;
     }
 
+    // A database that has never run the presets is a new install: the one
+    // boot on which first-boot provisioning may enable domains.
+    let fresh = store.get_config(PRESETS_SEEDED_KEY).await?.is_none();
+
     // Mode-keyed runtime presets (just-go / testing) — once, non-clobbering.
     let domain_names: Vec<&str> = registry.iter().map(|m| m.name()).collect();
     let mode = seed_mode_presets(&store, &domain_names).await?;
 
-    // Opinionated defaults so a deploy comes up *ready* rather than BYO-providers:
-    // the built-in downloader + every public indexer + AudioBookBay, ensured on
-    // every startup. Skipped in Testing (hermetic stub indexer instead).
-    if mode != skadi_config::Mode::Testing
-        && let Err(e) = ensure_default_providers(&store).await
-    {
-        tracing::warn!("seeding default providers failed (non-fatal): {e}");
+    // First-boot provisioning (SKADI-T-0703): fill in only what is absent, so a
+    // new install is usable with no CLI steps and an existing one is unchanged.
+    // Non-fatal: a failure logs and the daemon still starts.
+    match provision_first_boot(&store, registry, fresh).await {
+        Ok(done) if done.is_empty() => {
+            tracing::info!("first boot: nothing to provision");
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("first-boot provisioning failed (non-fatal): {e}"),
     }
 
     tracing::info!(
@@ -127,138 +133,281 @@ pub async fn bootstrap(config: &Config, registry: &[Arc<dyn DomainModule>]) -> R
     Ok(())
 }
 
-/// Ensure the opinionated default providers exist so a deploy comes up ready: the
-/// built-in DB-queue downloader, every **public** (no-login) catalog indexer, and
-/// **AudioBookBay**. Idempotent and run on every (non-testing) startup — a fresh or
-/// upgraded deploy always has them, and a deleted one returns next start (they are
-/// "always on"). Non-fatal: a catalog/HTTP failure logs and leaves the set as-is.
-/// Egress for these rides the configured VPN proxy (the deploy wires it).
-pub async fn ensure_default_providers(store: &Store) -> Result<()> {
-    use skadi_indexers::definitions::DefinitionStore;
+/// Comma-separated ids of every default indexer this database has been offered
+/// (SKADI-T-0703), the same seen-set idea as [`FORMATS_SEEDED_KEY`]: a default
+/// tracker the operator removed is never registered again.
+const INDEXERS_SEEDED_KEY: &str = "bootstrap.default_indexers_seen";
 
-    // 1) The built-in DB-queue downloader (the worker that drains the queue). Its
-    // incomplete/complete dirs are derived from the single library root
-    // (SKADI-T-0302/0305): `<library.root>/downloads/{incomplete,complete}` — same
-    // mount as the library, so the importer hardlinks. Without this the downloader
-    // would fall back to the generic `/data/downloads/*` defaults and ignore the
-    // deploy's actual mount.
-    let have_downloader = store
-        .list_settings("downloaders")
-        .await?
-        .iter()
-        .any(|s| s.body.get("kind").and_then(|v| v.as_str()) == Some("skadi"));
-    if !have_downloader {
-        let library_root = load_config_view(store)
-            .await
-            .ok()
-            .and_then(|v| v.get_path("library.root").ok().flatten())
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "/data".into());
-        store
-            .put_setting(
-                "downloaders",
-                &uuid::Uuid::new_v4().to_string(),
-                &serde_json::json!({
-                    "kind": "skadi",
-                    "name": "built-in",
-                    "incomplete_dir": format!("{library_root}/downloads/incomplete"),
-                    "complete_dir": format!("{library_root}/downloads/complete"),
-                }),
-            )
-            .await?;
-        tracing::info!("seeded the built-in downloader");
+/// How long first boot waits for the library root to answer before it gives up
+/// on enabling domains. A hung network mount must not hang the daemon's boot.
+const ROOT_PROBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What first-boot provisioning did on one boot (SKADI-T-0703). Every field is
+/// empty on a boot that found everything in place, which is how a second boot
+/// shows that it changed nothing.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Provisioned {
+    /// The built-in downloader was registered (there was no download client).
+    pub downloader: bool,
+    /// Default quality profiles created (there was no profile).
+    pub profiles: usize,
+    /// Domains enabled (fresh database only).
+    pub domains: Vec<String>,
+    /// Default indexers registered (`default_indexers` on only).
+    pub indexers: Vec<String>,
+}
+
+impl Provisioned {
+    /// True when this boot changed nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Provisioned::default()
     }
+}
 
-    // 2) Every public indexer + AudioBookBay from the catalog (defaults filled in).
-    let dir = load_config_view(store)
+/// First-boot provisioning (SKADI-T-0703), so a new install is usable with no
+/// CLI steps. It runs on every boot, and each step acts only when the thing it
+/// provides is absent, so it never changes an install that has it:
+///
+/// 1. No download client → register the built-in downloader.
+/// 2. No quality profile → create the default profile set.
+/// 3. `fresh` (this boot created the database) → enable each domain whose
+///    folder under an explicitly set `library.root` exists or can be created.
+///    An existing install never has a domain enabled by boot.
+/// 4. `default_indexers` on (`SKADI_DEFAULT_INDEXERS`, default off) → register
+///    each tracker of the checked-in default set that this database has never
+///    been offered.
+///
+/// Each action is logged. Returns what was done.
+pub async fn provision_first_boot(
+    store: &Store,
+    registry: &[Arc<dyn DomainModule>],
+    fresh: bool,
+) -> Result<Provisioned> {
+    let mut done = Provisioned {
+        downloader: ensure_builtin_downloader(store).await?,
+        profiles: ensure_default_profiles(store).await?,
+        ..Provisioned::default()
+    };
+    if fresh {
+        done.domains = enable_domains_with_a_root(store, registry).await?;
+    }
+    let view = load_config_view(store).await?;
+    if view.get_bool("default_indexers").unwrap_or(false) {
+        done.indexers = seed_default_indexers(store, &view).await?;
+    }
+    Ok(done)
+}
+
+/// Register the built-in downloader when no download client exists. Its
+/// incomplete/complete dirs are derived from the single library root
+/// (SKADI-T-0302/0305), `<library.root>/downloads/{incomplete,complete}`: the
+/// same mount as the library, so the importer hardlinks.
+async fn ensure_builtin_downloader(store: &Store) -> Result<bool> {
+    if !store.list_settings("downloaders").await?.is_empty() {
+        return Ok(false);
+    }
+    let library_root = load_config_view(store)
         .await
         .ok()
-        .and_then(|v| v.get_string("cardigann_definitions_dir").ok())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "./definitions".into());
-    let http = match skadi_http::HttpClient::new(std::time::Duration::from_secs(30)) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::warn!("default-providers: http client: {e}");
-            return Ok(());
-        }
-    };
-    let catalog = match DefinitionStore::new(dir, http).load() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("default-providers: catalog load: {e}");
-            return Ok(());
-        }
-    };
-    let existing_settings = store.list_settings("indexers").await?;
-    let existing: std::collections::HashSet<String> = existing_settings
-        .iter()
-        .filter_map(|s| {
-            s.body
-                .get("definition_id")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
-        .collect();
+        .and_then(|v| v.get_path("library.root").ok().flatten())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/data".into());
+    store
+        .put_setting(
+            "downloaders",
+            &uuid::Uuid::new_v4().to_string(),
+            &serde_json::json!({
+                "kind": "skadi",
+                "name": "built-in",
+                "incomplete_dir": format!("{library_root}/downloads/incomplete"),
+                "complete_dir": format!("{library_root}/downloads/complete"),
+            }),
+        )
+        .await?;
+    tracing::info!(
+        library_root = %library_root,
+        "first boot: no download client, registered the built-in downloader"
+    );
+    Ok(true)
+}
 
-    // Curated scope (operator decision): **English**, **Movies / TV / Books /
-    // Audiobooks**, **public** trackers only — no porn, no anime, no foreign-language.
-    // Adult is caught two ways (all-XXX categories *and* a name/description keyword,
-    // since some adult trackers file hentai under Books); anime by keyword.
-    const ADULT_KW: &[&str] = &[
-        "xxx", "porn", "adult", "hentai", "jav", "sukebei", "sex", "nsfw", "rape", "incest",
-    ];
-    const ANIME_KW: &[&str] = &[
-        "anime",
-        "bangumi",
-        "nyaa",
-        "tokyotosho",
-        "toshokan",
-        "shana",
-        "nekobt",
-        "anisource",
-        "acg",
-    ];
-    let adult_cat = |c: &str| {
-        let c = c.to_ascii_lowercase();
-        c.starts_with("xxx") || c.contains("porn") || c.contains("adult")
-    };
-    let wanted_cat = |c: &str| {
-        let c = c.to_ascii_lowercase();
-        c.starts_with("movies")
-            || c.starts_with("tv")
-            || c.starts_with("books")
-            || c.starts_with("audio/audiobook")
-    };
+/// Create the default quality-profile set (Any / SD / HD-720p / HD-1080p /
+/// HD-720p/1080p / Ultra-HD, SKADI-T-0145) when there is no profile at all.
+/// Returns the number created.
+async fn ensure_default_profiles(store: &Store) -> Result<usize> {
+    if !store.list_settings("profiles").await?.is_empty() {
+        return Ok(0);
+    }
+    let defs = skadi_quality::default_definitions();
+    let profiles = skadi_quality::default_profiles(&defs);
+    for p in &profiles {
+        let body = serde_json::json!({
+            "name": p.name,
+            "allowed": p.allowed.iter().map(|q| q.to_string()).collect::<Vec<_>>(),
+            "cutoff": p.cutoff.to_string(),
+            "upgrade_allowed": p.upgrade_allowed,
+            "min_format_score": p.min_format_score,
+        });
+        store
+            .put_setting("profiles", &uuid::Uuid::new_v4().to_string(), &body)
+            .await?;
+    }
+    tracing::info!(
+        count = profiles.len(),
+        "first boot: no quality profile, created the default profiles"
+    );
+    Ok(profiles.len())
+}
 
-    // The curated definition ids that should be registered right now.
-    let wanted: std::collections::HashSet<String> = catalog
-        .list()
-        .into_iter()
-        .filter(|entry| {
-            let blob =
-                format!("{} {} {}", entry.id, entry.name, entry.description).to_ascii_lowercase();
-            let public = entry.privacy == "public" && !entry.needs_login;
-            let english = entry.language.to_ascii_lowercase().starts_with("en");
-            let has_content = entry.categories.iter().any(|c| wanted_cat(c));
-            let adult = (!entry.categories.is_empty()
-                && entry.categories.iter().all(|c| adult_cat(c)))
-                || ADULT_KW.iter().any(|k| blob.contains(k));
-            let anime = ANIME_KW.iter().any(|k| blob.contains(k));
-            public && english && has_content && !adult && !anime
-        })
-        .map(|e| e.id.clone())
-        .collect();
-
-    // Seed any missing curated tracker, marked `default_seeded` so the prune below
-    // can distinguish our auto-seeds from operator-added trackers.
-    let mut added = 0;
-    for entry in catalog.list() {
-        if !wanted.contains(&entry.id) || existing.contains(&entry.id) {
+/// Enable every registered domain whose folder `<library.root>/<subfolder>`
+/// exists or can be created. Only for a fresh database. `library.root` must be
+/// set by the operator (`SKADI_LIBRARY_ROOT`): the registry default `/data` is
+/// nobody's choice of library. If no domain can be enabled, the log says why,
+/// and the operator enables them on the Config page.
+async fn enable_domains_with_a_root(
+    store: &Store,
+    registry: &[Arc<dyn DomainModule>],
+) -> Result<Vec<String>> {
+    let root = store
+        .get_config("library.root")
+        .await?
+        .map(|e| e.value)
+        .filter(|v| !v.trim().is_empty());
+    let Some(root) = root else {
+        tracing::info!("first boot: library.root is not set, so no domain was enabled");
+        return Ok(Vec::new());
+    };
+    let mut wanted: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for m in registry {
+        // Already on (testing mode enables every domain): nothing to do.
+        if store.get(m.name()).await?.is_some_and(|d| d.enabled) {
             continue;
         }
-        // Pre-fill non-secret settings with their definition defaults (e.g. TPB's
-        // `apiurl=apibay.org`); secrets aren't needed for public trackers.
+        wanted.push((
+            m.name().to_string(),
+            std::path::Path::new(&root).join(m.kind().library_subfolder()),
+        ));
+    }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    // The filesystem work is blocking and can hang on a dead mount: bound it.
+    let root_dir = std::path::PathBuf::from(&root);
+    let probe = tokio::task::spawn_blocking(move || {
+        if !root_dir.is_dir() {
+            return None;
+        }
+        Some(
+            wanted
+                .into_iter()
+                .map(|(name, folder)| {
+                    let existed = folder.is_dir();
+                    let made = existed || std::fs::create_dir_all(&folder).is_ok();
+                    (name, folder, existed, made)
+                })
+                .collect::<Vec<_>>(),
+        )
+    });
+    let folders = match tokio::time::timeout(ROOT_PROBE_LIMIT, probe).await {
+        Ok(Ok(Some(f))) => f,
+        Ok(Ok(None)) => {
+            tracing::warn!(
+                library_root = %root,
+                "first boot: the library root is not a directory, so no domain was enabled; mount it, then enable the domains on the Config page"
+            );
+            return Ok(Vec::new());
+        }
+        Ok(Err(e)) => return Err(AppError::Internal(format!("root probe panicked: {e}"))),
+        Err(_) => {
+            tracing::warn!(
+                library_root = %root,
+                "first boot: the library root did not answer in {}s, so no domain was enabled",
+                ROOT_PROBE_LIMIT.as_secs()
+            );
+            return Ok(Vec::new());
+        }
+    };
+    let mut enabled = Vec::new();
+    for (name, folder, existed, made) in folders {
+        if !made {
+            tracing::warn!(
+                domain = %name,
+                folder = %folder.display(),
+                "first boot: cannot create the folder of the domain, so it was not enabled"
+            );
+            continue;
+        }
+        if !existed {
+            tracing::info!(domain = %name, folder = %folder.display(), "first boot: created the folder of the domain");
+        }
+        store.set_enabled(&name, true).await?;
+        tracing::info!(domain = %name, folder = %folder.display(), "first boot: enabled the domain");
+        enabled.push(name);
+    }
+    Ok(enabled)
+}
+
+/// Register each tracker of the checked-in default set
+/// ([`DEFAULT_INDEXERS`](skadi_indexers::definitions::DEFAULT_INDEXERS)) that
+/// this database has never been offered. A tracker already registered (by
+/// definition id) is recorded as offered and left alone; a tracker the operator
+/// removed is not registered again. The definitions ship in the bundle, so this
+/// works offline.
+async fn seed_default_indexers(
+    store: &Store,
+    view: &skadi_config::ConfigView,
+) -> Result<Vec<String>> {
+    use skadi_indexers::definitions::{DEFAULT_INDEXERS, DefinitionStore};
+
+    let dir = view
+        .get_string("cardigann_definitions_dir")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "./definitions".into());
+    let http = skadi_http::HttpClient::new(std::time::Duration::from_secs(30))?;
+    let defs = DefinitionStore::new(dir, http);
+    let written = defs.ensure_default_set()?;
+    if !written.is_empty() {
+        tracing::info!(?written, "default indexers: wrote the bundled definitions");
+    }
+    let catalog = defs.load()?;
+
+    let mut seen: std::collections::BTreeSet<String> = store
+        .get_config(INDEXERS_SEEDED_KEY)
+        .await?
+        .map(|e| {
+            e.value
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let present: std::collections::HashSet<String> = store
+        .list_settings("indexers")
+        .await?
+        .iter()
+        .filter_map(|s| s.body.get("definition_id")?.as_str().map(String::from))
+        .collect();
+
+    let before = seen.clone();
+    let mut added = Vec::new();
+    for id in DEFAULT_INDEXERS {
+        if seen.contains(*id) {
+            continue;
+        }
+        if present.contains(*id) {
+            seen.insert((*id).to_string());
+            continue;
+        }
+        let Some(entry) = catalog.list().into_iter().find(|e| e.id == *id) else {
+            tracing::warn!(definition = %id, "default indexers: no such definition, skipped");
+            continue;
+        };
+        // Non-secret settings take their definition defaults (e.g. TPB's
+        // `apiurl=apibay.org`); public trackers need no secret.
         let mut settings = serde_json::Map::new();
         for s in &entry.settings {
             if s.kind != "password"
@@ -280,35 +429,17 @@ pub async fn ensure_default_providers(store: &Store) -> Result<()> {
                 }),
             )
             .await?;
-        added += 1;
+        tracing::info!(definition = %id, name = %entry.name, "default indexers: registered the tracker");
+        seen.insert((*id).to_string());
+        added.push((*id).to_string());
     }
-
-    // Prune any **auto-seeded** indexer no longer in scope (the filter narrowed, or
-    // upstream dropped it). Operator-added trackers (no `default_seeded` marker) are
-    // never touched — so a hand-added private tracker is safe.
-    let mut pruned = 0;
-    for s in &existing_settings {
-        let auto = s
-            .body
-            .get("default_seeded")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let still_wanted = s
-            .body
-            .get("definition_id")
-            .and_then(|v| v.as_str())
-            .map(|d| wanted.contains(d))
-            .unwrap_or(true);
-        if auto && !still_wanted {
-            store.delete_setting("indexers", &s.id).await?;
-            pruned += 1;
-        }
+    if seen != before {
+        let ids: Vec<String> = seen.into_iter().collect();
+        store
+            .set_config(INDEXERS_SEEDED_KEY, &ids.join(","), ConfigSource::Runtime)
+            .await?;
     }
-
-    if added > 0 || pruned > 0 {
-        tracing::info!(added, pruned, "curated default indexers reconciled");
-    }
-    Ok(())
+    Ok(added)
 }
 
 /// Upsert every set, non-empty Tier-1 `SKADI_*` env var into the `config` table
@@ -445,22 +576,9 @@ pub async fn seed_mode_presets(store: &Store, domain_names: &[&str]) -> Result<s
     // production), only if the operator has none, so a fresh install ships with a
     // usable set (Any / SD / HD-720p / HD-1080p / HD-720p/1080p / Ultra-HD) the
     // add/import dropdowns can select from (SKADI-T-0145). Operators can edit or
-    // delete them; the once-guard means they're never re-seeded.
-    if store.list_settings("profiles").await?.is_empty() {
-        let defs = skadi_quality::default_definitions();
-        for p in skadi_quality::default_profiles(&defs) {
-            let body = serde_json::json!({
-                "name": p.name,
-                "allowed": p.allowed.iter().map(|q| q.to_string()).collect::<Vec<_>>(),
-                "cutoff": p.cutoff.to_string(),
-                "upgrade_allowed": p.upgrade_allowed,
-                "min_format_score": p.min_format_score,
-            });
-            store
-                .put_setting("profiles", &uuid::Uuid::new_v4().to_string(), &body)
-                .await?;
-        }
-    }
+    // delete them. First-boot provisioning creates the set again only when no
+    // profile at all is left (SKADI-T-0703).
+    ensure_default_profiles(store).await?;
 
     // Default custom formats — seeded on first boot if the operator has none
     // (SKADI-T-0183), so a fresh install ships an editable starter set (Remux /

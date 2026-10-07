@@ -45,7 +45,8 @@ gluetun, flaresolverr and postgres do — `docker compose ps` shows those three.
 ## Bring-up
 
 ```sh
-cd deploy && cp .env.example .env && $EDITOR .env    # VPN creds + three secrets
+angreal deploy init          # deploy/.env with generated secrets; never overwrites
+$EDITOR deploy/.env          # VPN values + storage values
 angreal deploy up            # up -d, then waits for the daemon
 angreal deploy status        # compose ps + health
 angreal deploy logs -s gluetun

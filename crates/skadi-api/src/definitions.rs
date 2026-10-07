@@ -161,14 +161,9 @@ pub async fn sync_loop(store: Store, cancel: CancellationToken) {
                             revision = %r.revision,
                             "cardigann definitions synced from upstream",
                         );
-                        // Register any newly-synced public indexers (+ ABB) so the
-                        // live set grows as upstream adds trackers — no restart. The
-                        // supervisor's next tick reloads providers off the new
-                        // settings (SKADI-I-0042; fixes the bootstrap-before-sync
-                        // timing that left only the bundled set registered).
-                        if let Err(e) = crate::bootstrap::ensure_default_providers(&store).await {
-                            tracing::warn!(error = %e, "default-provider seeding after sync failed");
-                        }
+                        // A sync registers no indexer (SKADI-T-0703): which trackers
+                        // are enabled is the operator's choice, or the opt-in
+                        // checked-in default set at boot.
                     }
                     Err(e) => tracing::warn!(
                         error = %e,

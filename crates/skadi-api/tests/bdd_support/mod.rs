@@ -153,6 +153,10 @@ pub struct World {
     /// The registered domains' migration versions the daemon expects
     /// (`AppState::domain_migrations`); `None` = none.
     pub domain_migrations: Option<Vec<String>>,
+    // ---- first boot (C06, SKADI-T-0703) ----
+    /// The settings, domain switches and config of the install, recorded so a
+    /// later boot can be shown to change nothing.
+    pub install_snapshot: Option<serde_json::Value>,
 }
 
 /// Sets an env var and puts back the prior value on drop, so a failing

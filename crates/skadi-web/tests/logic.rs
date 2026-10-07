@@ -8,8 +8,8 @@ use wasm_bindgen_test::*;
 
 use skadi_web::activity::{
     STAGE_GROUPS, ago, collapse_runs, detail_facts, detail_summary, diagnose, event_label,
-    filter_allows, fold_runs, norm_title, parse_found, parse_handed, remedy_for, run_lengths,
-    series_key, stage_group,
+    filter_allows, fold_runs, parse_found, remedy_for, run_lengths, run_progress, series_key,
+    stage_group,
 };
 use skadi_web::api::{
     Book, BookFile, Movie, MovieEdition, ReleaseCandidate, SeriesLink, Work, download_progress,
@@ -1549,26 +1549,21 @@ fn ago_reads_as_a_person_would_say_it() {
 }
 
 #[wasm_bindgen_test]
-fn parse_handed_reads_the_release_title_out_of_a_snatch_message() {
-    assert_eq!(
-        parse_handed(
-            "The Sinner S01E08 — handed \"The.Sinner.S01E08.REPACK.720p.HEVC.x265-MeGusta\" to b22bafbb"
-        ),
-        Some("The.Sinner.S01E08.REPACK.720p.HEVC.x265-MeGusta".into())
-    );
-    assert_eq!(parse_handed("found 3 candidates"), None);
-}
-
-#[wasm_bindgen_test]
-fn norm_title_makes_a_library_label_a_prefix_of_its_release_name() {
-    let label = norm_title("Um, Actually... S03E12");
-    let release = norm_title("Um Actually S03E12 720p WEB-DL AAC2 0 H 264-NTb");
-    assert_eq!(label, "um actually s03e12");
-    assert!(release.starts_with(&label));
-    assert_eq!(
-        norm_title("The.Sinner.S01E08.REPACK"),
-        "the sinner s01e08 repack"
-    );
+fn run_progress_reads_the_server_merged_transfer() {
+    let run = |v: serde_json::Value| -> skadi_web::api::ActivityRun {
+        serde_json::from_value(v).unwrap()
+    };
+    let r = run(json!({
+        "run_id": "r", "acquirable_ref": "ed-1", "current_stage": "downloading",
+        "kind": "Movie", "title": "Movie",
+        "download_id": "d1", "size_bytes": 1000, "downloaded_bytes": 400,
+        "eta_seconds": 300, "down_speed_bps": 2_097_152
+    }));
+    assert_eq!(r.title.as_deref(), Some("Movie"));
+    assert_eq!(run_progress(&r), Some((40.0, "40% · 2.0 MB/s · 5m".into())));
+    // An older server (no merged fields) shows no progress line.
+    let old = run(json!({"run_id": "r", "acquirable_ref": "ed-1", "current_stage": "downloading"}));
+    assert_eq!(run_progress(&old), None);
 }
 
 // ---------------------------------------------------------------------------

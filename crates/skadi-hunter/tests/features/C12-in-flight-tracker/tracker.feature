@@ -86,18 +86,25 @@ Feature: In-flight tracker — the live queue behind /activity
     When monitor observes 3 percent for "ed-1"
     Then the transfer watch for "ed-1" has best progress 12 percent
 
-  @C12 @gap @serial
+  @C12 @passing @serial
   Scenario: a queue row carries the release size and time left
     Given the sweep started run "r1" for "ed-1"
+    And "Movie.2020.1080p.BluRay.x264-GRP" is recorded as chosen for "ed-1" out of 3 candidates
     When run "r1" advances "ed-1" to stage "downloading"
-    Then the activity view entry for "ed-1" carries the release size and ETA
+    And the download row for "ed-1" is 4000 of 10000 bytes with 300 seconds left
+    Then the activity view entry for "ed-1" carries size 10000, downloaded 4000 and ETA 300
 
-  @C12 @gap @serial
+  @C12 @passing @serial
   Scenario: a queue row carries the item's title
     Given the sweep started run "r1" for "ed-1"
-    Then the activity view entry for "ed-1" carries a human-readable title
+    When the run for "ed-1" is titled from a search for "The Show" season 2 episode 5
+    Then the activity view entry for "ed-1" carries the title "The Show S02E05"
 
-  @C12 @gap @serial
+  @C12 @passing @serial
   Scenario: the live queue can be filtered by kind and stage
     Given the sweep started run "r1" for "ed-1"
-    Then the activity view can be filtered to "movie" runs
+    And the sweep started a "series" run "r2" for "ep-1"
+    And run "r2" advances "ep-1" to stage "downloading"
+    Then the activity view filtered to kind "movie" lists only "ed-1"
+    And the activity view filtered to stage "downloading" lists only "ep-1"
+    And the activity view filtered to kind "movie" and stage "downloading" lists nothing

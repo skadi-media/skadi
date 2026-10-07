@@ -1969,6 +1969,22 @@ pub struct ActivityRun {
     /// The profile decision for the chosen release (`Accept`/`Upgrade`/…).
     #[serde(default)]
     pub decision: Option<String>,
+    /// The item's name (`Title`, `Show S01E02`, `Show Season 1`), from the
+    /// server (SKADI-T-0690).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The transfer's download row, merged in server-side for a run at
+    /// `snatching`/`downloading` (SKADI-T-0690); the fields below come from it.
+    #[serde(default)]
+    pub download_id: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<i64>,
+    #[serde(default)]
+    pub downloaded_bytes: Option<i64>,
+    #[serde(default)]
+    pub eta_seconds: Option<i64>,
+    #[serde(default)]
+    pub down_speed_bps: Option<i64>,
 }
 
 /// One persistent history row (mirror of skadi-api `HistoryDto`).

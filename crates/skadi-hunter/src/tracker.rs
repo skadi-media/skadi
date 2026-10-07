@@ -77,6 +77,28 @@ pub struct RunMeta {
     /// every retry — nothing a failed `monitor` attempt stores survives.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transfer: Option<TransferWatch>,
+    /// The item's human-readable name (SKADI-T-0690): `Title`, `Show S01E02`,
+    /// `Show Season 1`. Set from the run's search spec when the run is
+    /// registered, so every client gets a name instead of the opaque ref.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The download row this run's transfer is on (SKADI-T-0690). It and the
+    /// fields below are merged in by [`merge_downloads`] when `/activity` is
+    /// served; the tracker itself never stores them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_id: Option<String>,
+    /// The release size in bytes (`None` before the client knows it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<i64>,
+    /// Bytes downloaded so far.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloaded_bytes: Option<i64>,
+    /// Time left, in seconds, as the download client estimates it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_seconds: Option<i64>,
+    /// Current download rate, bytes per second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub down_speed_bps: Option<i64>,
     /// The last `Downloading{progress}` flushed to the status sink, so the
     /// per-poll heartbeat can be throttled across `monitor` executions.
     #[serde(skip)]
@@ -138,6 +160,12 @@ impl RunMeta {
             adopted: false,
             last_seen: now,
             transfer: None,
+            title: None,
+            download_id: None,
+            size_bytes: None,
+            downloaded_bytes: None,
+            eta_seconds: None,
+            down_speed_bps: None,
             last_flushed: None,
         }
     }
@@ -413,6 +441,38 @@ impl InFlightTracker {
         }
     }
 
+    /// Record the item's human-readable name for an in-flight run (SKADI-T-0690).
+    /// No-op if the run isn't tracked or `title` is `None`.
+    pub fn set_title(&self, acquirable_ref: &str, title: Option<String>) {
+        if let Some(title) = title
+            && let Ok(mut runs) = self.runs.write()
+            && let Some(meta) = runs.get_mut(acquirable_ref)
+        {
+            meta.title = Some(title);
+        }
+    }
+
+    /// Fill in what an adopted run (SKADI-T-0388) lacks because no
+    /// `start_acquire` registered it: the item title and the chosen release.
+    /// Only empty fields are written.
+    pub fn fill_missing(
+        &self,
+        acquirable_ref: &str,
+        title: Option<String>,
+        chosen_title: Option<String>,
+    ) {
+        if let Ok(mut runs) = self.runs.write()
+            && let Some(meta) = runs.get_mut(acquirable_ref)
+        {
+            if meta.title.is_none() {
+                meta.title = title;
+            }
+            if meta.chosen_title.is_none() {
+                meta.chosen_title = chosen_title;
+            }
+        }
+    }
+
     /// Claim a release for this acquirable, **atomically** (SKADI-T-0402).
     ///
     /// Returns `true` if no other run is already *fetching* the same release —
@@ -480,6 +540,132 @@ impl InFlightTracker {
             .read()
             .map(|runs| runs.values().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// A snapshot of the in-flight runs that `filter` allows (SKADI-T-0690).
+    pub fn snapshot_filtered(&self, filter: &ActivityFilter) -> Vec<RunMeta> {
+        self.runs
+            .read()
+            .map(|runs| {
+                runs.values()
+                    .filter(|m| filter.allows(m))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Which in-flight runs a `/activity` request wants (SKADI-T-0690). Empty
+/// lists allow everything.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ActivityFilter {
+    /// Allowed media kinds.
+    pub kinds: Vec<MediaKind>,
+    /// Allowed stages (`searching`, `downloading`, …), compared case-insensitively.
+    pub stages: Vec<String>,
+}
+
+impl ActivityFilter {
+    /// Parse the query values: comma-separated `kind` (`movie`, `series` or
+    /// `tv`, `audiobook`, `music`, `book`, `subtitle`) and `stage` lists.
+    /// An unknown kind is an error naming it.
+    pub fn parse(kind: Option<&str>, stage: Option<&str>) -> Result<Self, String> {
+        let split = |s: Option<&str>| -> Vec<String> {
+            s.map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_ascii_lowercase())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+        };
+        let kinds = split(kind)
+            .iter()
+            .map(|k| parse_kind(k).ok_or_else(|| format!("unknown kind `{k}`")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ActivityFilter {
+            kinds,
+            stages: split(stage),
+        })
+    }
+
+    /// Whether `run` passes the filter.
+    #[must_use]
+    pub fn allows(&self, run: &RunMeta) -> bool {
+        (self.kinds.is_empty() || self.kinds.contains(&run.kind))
+            && (self.stages.is_empty()
+                || self
+                    .stages
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&run.current_stage)))
+    }
+}
+
+/// A media kind from its lowercase wire name (`tv` is accepted for `series`).
+fn parse_kind(s: &str) -> Option<MediaKind> {
+    Some(match s {
+        "movie" => MediaKind::Movie,
+        "series" | "tv" => MediaKind::Series,
+        "music" => MediaKind::Music,
+        "book" => MediaKind::Book,
+        "audiobook" => MediaKind::Audiobook,
+        "subtitle" => MediaKind::Subtitle,
+        _ => return None,
+    })
+}
+
+/// Stages at which a run has a transfer on a download row worth merging.
+const TRANSFER_STAGES: [&str; 2] = ["snatching", "downloading"];
+
+/// Whether any of `runs` is at a stage with a transfer, i.e. whether
+/// [`merge_downloads`] has anything to do. Lets `/activity` skip the download
+/// query entirely when nothing is downloading.
+#[must_use]
+pub fn wants_downloads(runs: &[RunMeta]) -> bool {
+    runs.iter()
+        .any(|r| TRANSFER_STAGES.contains(&r.current_stage.as_str()))
+}
+
+/// Merge the size, progress, rate and time left of each run's download row
+/// into the runs (SKADI-T-0690), from one batch of `jobs` (the caller loads
+/// them in a single query; no per-run lookup). A row matches a run by its
+/// `target_ref` (written at snatch since SKADI-T-0689), else by its release
+/// title equal to the run's `chosen_title` (rows from before). When several
+/// rows match, the most recently updated wins. Only runs at a transfer stage
+/// are touched.
+pub fn merge_downloads(runs: &mut [RunMeta], jobs: &[skadi_store::DownloadJob]) {
+    use skadi_store::DownloadJob;
+    fn keep_newest<'a>(
+        map: &mut HashMap<&'a str, &'a DownloadJob>,
+        key: &'a str,
+        j: &'a DownloadJob,
+    ) {
+        if map.get(key).is_none_or(|cur| j.updated_at > cur.updated_at) {
+            map.insert(key, j);
+        }
+    }
+    let mut by_target: HashMap<&str, &DownloadJob> = HashMap::new();
+    let mut by_release: HashMap<&str, &DownloadJob> = HashMap::new();
+    for j in jobs {
+        if let Some(t) = j.target_ref.as_deref() {
+            keep_newest(&mut by_target, t, j);
+        }
+        keep_newest(&mut by_release, &j.acquirable_ref, j);
+    }
+    for run in runs
+        .iter_mut()
+        .filter(|r| TRANSFER_STAGES.contains(&r.current_stage.as_str()))
+    {
+        let job = by_target
+            .get(run.acquirable_ref.as_str())
+            .or_else(|| run.chosen_title.as_deref().and_then(|t| by_release.get(t)));
+        let Some(j) = job else { continue };
+        run.download_id = Some(j.id.clone());
+        run.size_bytes = (j.total_bytes > 0).then_some(j.total_bytes);
+        run.downloaded_bytes = Some(j.progress_bytes.max(0));
+        run.eta_seconds = j.eta_seconds.filter(|e| *e >= 0);
+        run.down_speed_bps = j.down_speed_bps;
     }
 }
 
@@ -699,5 +885,136 @@ mod tests {
             .observe_progress("r", 0.25, chrono::Duration::zero())
             .unwrap();
         assert!(stale.flush);
+    }
+
+    fn job(
+        id: &str,
+        release: &str,
+        target: Option<&str>,
+        total: i64,
+        done: i64,
+    ) -> skadi_store::DownloadJob {
+        let now = Utc::now();
+        skadi_store::DownloadJob {
+            id: id.into(),
+            acquirable_ref: release.into(),
+            source: "magnet:?xt=urn:btih:x".into(),
+            category: None,
+            status: skadi_store::DownloadJobStatus::Downloading,
+            info_hash: None,
+            progress_bytes: done,
+            total_bytes: total,
+            down_speed_bps: Some(2048),
+            up_speed_bps: None,
+            uploaded_bytes: None,
+            peers: None,
+            peers_seen: None,
+            eta_seconds: Some(600),
+            files: vec![],
+            error: None,
+            worker_id: None,
+            delete_data: false,
+            incomplete_dir: None,
+            complete_dir: None,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+            lease_expires_at: None,
+            client_state: None,
+            target_kind: None,
+            target_ref: target.map(str::to_string),
+            import_state: None,
+            import_error: None,
+        }
+    }
+
+    #[test]
+    fn merge_downloads_matches_by_target_then_release_title() {
+        let t = InFlightTracker::default();
+        t.start("a", MediaKind::Movie, "ed-target");
+        t.set_stage("ed-target", "downloading");
+        t.start("b", MediaKind::Movie, "ed-title");
+        t.set_chosen("ed-title", Some("Old.Release.1080p".into()), 3);
+        t.set_stage("ed-title", "downloading");
+        t.start("c", MediaKind::Movie, "ed-searching");
+        t.set_chosen("ed-searching", Some("Other.Release".into()), 1);
+        let mut runs = t.snapshot();
+        assert!(wants_downloads(&runs));
+        let jobs = [
+            job("d1", "New.Release.2160p", Some("ed-target"), 1000, 250),
+            job("d2", "Old.Release.1080p", None, 0, 0),
+            job("d3", "Other.Release", Some("ed-searching"), 10, 1),
+        ];
+        merge_downloads(&mut runs, &jobs);
+        let get = |r: &str| runs.iter().find(|m| m.acquirable_ref == r).unwrap();
+        let a = get("ed-target");
+        assert_eq!(a.download_id.as_deref(), Some("d1"));
+        assert_eq!(a.size_bytes, Some(1000));
+        assert_eq!(a.downloaded_bytes, Some(250));
+        assert_eq!(a.eta_seconds, Some(600));
+        assert_eq!(a.down_speed_bps, Some(2048));
+        // Matched by release title; size unknown yet stays absent.
+        let b = get("ed-title");
+        assert_eq!(b.download_id.as_deref(), Some("d2"));
+        assert_eq!(b.size_bytes, None);
+        // Not at a transfer stage: left alone even though a row names it.
+        assert!(get("ed-searching").download_id.is_none());
+        // The tracker itself never stores merged fields.
+        assert!(t.snapshot().iter().all(|m| m.download_id.is_none()));
+    }
+
+    #[test]
+    fn wants_downloads_only_with_a_transfer_stage() {
+        let t = InFlightTracker::default();
+        t.start("a", MediaKind::Movie, "x");
+        t.set_stage("x", "searching");
+        assert!(!wants_downloads(&t.snapshot()));
+        t.set_stage("x", "snatching");
+        assert!(wants_downloads(&t.snapshot()));
+    }
+
+    #[test]
+    fn activity_filter_by_kind_and_stage() {
+        let t = InFlightTracker::default();
+        t.start("a", MediaKind::Movie, "m1");
+        t.set_stage("m1", "downloading");
+        t.start("b", MediaKind::Series, "s1");
+        t.set_stage("s1", "searching");
+        let f = ActivityFilter::parse(Some("movie"), None).unwrap();
+        let only: Vec<_> = t
+            .snapshot_filtered(&f)
+            .into_iter()
+            .map(|m| m.acquirable_ref)
+            .collect();
+        assert_eq!(only, vec!["m1".to_string()]);
+        let f = ActivityFilter::parse(Some("tv"), Some("searching")).unwrap();
+        assert_eq!(t.snapshot_filtered(&f).len(), 1);
+        let f = ActivityFilter::parse(Some("movie, series"), Some("Downloading")).unwrap();
+        assert_eq!(t.snapshot_filtered(&f)[0].acquirable_ref, "m1");
+        assert_eq!(t.snapshot_filtered(&ActivityFilter::default()).len(), 2);
+        assert!(ActivityFilter::parse(Some("film"), None).is_err());
+    }
+
+    #[test]
+    fn title_is_set_and_adoption_fills_only_gaps() {
+        let t = InFlightTracker::default();
+        t.start("a", MediaKind::Movie, "m1");
+        t.set_title("m1", None);
+        assert!(t.snapshot()[0].title.is_none());
+        t.set_title("m1", Some("Movie".into()));
+        t.set_chosen("m1", Some("Movie.1080p".into()), 2);
+        t.fill_missing("m1", Some("Other".into()), Some("Other.720p".into()));
+        let m = &t.snapshot()[0];
+        assert_eq!(m.title.as_deref(), Some("Movie"));
+        assert_eq!(m.chosen_title.as_deref(), Some("Movie.1080p"));
+        t.adopt(MediaKind::Series, "s1", "downloading", Some("r"));
+        t.fill_missing("s1", Some("Show S01E02".into()), Some("Show.S01E02".into()));
+        let s = t
+            .snapshot()
+            .into_iter()
+            .find(|m| m.acquirable_ref == "s1")
+            .unwrap();
+        assert_eq!(s.title.as_deref(), Some("Show S01E02"));
+        assert_eq!(s.chosen_title.as_deref(), Some("Show.S01E02"));
     }
 }

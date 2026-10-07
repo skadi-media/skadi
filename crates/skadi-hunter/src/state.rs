@@ -96,6 +96,27 @@ pub struct TvScope {
 }
 
 impl SearchSpec {
+    /// The item's human-readable name for the live queue (SKADI-T-0690): the
+    /// primary title, plus `SxxEyy` for an episode or `Season N` for a season
+    /// pack. `None` when the spec carries no title at all.
+    #[must_use]
+    pub fn display_title(&self) -> Option<String> {
+        let base = self
+            .titles
+            .first()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())?;
+        Some(match self.tv {
+            Some(TvScope {
+                season,
+                episode: Some(ep),
+                ..
+            }) => format!("{base} S{season:02}E{ep:02}"),
+            Some(TvScope { season, .. }) => format!("{base} Season {season}"),
+            None => base.to_string(),
+        })
+    }
+
     /// Borrow as a `&dyn SearchQuery` for the indexer layer.
     #[must_use]
     pub fn query(&self) -> SpecQuery<'_> {
@@ -381,6 +402,31 @@ mod tests {
             series: None,
             tags: None,
         }
+    }
+
+    /// SKADI-T-0690: the live queue's item name.
+    #[test]
+    fn display_title_names_the_item() {
+        let mut s = spec(MediaKind::Movie, SearchTrigger::Automatic, 2);
+        assert_eq!(s.display_title().as_deref(), Some("Alias 0"));
+        s.tv = Some(TvScope {
+            season: 1,
+            episode: Some(2),
+            absolute: None,
+            air_date: None,
+        });
+        assert_eq!(s.display_title().as_deref(), Some("Alias 0 S01E02"));
+        s.tv = Some(TvScope {
+            season: 3,
+            episode: None,
+            absolute: None,
+            air_date: None,
+        });
+        assert_eq!(s.display_title().as_deref(), Some("Alias 0 Season 3"));
+        assert_eq!(
+            spec(MediaKind::Movie, SearchTrigger::Automatic, 0).display_title(),
+            None
+        );
     }
 
     /// SKADI-T-0595: automatic TV/movie searches send two aliases; audiobooks

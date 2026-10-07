@@ -1,6 +1,7 @@
 //! Activity + History view (SKADI-T-0082): live in-flight acquire runs (polled
-//! from `/activity`, labelled with movie titles cross-referenced from the
-//! library) over the persistent acquisition history (`/history`).
+//! from `/activity`, which names each item and carries its transfer progress,
+//! SKADI-T-0690) over the hunter trace stream, whose rows are labelled with
+//! titles cross-referenced from the library.
 
 use std::collections::HashMap;
 
@@ -437,34 +438,6 @@ pub fn ago(rfc3339: &str, now_ms: f64) -> String {
     }
 }
 
-/// `"handed \"The.Sinner.S01E08…\" to b22bafbb…"` → the release title. The
-/// download queue is keyed by that title, and a run that has moved on to
-/// `downloading` no longer reports `chosen_title`, so this is how a live
-/// transfer is matched back to its run.
-pub fn parse_handed(message: &str) -> Option<String> {
-    let rest = message.split("handed \"").nth(1)?;
-    let (title, _) = rest.split_once('"')?;
-    (!title.is_empty()).then(|| title.to_string())
-}
-
-/// Lower-case, punctuation to spaces, spaces collapsed: the form in which a
-/// library label ("Um, Actually... S03E12") is a prefix of the release the
-/// queue is keyed by ("Um Actually S03E12 720p WEB-DL …").
-pub fn norm_title(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut space = true;
-    for c in s.chars() {
-        if c.is_alphanumeric() {
-            out.extend(c.to_lowercase());
-            space = false;
-        } else if !space {
-            out.push(' ');
-            space = true;
-        }
-    }
-    out.trim_end().to_string()
-}
-
 /// `"… — found 576 candidates"` → `Some(576)`.
 pub fn parse_found(message: &str) -> Option<usize> {
     let rest = message.split("found ").nth(1)?;
@@ -631,14 +604,45 @@ fn fmt_rate(bps: i64) -> String {
     }
 }
 
+/// The progress line of a downloading run (SKADI-T-0690): percent done and
+/// `"40% · 1.2 MB/s · 5m"`. From the transfer fields the server merges into
+/// the run; `None` when the run has no download row.
+#[must_use]
+pub fn run_progress(r: &api::ActivityRun) -> Option<(f64, String)> {
+    r.download_id.as_ref()?;
+    let pct = match (r.size_bytes, r.downloaded_bytes) {
+        (Some(size), Some(done)) if size > 0 => (done as f64 / size as f64 * 100.0).round(),
+        _ => 0.0,
+    }
+    .clamp(0.0, 100.0);
+    let eta = r
+        .eta_seconds
+        .filter(|e| *e > 0)
+        .map(|e| {
+            if e >= 3600 {
+                format!(" · {}h {}m", e / 3600, (e % 3600) / 60)
+            } else {
+                format!(" · {}m", e / 60)
+            }
+        })
+        .unwrap_or_default();
+    Some((
+        pct,
+        format!(
+            "{pct:.0}% · {}{eta}",
+            fmt_rate(r.down_speed_bps.unwrap_or(0))
+        ),
+    ))
+}
+
 #[component]
 pub fn ActivityPage() -> impl IntoView {
     let runs = RwSignal::new(Vec::<api::ActivityRun>::new());
     let traces = RwSignal::new(Vec::<api::TraceRow>::new());
-    let downloads = RwSignal::new(Vec::<api::Download>::new());
     let log_filter = RwSignal::new("all".to_string());
     let expanded = RwSignal::new(None::<String>);
-    // edition-id -> movie title, so live runs (keyed by acquirable ref) get names.
+    // acquirable ref -> item title, for the trace log's rows (live runs carry
+    // their own `title` from the server, SKADI-T-0690).
     let titles = RwSignal::new(HashMap::<String, String>::new());
     let error = RwSignal::new(None::<String>);
     let alive = RwSignal::new(true);
@@ -697,9 +701,6 @@ pub fn ActivityPage() -> impl IntoView {
                 if let Ok(t) = api::traces(160).await {
                     traces.set(t);
                 }
-                if let Ok(d) = api::list_downloads().await {
-                    downloads.set(d);
-                }
                 gloo_timers::future::TimeoutFuture::new(POLL_MS).await;
                 if !alive.try_get_untracked().unwrap_or(false) {
                     break;
@@ -743,17 +744,6 @@ pub fn ActivityPage() -> impl IntoView {
     };
 
     let stage_board = move || {
-        // Release title per item from the newest `snatched` trace, for runs
-        // that are past the point of reporting `chosen_title` themselves.
-        let snatched: HashMap<String, String> = traces
-            .get()
-            .iter()
-            .filter(|t| t.event == "snatched")
-            .filter_map(|t| parse_handed(&t.message).map(|title| (t.acquirable_ref.clone(), title)))
-            .fold(HashMap::new(), |mut m, (k, v)| {
-                m.entry(k).or_insert(v);
-                m
-            });
         let names = titles.get();
         let rs = runs.get();
         STAGE_GROUPS
@@ -778,7 +768,12 @@ pub fn ActivityPage() -> impl IntoView {
                             // Unresolved acquirable refs are raw UUIDs — show a
                             // human placeholder with the id demoted, not a bare
                             // GUID masquerading as a title (SKADI-T-0348).
-                            let resolved = names.get(&r.acquirable_ref).cloned();
+                            // The server names the item (SKADI-T-0690); the
+                            // library map is only a fallback.
+                            let resolved = r
+                                .title
+                                .clone()
+                                .or_else(|| names.get(&r.acquirable_ref).cloned());
                             let has_name = resolved.is_some();
                             // Past `decide` there is a release title; when the
                             // item itself did not resolve, that title is the
@@ -806,41 +801,16 @@ pub fn ActivityPage() -> impl IntoView {
                                 .as_deref()
                                 .map(|t| ago(t, js_sys::Date::now()))
                                 .unwrap_or_default();
-                            // Downloading: the same numbers Overview shows for
-                            // this transfer. The queue is keyed by release
-                            // title, which is what `decide` chose.
-                            let progress = (gi == 3)
-                                .then(|| {
-                                    let ds = downloads.get();
-                                    let title = r
-                                        .chosen_title
-                                        .clone()
-                                        .or_else(|| snatched.get(&r.acquirable_ref).cloned());
-                                    match title {
-                                        Some(t) => ds.into_iter().find(|d| d.acquirable_ref == t),
-                                        // Snatched before the trace window: the item's
-                                        // own name is a prefix of its release name.
-                                        None => {
-                                            let label = norm_title(names.get(&r.acquirable_ref)?);
-                                            ds.into_iter().find(|d| {
-                                                d.status == "downloading" && norm_title(&d.acquirable_ref).starts_with(&label)
-                                            })
-                                        }
-                                    }
-                                })
-                                .flatten()
-                                .map(|d| {
-                                    let pct = d.percent.round().clamp(0.0, 100.0);
-                                    let eta = d.eta_seconds.filter(|e| *e > 0).map(|e| {
-                                        if e >= 3600 { format!(" · {}h {}m", e / 3600, (e % 3600) / 60) } else { format!(" · {}m", e / 60) }
-                                    });
-                                    view! {
-                                        <span class="run-progress">
-                                            <span class="run-bar"><span class="run-bar-fill" style=format!("width:{pct:.0}%")></span></span>
-                                            <span class="mono tnum">{format!("{pct:.0}% · {}{}", fmt_rate(d.down_speed_bps.unwrap_or(0)), eta.unwrap_or_default())}</span>
-                                        </span>
-                                    }
-                                });
+                            // Downloading: size, progress, rate and time left
+                            // as the server merged them from the download row.
+                            let progress = (gi == 3).then(|| run_progress(&r)).flatten().map(|(pct, text)| {
+                                view! {
+                                    <span class="run-progress">
+                                        <span class="run-bar"><span class="run-bar-fill" style=format!("width:{pct:.0}%")></span></span>
+                                        <span class="mono tnum">{text}</span>
+                                    </span>
+                                }
+                            });
                             // What is this item doing? Deciding shows how many
                             // candidates are being weighed; once a release is
                             // chosen (grab onward) show its title + decision.
@@ -1029,5 +999,40 @@ pub fn ActivityPage() -> impl IntoView {
             </div>
             {trace_lines}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(v: serde_json::Value) -> api::ActivityRun {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn run_progress_formats_the_merged_transfer() {
+        let r = run(serde_json::json!({
+            "run_id": "r", "acquirable_ref": "x", "current_stage": "downloading",
+            "download_id": "d", "size_bytes": 200, "downloaded_bytes": 50,
+            "eta_seconds": 7260, "down_speed_bps": 2048
+        }));
+        assert_eq!(
+            run_progress(&r),
+            Some((25.0, "25% · 2 KB/s · 2h 1m".into()))
+        );
+    }
+
+    #[test]
+    fn run_progress_without_a_size_is_zero_and_without_a_row_is_none() {
+        let r = run(serde_json::json!({
+            "run_id": "r", "acquirable_ref": "x", "current_stage": "downloading",
+            "download_id": "d", "downloaded_bytes": 0, "eta_seconds": 0
+        }));
+        assert_eq!(run_progress(&r), Some((0.0, "0% · 0 B/s".into())));
+        let none = run(serde_json::json!({
+            "run_id": "r", "acquirable_ref": "x", "current_stage": "downloading"
+        }));
+        assert_eq!(run_progress(&none), None);
     }
 }

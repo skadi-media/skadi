@@ -546,9 +546,49 @@ async fn search_all() -> impl IntoResponse {
     )
 }
 
-async fn activity() -> impl IntoResponse {
-    // In-memory, no DB call; empty when idle.
-    Json(skadi_hunter::tracker().snapshot())
+/// `GET /activity` query (SKADI-T-0690): comma-separated `kind`
+/// (`movie`, `series`/`tv`, `audiobook`, …) and `stage` (`searching`,
+/// `downloading`, …) filters. Both optional; absent means all.
+#[derive(Deserialize)]
+struct ActivityParams {
+    kind: Option<String>,
+    stage: Option<String>,
+}
+
+/// `GET /activity` — the in-flight acquire runs. Each run carries the item
+/// `title`, and a run at `snatching`/`downloading` also carries its transfer's
+/// `download_id`, `size_bytes`, `downloaded_bytes`, `eta_seconds` and
+/// `down_speed_bps`, merged here from the download rows (SKADI-T-0690). All
+/// additive: absent fields are omitted, as before.
+async fn activity(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ActivityParams>,
+) -> std::result::Result<impl IntoResponse, ApiError> {
+    use skadi_store::{DownloadJobRepo, DownloadJobStatus};
+    let filter =
+        skadi_hunter::ActivityFilter::parse(params.kind.as_deref(), params.stage.as_deref())
+            .map_err(|e| ApiError(skadi_core::AppError::Validation(e)))?;
+    let mut runs = skadi_hunter::tracker().snapshot_filtered(&filter);
+    // One query per poll, and none at all unless a run has a transfer: the
+    // tracker is in memory, so an idle or searching queue stays DB-free.
+    if skadi_hunter::tracker::wants_downloads(&runs)
+        && let Some(store) = state.store.as_ref()
+    {
+        match store
+            .list_downloads_with_status(&[
+                DownloadJobStatus::Queued,
+                DownloadJobStatus::Downloading,
+                DownloadJobStatus::Paused,
+                DownloadJobStatus::Stalled,
+            ])
+            .await
+        {
+            Ok(jobs) => skadi_hunter::tracker::merge_downloads(&mut runs, &jobs),
+            // Best-effort: the live queue still answers without progress.
+            Err(e) => tracing::warn!(error = %e, "activity: loading download rows failed"),
+        }
+    }
+    Ok(Json(runs))
 }
 
 /// One persistent history row on the wire (SKADI-T-0082).

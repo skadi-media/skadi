@@ -503,6 +503,99 @@ async fn activity_reflects_the_in_flight_tracker() {
     skadi_hunter::tracker().finish(key);
 }
 
+/// `/activity` names the item, merges its transfer's size / progress / ETA
+/// from the download row, and filters by kind and stage (SKADI-T-0690). The
+/// old fields are untouched, so older clients keep working.
+#[tokio::test]
+async fn activity_carries_title_and_transfer_and_filters() {
+    use skadi_store::{DownloadJobRepo, DownloadProgress, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let movie = "ref-activity-0690-movie";
+    let show = "ref-activity-0690-show";
+    let t = skadi_hunter::tracker();
+    t.finish(movie);
+    t.finish(show);
+
+    let job = db
+        .store
+        .enqueue(&NewDownloadJob {
+            acquirable_ref: "Movie.0690.1080p".into(),
+            source: "magnet:?xt=urn:btih:0690".into(),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+    db.store
+        .set_download_target(&job.id, "movie", movie)
+        .await
+        .unwrap();
+    db.store
+        .update_progress(
+            &job.id,
+            &DownloadProgress {
+                progress_bytes: 250,
+                total_bytes: 1000,
+                info_hash: None,
+                down_speed_bps: Some(4096),
+                up_speed_bps: None,
+                uploaded_bytes: None,
+                peers: None,
+                peers_seen: None,
+                eta_seconds: Some(90),
+                client_state: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    t.start("run-0690-m", MediaKind::Movie, movie);
+    t.set_title(movie, Some("Movie 0690".into()));
+    t.set_stage(movie, "downloading");
+    t.start("run-0690-s", MediaKind::Series, show);
+    t.set_stage(show, "searching");
+
+    let (s, all) = call(&state, "/api/v1/activity").await;
+    assert_eq!(s, StatusCode::OK);
+    let m = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["acquirable_ref"] == movie)
+        .expect("movie run listed");
+    assert_eq!(m["run_id"], "run-0690-m");
+    assert_eq!(m["kind"], "Movie");
+    assert_eq!(m["current_stage"], "downloading");
+    assert_eq!(m["title"], "Movie 0690");
+    assert_eq!(m["download_id"], job.id.as_str());
+    assert_eq!(m["size_bytes"], 1000);
+    assert_eq!(m["downloaded_bytes"], 250);
+    assert_eq!(m["eta_seconds"], 90);
+    assert_eq!(m["down_speed_bps"], 4096);
+
+    let refs = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["acquirable_ref"].as_str())
+            .filter(|r| r.contains("0690"))
+            .map(str::to_string)
+            .collect()
+    };
+    let (_, movies) = call(&state, "/api/v1/activity?kind=movie").await;
+    assert_eq!(refs(&movies), vec![movie.to_string()]);
+    let (_, searching) = call(&state, "/api/v1/activity?stage=searching").await;
+    assert_eq!(refs(&searching), vec![show.to_string()]);
+    let (_, tv) = call(&state, "/api/v1/activity?kind=tv&stage=searching").await;
+    assert_eq!(refs(&tv), vec![show.to_string()]);
+    let (s, _) = call(&state, "/api/v1/activity?kind=film").await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    t.finish(movie);
+    t.finish(show);
+}
+
 /// Every list endpoint the UI renders carries the paging envelope
 /// (SKADI-T-0494 / SKADI-T-0468).
 ///

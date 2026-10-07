@@ -63,6 +63,8 @@ pub struct World {
     pub last_flush: Option<bool>,
     /// Register the domain with an importer whose matcher places nothing.
     pub reject_imports: bool,
+    /// Download rows a scenario set up for the `/activity` merge (SKADI-T-0690).
+    pub download_rows: Vec<skadi_store::DownloadJob>,
 }
 
 impl std::fmt::Debug for World {

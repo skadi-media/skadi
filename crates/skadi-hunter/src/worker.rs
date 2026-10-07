@@ -184,6 +184,7 @@ async fn prepare_acquire(seed: AcquireSeed) -> Result<Prepared> {
         tracing::info!(acquirable = %acquirable_ref, "acquire already in flight; skipping duplicate");
         return Ok(Prepared::Early(AcquireOutcome::AlreadyInFlight));
     }
+    crate::tracker::tracker().set_title(&acquirable_ref, seed.request.display_title());
 
     let mut ctx = match seed.into_context(Some(run_id)) {
         Ok(ctx) => ctx,
@@ -390,6 +391,7 @@ pub async fn start_grab(
     let kind = request.kind;
     let run_id = uuid::Uuid::new_v4().to_string();
     crate::tracker::tracker().start(run_id.clone(), kind, acquirable_ref.clone());
+    crate::tracker::tracker().set_title(&acquirable_ref, request.display_title());
 
     let mut state = AcquireState::new(acquirable, request, profile);
     state.run_id = Some(run_id);

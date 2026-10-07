@@ -44,11 +44,13 @@ fn adopt_legacy(w: &mut World, stage: String, acquirable: String) {
     w.tracked_refs.push(acquirable);
 }
 
+#[given(expr = "run {string} advances {string} to stage {string}")]
 #[when(expr = "run {string} advances {string} to stage {string}")]
 fn set_stage(_w: &mut World, _run: String, acquirable: String, stage: String) {
     tracker().set_stage(&acquirable, stage);
 }
 
+#[given(expr = "{string} is recorded as chosen for {string} out of {int} candidates")]
 #[when(expr = "{string} is recorded as chosen for {string} out of {int} candidates")]
 fn set_chosen(_w: &mut World, title: String, acquirable: String, n: usize) {
     tracker().set_chosen(&acquirable, Some(title), n);
@@ -132,36 +134,138 @@ fn shows_chosen(_w: &mut World, acquirable: String, title: String, n: usize, dec
     assert_eq!(m.decision.as_deref(), Some(decision.as_str()));
 }
 
-#[then(expr = "the activity view entry for {string} carries the release size and ETA")]
-fn shows_progress_fields(_w: &mut World, acquirable: String) {
-    let snap = tracker().snapshot();
-    let m = snap
-        .iter()
-        .find(|m| m.acquirable_ref == acquirable)
-        .expect("tracked");
-    let json = serde_json::to_value(m).unwrap();
-    assert!(
-        json.get("size_bytes").is_some() && json.get("eta_seconds").is_some(),
-        "the *arr queue row shows size / time-left; RunMeta has only {:?}",
-        json.as_object()
-            .map(|o| o.keys().cloned().collect::<Vec<_>>())
-    );
+#[given(expr = "the sweep started a {string} run {string} for {string}")]
+fn start_kind(w: &mut World, kind: String, run: String, acquirable: String) {
+    let kind = skadi_hunter::ActivityFilter::parse(Some(&kind), None)
+        .expect("kind")
+        .kinds[0];
+    assert!(tracker().try_start(run.clone(), kind, acquirable.clone()));
+    w.tracked_refs.push(acquirable.clone());
+    w.run_ids.insert(acquirable, run);
 }
 
-#[then(expr = "the activity view entry for {string} carries a human-readable title")]
-fn shows_title(_w: &mut World, acquirable: String) {
+#[when(expr = "the download row for {string} is {int} of {int} bytes with {int} seconds left")]
+fn download_row(w: &mut World, acquirable: String, done: i64, total: i64, eta: i64) {
+    // The row as the hunter leaves it at snatch (SKADI-T-0689): keyed by the
+    // release title, with the item it was grabbed for as `target_ref`.
+    let release = tracker()
+        .snapshot()
+        .into_iter()
+        .find(|m| m.acquirable_ref == acquirable)
+        .and_then(|m| m.chosen_title)
+        .expect("a chosen release");
+    let now = chrono::Utc::now();
+    w.download_rows.push(skadi_store::DownloadJob {
+        id: format!("dl-{acquirable}"),
+        acquirable_ref: release,
+        source: "magnet:?xt=urn:btih:c12".into(),
+        category: None,
+        status: skadi_store::DownloadJobStatus::Downloading,
+        info_hash: None,
+        progress_bytes: done,
+        total_bytes: total,
+        down_speed_bps: Some(1_000),
+        up_speed_bps: None,
+        uploaded_bytes: None,
+        peers: None,
+        peers_seen: None,
+        eta_seconds: Some(eta),
+        files: vec![],
+        error: None,
+        worker_id: None,
+        delete_data: false,
+        incomplete_dir: None,
+        complete_dir: None,
+        created_at: now,
+        updated_at: now,
+        completed_at: None,
+        lease_expires_at: None,
+        client_state: None,
+        target_kind: Some("movie".into()),
+        target_ref: Some(acquirable),
+        import_state: None,
+        import_error: None,
+    });
+}
+
+#[then(
+    expr = "the activity view entry for {string} carries size {int}, downloaded {int} and ETA {int}"
+)]
+fn shows_progress_fields(w: &mut World, acquirable: String, size: i64, done: i64, eta: i64) {
+    // What `GET /activity` serves: the snapshot with the download rows merged
+    // in one pass.
+    let mut snap = tracker().snapshot();
+    assert!(skadi_hunter::tracker::wants_downloads(&snap));
+    skadi_hunter::tracker::merge_downloads(&mut snap, &w.download_rows);
+    let m = snap
+        .iter()
+        .find(|m| m.acquirable_ref == acquirable)
+        .expect("tracked");
+    let json = serde_json::to_value(m).unwrap();
+    assert_eq!(json["size_bytes"], size, "{json}");
+    assert_eq!(json["downloaded_bytes"], done, "{json}");
+    assert_eq!(json["eta_seconds"], eta, "{json}");
+    assert_eq!(json["download_id"], format!("dl-{acquirable}"), "{json}");
+}
+
+#[when(
+    expr = "the run for {string} is titled from a search for {string} season {int} episode {int}"
+)]
+fn titled(_w: &mut World, acquirable: String, title: String, season: u16, episode: u16) {
+    let spec = skadi_hunter::SearchSpec {
+        kind: MediaKind::Series,
+        trigger: Default::default(),
+        titles: vec![title, "Alias".into()],
+        year: None,
+        external_ids: Default::default(),
+        categories: vec![],
+        tv: Some(skadi_hunter::TvScope {
+            season,
+            episode: Some(episode),
+            absolute: None,
+            air_date: None,
+        }),
+        series: None,
+        tags: None,
+    };
+    tracker().set_title(&acquirable, spec.display_title());
+}
+
+#[then(expr = "the activity view entry for {string} carries the title {string}")]
+fn shows_title(_w: &mut World, acquirable: String, title: String) {
     let snap = tracker().snapshot();
     let m = snap
         .iter()
         .find(|m| m.acquirable_ref == acquirable)
         .expect("tracked");
     let json = serde_json::to_value(m).unwrap();
-    assert!(
-        json.get("title").is_some(),
-        "queue rows need the item title, not just the opaque ref; RunMeta has {:?}",
-        json.as_object()
-            .map(|o| o.keys().cloned().collect::<Vec<_>>())
-    );
+    assert_eq!(json["title"], title, "{json}");
+}
+
+fn filtered(kind: Option<&str>, stage: Option<&str>) -> Vec<String> {
+    let f = skadi_hunter::ActivityFilter::parse(kind, stage).expect("filter");
+    let mut refs: Vec<String> = tracker()
+        .snapshot_filtered(&f)
+        .into_iter()
+        .map(|m| m.acquirable_ref)
+        .collect();
+    refs.sort();
+    refs
+}
+
+#[then(expr = "the activity view filtered to kind {string} lists only {string}")]
+fn filtered_kind(_w: &mut World, kind: String, only: String) {
+    assert_eq!(filtered(Some(&kind), None), vec![only]);
+}
+
+#[then(expr = "the activity view filtered to stage {string} lists only {string}")]
+fn filtered_stage(_w: &mut World, stage: String, only: String) {
+    assert_eq!(filtered(None, Some(&stage)), vec![only]);
+}
+
+#[then(expr = "the activity view filtered to kind {string} and stage {string} lists nothing")]
+fn filtered_both(_w: &mut World, kind: String, stage: String) {
+    assert!(filtered(Some(&kind), Some(&stage)).is_empty());
 }
 
 #[then(expr = "the tracker still holds {string} for run {string}")]
@@ -196,15 +300,4 @@ fn throttled(w: &mut World) {
 fn watch_best(_w: &mut World, acquirable: String, pct: u32) {
     let watch = tracker().transfer_watch(&acquirable).expect("watch");
     assert_eq!((watch.best_progress * 100.0).round() as u32, pct);
-}
-
-#[then(expr = "the activity view can be filtered to {string} runs")]
-fn filtered_view(_w: &mut World, _kind: String) {
-    // REQ-QUEUE.5: filtering/pagination by kind/stage. The tracker exposes only
-    // `snapshot()`; `GET /activity` returns it whole.
-    let has_filter = false;
-    assert!(
-        has_filter,
-        "no per-kind/stage filter on the in-flight snapshot (REQ-QUEUE.5)"
-    );
 }

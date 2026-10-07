@@ -780,6 +780,13 @@ fn enter_stage(state: &AcquireState, stage: &str) -> Ownership {
     match ownership {
         Ownership::Adopted => {
             tracing::info!(acquirable = %state.acquirable.0, stage, "adopted recovered acquire run");
+            // A replayed run has no `start_acquire` that named it: give the
+            // live queue its title and release from the workflow's own state.
+            crate::tracker::tracker().fill_missing(
+                &state.acquirable.0,
+                state.request.display_title(),
+                state.chosen.as_ref().map(|r| r.title.clone()),
+            );
         }
         Ownership::Foreign => {
             tracing::warn!(

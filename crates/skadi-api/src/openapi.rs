@@ -143,7 +143,7 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "GET",
         "/activity",
         "system",
-        "Recent activity feed across all domains",
+        "In-flight acquire runs with title and transfer progress; `?kind=` and `?stage=` filter",
     ),
     (
         "GET",

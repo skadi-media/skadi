@@ -16,10 +16,11 @@ use crate::audiobooks::{
     AudiobookDiscoverPage, AudiobooksConfigPage, AudiobooksPage, AuthorDetailPage, BookDetailPage,
 };
 use crate::config::ConfigPage;
+use crate::confirm::{ConfirmDialogHost, ConfirmSpec, confirm};
 use crate::dashboard::Dashboard;
 use crate::import::LibraryImportPage;
 use crate::movies::{MovieDetailPage, MoviesConfigPage, MoviesPage};
-use crate::settings::{ProviderSection, indexer_spec, window_confirm};
+use crate::settings::{ProviderSection, indexer_spec};
 use crate::tv::{SeriesDetailPage, TvPage};
 use crate::tv_import::TvImportPage;
 
@@ -114,10 +115,12 @@ pub fn App() -> impl IntoView {
         handle.forget();
     });
 
+    // One dialog host for every `confirm::confirm` in the app (SKADI-T-0694).
     view! {
         <Show when=move || needs_login.get() fallback=Shell>
             <LoginPage/>
         </Show>
+        <ConfirmDialogHost/>
     }
 }
 
@@ -933,15 +936,22 @@ fn DownloadsSection() -> impl IntoView {
         if ids.is_empty() || bulk_busy.get_untracked() {
             return;
         }
-        if let Some(question) = dlm::bulk_confirm_message(action, ids.len()) {
-            // T-0694: use the in-app ConfirmDialog here once it lands.
-            if !window_confirm(&question) {
-                return;
-            }
-        }
-        bulk_busy.set(true);
-        bulk_msg.set(None);
+        let question = dlm::bulk_confirm_message(action, ids.len());
         spawn_local(async move {
+            if let Some(body) = question {
+                let n = dlm::transfers(ids.len());
+                let (title, label) = if action == BulkAction::RemoveWithFiles {
+                    (format!("Delete {n} and their files?"), "Remove and delete")
+                } else {
+                    (format!("Remove {n}?"), "Remove")
+                };
+                let spec = ConfirmSpec::destructive(title, body).confirm_label(label);
+                if !confirm(spec).await || bulk_busy.get_untracked() {
+                    return;
+                }
+            }
+            bulk_busy.set(true);
+            bulk_msg.set(None);
             let (mut done, mut failed) = (0, 0);
             for id in &ids {
                 let r = match action {
@@ -1166,13 +1176,16 @@ fn DownloadsSection() -> impl IntoView {
                 let label_rm = label.clone();
                 let id_rm = j.id.clone();
                 let on_remove = move |_| {
-                    if !window_confirm(&format!(
+                    let body = format!(
                         "Remove \"{label_rm}\" from the download client? (keeps any downloaded files)"
-                    )) {
-                        return;
-                    }
+                    );
                     let id = id_rm.clone();
                     spawn_local(async move {
+                        let spec = ConfirmSpec::destructive("Remove the transfer?", body)
+                            .confirm_label("Remove");
+                        if !confirm(spec).await {
+                            return;
+                        }
                         let _ = api::remove_download(&id, false).await;
                         refetch();
                     });
@@ -1180,13 +1193,16 @@ fn DownloadsSection() -> impl IntoView {
                 let label_del = label.clone();
                 let id_del = j.id.clone();
                 let on_delete = move |_| {
-                    if !window_confirm(&format!(
+                    let body = format!(
                         "Remove \"{label_del}\" AND delete its downloaded files? This can't be undone."
-                    )) {
-                        return;
-                    }
+                    );
                     let id = id_del.clone();
                     spawn_local(async move {
+                        let spec = ConfirmSpec::destructive("Delete the transfer and its files?", body)
+                            .confirm_label("Remove and delete");
+                        if !confirm(spec).await {
+                            return;
+                        }
                         let _ = api::remove_download(&id, true).await;
                         refetch();
                     });
@@ -1308,14 +1324,15 @@ fn DownloadsSection() -> impl IntoView {
             Some(Ok(plan)) => dlm::import_confirm_message(plan),
             _ => None,
         });
-        if let Some(question) = question {
-            // T-0694: use the in-app ConfirmDialog here once it lands.
-            if !window_confirm(&question) {
-                return;
-            }
-        }
-        import_busy.set(true);
         spawn_local(async move {
+            if let Some(body) = question {
+                let spec = ConfirmSpec::destructive("Replace library files?", body)
+                    .confirm_label("Replace and import");
+                if !confirm(spec).await || import_busy.get_untracked() {
+                    return;
+                }
+            }
+            import_busy.set(true);
             let result = api::run_import(&api::ManualImportRequest::for_download(&facts)).await;
             let (ok, text) = match result {
                 Ok(outcome) => dlm::import_result(&outcome),

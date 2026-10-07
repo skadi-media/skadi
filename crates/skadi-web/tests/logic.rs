@@ -2867,3 +2867,31 @@ async fn live_poll_never_ticks_for_a_torn_down_page() {
     )
     .await;
 }
+
+/// The ConfirmDialog's Tab trap wraps at both ends and pulls focus back in
+/// from outside (SKADI-T-0694).
+#[wasm_bindgen_test]
+fn confirm_tab_trap_wraps_and_pulls_focus_back_in() {
+    use skadi_web::confirm::trap_next;
+    // Two buttons: Cancel (0), confirm (1).
+    assert_eq!(trap_next(Some(0), 2, false), 1);
+    assert_eq!(trap_next(Some(1), 2, false), 0);
+    assert_eq!(trap_next(Some(0), 2, true), 1);
+    assert_eq!(trap_next(Some(1), 2, true), 0);
+    // Focus outside the dialog: Tab goes to the first, Shift+Tab to the last.
+    assert_eq!(trap_next(None, 2, false), 0);
+    assert_eq!(trap_next(None, 2, true), 1);
+    assert_eq!(trap_next(None, 0, false), 0);
+}
+
+#[wasm_bindgen_test]
+fn confirm_spec_defaults_put_destructive_on_cancel_first() {
+    use skadi_web::confirm::ConfirmSpec;
+    let d = ConfirmSpec::destructive("Delete?", "Gone.");
+    assert!(d.destructive);
+    assert_eq!(d.confirm_label, "Delete");
+    assert_eq!(d.cancel_label, "Cancel");
+    let n = ConfirmSpec::new("Grab?", "One pack.").confirm_label("Grab pack");
+    assert!(!n.destructive);
+    assert_eq!(n.confirm_label, "Grab pack");
+}

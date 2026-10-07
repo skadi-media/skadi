@@ -11,8 +11,8 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
+use crate::confirm::{ConfirmSpec, confirm};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class, tmdb_img};
-use crate::settings::window_confirm;
 
 /// Library-wall status for a series: `downloading` (any episode mid-acquisition),
 /// `owned` (episodes present + all imported/cutoff), else `wanted`.
@@ -317,15 +317,15 @@ pub fn SeriesDetailPage() -> impl IntoView {
         let del_title = s.title.clone();
         let nav_del = nav.clone();
         let on_delete = move |_| {
-            if !window_confirm(&format!(
-                "Delete \"{del_title}\" and its files from disk? This can't be undone."
-            )) {
-                return;
-            }
+            let body =
+                format!("Delete \"{del_title}\" and its files from disk? This can't be undone.");
             let id = del_id.clone();
             let nav = nav_del.clone();
-            busy.set(true);
             spawn_local(async move {
+                if !confirm(ConfirmSpec::destructive("Delete the series?", body)).await {
+                    return;
+                }
+                busy.set(true);
                 let _ = api::delete_series(&id, true).await;
                 busy.set(false);
                 nav("/tv", Default::default());

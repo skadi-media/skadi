@@ -524,7 +524,7 @@ pub fn bulk_targets(action: BulkAction, sel: &Selection, shown: &[Download]) -> 
         .collect()
 }
 
-fn transfers(n: usize) -> String {
+pub fn transfers(n: usize) -> String {
     if n == 1 {
         "1 transfer".into()
     } else {

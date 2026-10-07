@@ -11,6 +11,7 @@ pub mod activity;
 pub mod api;
 pub mod audiobook_import;
 pub mod audiobooks;
+pub mod confirm;
 pub mod dashboard;
 pub mod downloads;
 pub mod household;

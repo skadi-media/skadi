@@ -9,6 +9,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
+use crate::confirm::{ConfirmSpec, confirm};
 
 /// Longest inline detail before we truncate and tuck the full text behind a
 /// disclosure. Keeps the history table to one readable line per row.
@@ -946,16 +947,19 @@ pub fn ActivityPage() -> impl IntoView {
                                         let name = name.clone();
                                         let aref = r.acquirable_ref.clone();
                                         let on_click = move |_| {
-                                            if let Some(question) = confirm_message(a, &name) {
-                                                // T-0694: use the in-app ConfirmDialog here once it lands.
-                                                if !crate::settings::window_confirm(&question) {
-                                                    return;
-                                                }
-                                            }
+                                            let question = confirm_message(a, &name);
                                             let run = run.clone();
                                             let name = name.clone();
-                                            busy.set(Some(run.acquirable_ref.clone()));
                                             spawn_local(async move {
+                                                if let Some(body) = question {
+                                                    // Every asked action drops downloaded data.
+                                                    let spec = ConfirmSpec::destructive(format!("{}?", a.label()), body)
+                                                        .confirm_label(a.label());
+                                                    if !confirm(spec).await {
+                                                        return;
+                                                    }
+                                                }
+                                                busy.set(Some(run.acquirable_ref.clone()));
                                                 let outcome = match perform(a, &run).await {
                                                     Ok(()) => (true, format!("{name}: {}", done_message(a))),
                                                     Err(e) => (false, format!("{name}: {e}")),

@@ -10,6 +10,7 @@ use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 use crate::api::{self, AcquirablePath, WantedEdition, WantedItem};
+use crate::confirm::{ConfirmSpec, confirm};
 use crate::movies::{ReleasesPanel, status_class};
 
 /// Edition chips shown per item before the "+N more" toggle.
@@ -220,20 +221,27 @@ pub fn WantedPage() -> impl IntoView {
         });
     };
     // Bulk prune (SKADI-T-0594): specials were 82% of the TV backlog on prod
-    // (4,480 of 5,408 files; 213 of 267 series wanted nothing else). Two-step
-    // so a stray click cannot unmonitor two hundred seasons.
-    let confirm_bulk = RwSignal::new(false);
+    // (4,480 of 5,408 files; 213 of 267 series wanted nothing else). Asked
+    // first (the ConfirmDialog, SKADI-T-0694) so a stray click cannot
+    // unmonitor two hundred seasons.
     let bulk_busy = RwSignal::new(false);
     // Progress + result shown inline next to the button: the first cut put the
-    // note up in the page header, and the two-step read as "nothing happened".
+    // note up in the page header, and the run read as "nothing happened".
     let bulk_note = RwSignal::new(None::<Result<String, String>>);
     let unmonitor_all_specials = move || {
         let ids = series_with_specials(&all.get_untracked());
-        confirm_bulk.set(false);
-        bulk_busy.set(true);
         let n = ids.len();
-        bulk_note.set(Some(Ok(format!("0 of {n} done…"))));
         spawn_local(async move {
+            let spec = ConfirmSpec::destructive(
+                "Unmonitor all specials?",
+                format!("This unmonitors season 0 on {n} series."),
+            )
+            .confirm_label("Unmonitor all specials");
+            if !confirm(spec).await || bulk_busy.get_untracked() {
+                return;
+            }
+            bulk_busy.set(true);
+            bulk_note.set(Some(Ok(format!("0 of {n} done…"))));
             let mut failed = 0usize;
             for (i, id) in ids.into_iter().enumerate() {
                 if api::monitor_season(&id, 0, false).await.is_err() {
@@ -325,7 +333,7 @@ pub fn WantedPage() -> impl IntoView {
                 let n = series_with_specials(&all.get()).len();
                 let has_note = bulk_note.get().is_some();
                 (n > 0 || has_note).then(|| view! {
-                    <div class="wanted-bulk" class:confirming=move || confirm_bulk.get()>
+                    <div class="wanted-bulk">
                         <span class="muted">
                             {if n > 0 {
                                 format!("{n} series are waiting on specials (S00) — usually extras nobody asked for.")
@@ -333,25 +341,11 @@ pub fn WantedPage() -> impl IntoView {
                                 "No series is waiting on specials.".to_string()
                             }}
                         </span>
-                        {move || if confirm_bulk.get() {
-                            view! {
-                                <span class="wanted-bulk-ask">
-                                    {format!("This unmonitors season 0 on {n} series. Sure?")}
-                                </span>
-                                <button class="secondary bad" on:click=move |_| unmonitor_all_specials() disabled=move || bulk_busy.get()>
-                                    "Yes, unmonitor all specials"
-                                </button>
-                                <button class="secondary" on:click=move |_| confirm_bulk.set(false)>"Cancel"</button>
-                            }.into_any()
-                        } else if n > 0 {
-                            view! {
-                                <button class="secondary" on:click=move |_| confirm_bulk.set(true) disabled=move || bulk_busy.get()>
-                                    "Unmonitor all specials…"
-                                </button>
-                            }.into_any()
-                        } else {
-                            ().into_any()
-                        }}
+                        {(n > 0).then(|| view! {
+                            <button class="secondary" on:click=move |_| unmonitor_all_specials() disabled=move || bulk_busy.get()>
+                                "Unmonitor all specials…"
+                            </button>
+                        })}
                         {move || bulk_note.get().map(|s| match s {
                             Ok(m) => view! { <span class="ok mono">{m}</span> }.into_any(),
                             Err(m) => view! { <span class="bad mono">{m}</span> }.into_any(),

@@ -13,7 +13,7 @@ use leptos::task::spawn_local;
 use serde_json::{Value, json};
 
 use crate::api::{self, MaxRating, Member, Policy};
-use crate::settings::window_confirm;
+use crate::confirm::{ConfirmSpec, confirm};
 
 /// The ordered US scales (skadi-core `rating`): a ceiling is one of these.
 #[must_use]
@@ -414,13 +414,16 @@ pub fn HouseholdPage() -> impl IntoView {
         fetch_qr(id);
     };
     let reissue = move |m: Member| {
-        if !window_confirm(&format!(
-            "Re-issue {}'s token? Their phone will need to pair again.",
-            m.name
-        )) {
-            return;
-        }
         spawn_local(async move {
+            let body = format!(
+                "Re-issue {}'s token? Their phone will need to pair again.",
+                m.name
+            );
+            let spec =
+                ConfirmSpec::destructive("Re-issue the token?", body).confirm_label("Re-issue");
+            if !confirm(spec).await {
+                return;
+            }
             match api::reissue_member_token(&m.id).await {
                 Ok(c) => {
                     fresh_token.set(Some((c.member.name, c.token)));
@@ -432,13 +435,16 @@ pub fn HouseholdPage() -> impl IntoView {
         });
     };
     let signout = move |m: Member| {
-        if !window_confirm(&format!(
-            "Sign out all {} of {}'s devices? They will need to sign in again.",
-            m.devices, m.name
-        )) {
-            return;
-        }
         spawn_local(async move {
+            let body = format!(
+                "Sign out all {} of {}'s devices? They will need to sign in again.",
+                m.devices, m.name
+            );
+            let spec =
+                ConfirmSpec::destructive("Sign out every device?", body).confirm_label("Sign out");
+            if !confirm(spec).await {
+                return;
+            }
             match api::signout_member(&m.id).await {
                 Ok(_) => refresh(),
                 Err(e) => load_error.set(Some(e.to_string())),
@@ -446,13 +452,15 @@ pub fn HouseholdPage() -> impl IntoView {
         });
     };
     let revoke = move |m: Member| {
-        if !window_confirm(&format!(
-            "Remove {} from the household? Their phone stops working immediately.",
-            m.name
-        )) {
-            return;
-        }
         spawn_local(async move {
+            let body = format!(
+                "Remove {} from the household? Their phone stops working immediately.",
+                m.name
+            );
+            let spec = ConfirmSpec::destructive("Remove the member?", body).confirm_label("Remove");
+            if !confirm(spec).await {
+                return;
+            }
             match api::delete_member(&m.id).await {
                 Ok(()) => {
                     if editor.get_untracked() == Editor::Edit(m.id.clone()) {

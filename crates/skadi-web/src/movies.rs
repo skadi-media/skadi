@@ -16,6 +16,7 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 use serde_json::{Value, json};
 
 use crate::api;
+use crate::confirm::{ConfirmSpec, confirm};
 
 /// CSS class for a coarse status label.
 pub fn status_class(label: &str) -> &'static str {
@@ -363,15 +364,15 @@ pub fn MovieDetailPage() -> impl IntoView {
         let del_title = m.title.clone();
         let nav_del = nav.clone();
         let on_delete = move |_| {
-            if !window_confirm(&format!(
-                "Delete \"{del_title}\" and its files from disk? This can't be undone."
-            )) {
-                return;
-            }
+            let body =
+                format!("Delete \"{del_title}\" and its files from disk? This can't be undone.");
             let id = del_id.clone();
             let nav = nav_del.clone();
-            busy.set(true);
             spawn_local(async move {
+                if !confirm(ConfirmSpec::destructive("Delete the movie?", body)).await {
+                    return;
+                }
+                busy.set(true);
                 let _ = api::delete_movie(&id, true).await;
                 busy.set(false);
                 nav("/movies", Default::default());
@@ -1057,16 +1058,20 @@ pub fn ReleasesTable(
                 let confirm_title = title.clone();
                 view! {
                     <button on:click=move |_| {
-                        if is_pack
-                            && !crate::settings::window_confirm(&format!(
-                                "{confirm_title} is a season pack — grabbing it will \
-                                 satisfy every episode in the season, not just this \
-                                 one. Continue?"
-                            ))
-                        {
-                            return;
-                        }
-                        on_grab.run(rel.clone());
+                        let rel = rel.clone();
+                        let body = format!(
+                            "{confirm_title} is a season pack — grabbing it will \
+                             satisfy every episode in the season, not just this \
+                             one. Continue?"
+                        );
+                        spawn_local(async move {
+                            let spec = ConfirmSpec::new("Grab a season pack?", body)
+                                .confirm_label("Grab pack");
+                            if is_pack && !confirm(spec).await {
+                                return;
+                            }
+                            on_grab.run(rel);
+                        });
                     }>
                         {if is_pack { "Grab pack" } else { "Grab" }}
                     </button>
@@ -1370,11 +1375,12 @@ fn ProfileSection() -> impl IntoView {
         let Some(id) = profile_id.get_untracked() else {
             return;
         };
-        if !window_confirm("Delete this profile?") {
-            return;
-        }
-        busy.set(true);
         spawn_local(async move {
+            let spec = ConfirmSpec::destructive("Delete this profile?", "This can't be undone.");
+            if !confirm(spec).await {
+                return;
+            }
+            busy.set(true);
             let _ = api::delete_setting("profiles", &id).await;
             busy.set(false);
             // Reload the list and select the first remaining profile (or a new one).
@@ -1586,11 +1592,13 @@ fn EditionKindsSection() -> impl IntoView {
                 let del_name = k.name.clone();
                 let on_del = move |_| {
                     let del_id = del_id.clone();
-                    if !window_confirm(&format!("Delete edition kind \"{del_name}\"?")) {
-                        return;
-                    }
-                    busy.set(true);
+                    let title = format!("Delete edition kind \"{del_name}\"?");
                     spawn_local(async move {
+                        let spec = ConfirmSpec::destructive(title, "This can't be undone.");
+                        if !confirm(spec).await {
+                            return;
+                        }
+                        busy.set(true);
                         let _ = api::delete_edition_kind(&del_id).await;
                         busy.set(false);
                         refresh();
@@ -1663,11 +1671,4 @@ fn EditionKindsSection() -> impl IntoView {
             {form_panel}
         </section>
     }
-}
-
-/// `window.confirm` bridge for the delete guard.
-fn window_confirm(message: &str) -> bool {
-    web_sys::window()
-        .and_then(|w| w.confirm_with_message(message).ok())
-        .unwrap_or(false)
 }

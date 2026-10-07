@@ -15,6 +15,7 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
+use crate::confirm::{ConfirmSpec, confirm};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
@@ -1325,15 +1326,15 @@ pub fn BookDetailPage() -> impl IntoView {
         let del_title = b.title.clone();
         let nav_del = nav.clone();
         let on_delete = move |_| {
-            if !window_confirm(&format!(
-                "Delete \"{del_title}\" and its files from disk? This can't be undone."
-            )) {
-                return;
-            }
+            let body =
+                format!("Delete \"{del_title}\" and its files from disk? This can't be undone.");
             let id = del_id.clone();
             let nav = nav_del.clone();
-            busy.set(true);
             spawn_local(async move {
+                if !confirm(ConfirmSpec::destructive("Delete the book?", body)).await {
+                    return;
+                }
+                busy.set(true);
                 let _ = api::delete_book(&id, true).await;
                 busy.set(false);
                 nav("/audiobooks", Default::default());
@@ -1689,15 +1690,14 @@ pub fn AuthorDetailPage() -> impl IntoView {
         let del_name = a.name.clone();
         let nav_del = nav.clone();
         let on_delete = move |_| {
-            if !window_confirm(&format!(
-                "Delete \"{del_name}\"? (library entry only — no files removed)"
-            )) {
-                return;
-            }
+            let body = format!("Delete \"{del_name}\"? (library entry only — no files removed)");
             let id = del_id.clone();
             let nav = nav_del.clone();
-            busy.set(true);
             spawn_local(async move {
+                if !confirm(ConfirmSpec::destructive("Delete the author?", body)).await {
+                    return;
+                }
+                busy.set(true);
                 let _ = api::delete_author(&id).await;
                 busy.set(false);
                 nav("/audiobooks", Default::default());
@@ -1877,11 +1877,4 @@ fn copy_to_clipboard(text: &str) {
     if let Some(win) = web_sys::window() {
         let _ = win.navigator().clipboard().write_text(text);
     }
-}
-
-/// `window.confirm` bridge for the delete guard.
-fn window_confirm(message: &str) -> bool {
-    web_sys::window()
-        .and_then(|w| w.confirm_with_message(message).ok())
-        .unwrap_or(false)
 }

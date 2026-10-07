@@ -1945,8 +1945,6 @@ a.health-rollup:hover { border-color: var(--accent); }
 .wanted-panel-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
 .wanted-panel-head .spacer { flex: 1; }
 .wanted-bulk { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 12.5px; }
-.wanted-bulk.confirming { padding: 0.5rem 0.7rem; border: 1px solid var(--bad); border-radius: 6px; background: rgba(255, 107, 107, 0.08); }
-.wanted-bulk-ask { color: var(--fg-bright); font-weight: 600; }
 
 /* Genre facet under the status chips (SKADI-T-0605): a second, quieter row
    that wraps — a library carries a dozen-plus genres and a scroll strip would
@@ -2150,3 +2148,45 @@ p.genres.muted {
 /* Queue order (SKADI-T-0692): the place of a queued row and its moves. */
 .dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
 .dl-row-compact .dl-actions button.dl-qmove:disabled { opacity: 0.35; cursor: default; }
+
+/* In-app confirm dialog (SKADI-T-0694), in place of window.confirm(). */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(10, 12, 16, 0.72);
+}
+.confirm-dialog {
+  width: min(28rem, 100%);
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 1.1rem 1.2rem 1rem;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+}
+.confirm-title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--fg-bright);
+}
+.confirm-body {
+  margin: 0 0 1rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--fg-2);
+  white-space: pre-line;
+}
+.confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.confirm-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.confirm-dialog button.confirm-ok.danger {
+  color: var(--bad);
+  border-color: rgba(240, 100, 100, 0.5);
+}
+.confirm-dialog button.confirm-ok.danger:hover { background: #4a2222; }

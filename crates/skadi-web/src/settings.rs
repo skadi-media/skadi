@@ -20,6 +20,7 @@ use leptos::task::spawn_local;
 use serde_json::{Map, Value};
 
 use crate::api;
+use crate::confirm::{ConfirmSpec, confirm};
 
 /// The NotificationKind values a webhook can subscribe to (serde snake_case in
 /// skadi-notify). Kept in sync with `NotificationKind`.
@@ -803,13 +804,13 @@ fn row_view(
     let del_kind = spec.settings_kind;
     let del_name = name.clone();
     let on_delete = move |_| {
-        let confirmed = window_confirm(&format!("Delete \"{del_name}\"?"));
-        if !confirmed {
-            return;
-        }
+        let title = format!("Delete \"{del_name}\"?");
         let del_id = del_id.clone();
-        busy.set(true);
         spawn_local(async move {
+            if !confirm(ConfirmSpec::destructive(title, "This can't be undone.")).await {
+                return;
+            }
+            busy.set(true);
             let _ = api::delete_setting(del_kind, &del_id).await;
             busy.set(false);
             refresh();
@@ -1020,11 +1021,4 @@ fn field_view(f: FieldSpec, form: RwSignal<FormState>) -> AnyView {
             .into_any()
         }
     }
-}
-
-/// `window.confirm` — small JS bridge for the delete guard.
-pub(crate) fn window_confirm(message: &str) -> bool {
-    web_sys::window()
-        .and_then(|w| w.confirm_with_message(message).ok())
-        .unwrap_or(false)
 }

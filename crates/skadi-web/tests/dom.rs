@@ -476,3 +476,155 @@ fn the_system_page_draws_no_panels_for_anyone_but_the_admin() {
         assert_eq!(count(&host, "button"), 0, "{role:?} got a Run now button");
     }
 }
+
+// ---------------------------------------------------------------------------
+// ConfirmDialog (SKADI-T-0694)
+// ---------------------------------------------------------------------------
+
+/// Let the dialog's view and its first-focus effect run.
+async fn settle_dom() {
+    gloo_timers::future::TimeoutFuture::new(0).await;
+    gloo_timers::future::TimeoutFuture::new(0).await;
+}
+
+fn active_element() -> Option<web_sys::Element> {
+    document().active_element()
+}
+
+/// Mount a trigger button plus the dialog host, focus the trigger, and ask
+/// `spec`; the answer lands in the returned cell.
+async fn ask(
+    trigger_id: &'static str,
+    spec: skadi_web::confirm::ConfirmSpec,
+) -> (
+    HtmlElement,
+    HtmlElement,
+    std::rc::Rc<std::cell::Cell<Option<bool>>>,
+    Box<dyn std::any::Any>,
+) {
+    use skadi_web::confirm::{ConfirmDialogHost, confirm};
+    let host = host();
+    let handle = mount_to(host.clone(), move || {
+        view! {
+            <button id=trigger_id>"Trigger"</button>
+            <ConfirmDialogHost/>
+        }
+    });
+    let trigger = host
+        .query_selector(&format!("#{trigger_id}"))
+        .unwrap()
+        .unwrap()
+        .dyn_into::<HtmlElement>()
+        .unwrap();
+    trigger.focus().unwrap();
+    let answer = std::rc::Rc::new(std::cell::Cell::new(None));
+    let slot = answer.clone();
+    wasm_bindgen_futures::spawn_local(async move { slot.set(Some(confirm(spec).await)) });
+    settle_dom().await;
+    (host, trigger, answer, Box::new(handle))
+}
+
+fn find(host: &HtmlElement, selector: &str) -> HtmlElement {
+    host.query_selector(selector)
+        .unwrap()
+        .unwrap_or_else(|| panic!("no {selector}"))
+        .dyn_into::<HtmlElement>()
+        .unwrap()
+}
+
+fn key(target: &HtmlElement, key: &str, shift: bool) {
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_key(key);
+    init.set_shift_key(shift);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let ev = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap();
+    target.dispatch_event(&ev).unwrap();
+}
+
+#[wasm_bindgen_test]
+async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
+    use skadi_web::confirm::ConfirmSpec;
+    let spec = ConfirmSpec::destructive("Delete the movie?", "Dune and its files go.")
+        .confirm_label("Delete");
+    let (host, trigger, answer, _handle) = ask("confirm-trigger-ok", spec).await;
+
+    let dialog = find(&host, ".confirm-dialog");
+    assert_eq!(dialog.get_attribute("role").as_deref(), Some("alertdialog"));
+    assert_eq!(dialog.get_attribute("aria-modal").as_deref(), Some("true"));
+    assert_eq!(
+        find(&host, ".confirm-title").text_content().as_deref(),
+        Some("Delete the movie?")
+    );
+    assert!(
+        dialog
+            .text_content()
+            .unwrap()
+            .contains("Dune and its files go.")
+    );
+    let ok = find(&host, ".confirm-ok");
+    assert!(ok.class_list().contains("danger"));
+    assert_eq!(ok.text_content().as_deref(), Some("Delete"));
+    // Destructive: the first focus is on Cancel, so a stray Enter cancels.
+    let cancel = find(&host, ".confirm-cancel");
+    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
+    assert_eq!(answer.get(), None, "answered before a click");
+
+    ok.click();
+    settle_dom().await;
+    assert_eq!(answer.get(), Some(true));
+    assert_eq!(count(&host, ".confirm-dialog"), 0, "dialog stayed open");
+    assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
+}
+
+#[wasm_bindgen_test]
+async fn confirm_dialog_cancel_button_and_esc_resolve_false() {
+    use skadi_web::confirm::ConfirmSpec;
+    // The Cancel button.
+    let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
+    let (host, trigger, answer, handle) = ask("confirm-trigger-cancel", spec).await;
+    find(&host, ".confirm-cancel").click();
+    settle_dom().await;
+    assert_eq!(answer.get(), Some(false));
+    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
+    drop(handle);
+
+    // Esc, pressed inside the dialog.
+    let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
+    let (host, trigger, answer, _handle) = ask("confirm-trigger-esc", spec).await;
+    key(&find(&host, ".confirm-dialog"), "Escape", false);
+    settle_dom().await;
+    assert_eq!(answer.get(), Some(false));
+    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
+}
+
+#[wasm_bindgen_test]
+async fn confirm_dialog_traps_tab_and_a_backdrop_click_cancels() {
+    use skadi_web::confirm::ConfirmSpec;
+    // Not destructive: the first focus is on the confirm button.
+    let spec = ConfirmSpec::new("Grab a season pack?", "It satisfies every episode.");
+    let (host, _trigger, answer, _handle) = ask("confirm-trigger-tab", spec).await;
+    let ok = find(&host, ".confirm-ok");
+    let cancel = find(&host, ".confirm-cancel");
+    assert!(ok.class_list().contains("primary"));
+    assert_eq!(active_element().as_ref(), Some(ok.as_ref()));
+
+    // Tab from the last button wraps to the first, Shift+Tab back again.
+    key(&ok, "Tab", false);
+    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
+    key(&cancel, "Tab", true);
+    assert_eq!(active_element().as_ref(), Some(ok.as_ref()));
+    key(&ok, "Tab", true);
+    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
+    assert_eq!(answer.get(), None);
+
+    // A click on the dialog itself does nothing; one on the backdrop cancels.
+    find(&host, ".confirm-body").click();
+    settle_dom().await;
+    assert_eq!(answer.get(), None);
+    find(&host, ".confirm-backdrop").click();
+    settle_dom().await;
+    assert_eq!(answer.get(), Some(false));
+}

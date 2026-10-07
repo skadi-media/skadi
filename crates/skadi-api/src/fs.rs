@@ -4,7 +4,7 @@
 //! exposing the whole container filesystem.
 //!
 //! Roots come from `SKADI_BROWSE_ROOTS` (`:`-separated), defaulting to the deploy
-//! media mounts `/mnt/storage:/library`. Only roots that actually exist are
+//! media mount `/mnt/storage`. Only roots that actually exist are
 //! offered, and a browse target must canonicalize to within one of them, so
 //! `..`/symlink tricks can't escape the mounts.
 
@@ -24,8 +24,9 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Default browse roots when `SKADI_BROWSE_ROOTS` is unset — the deploy's media
-/// mounts. Overridable so a non-deploy run can point elsewhere.
-const DEFAULT_BROWSE_ROOTS: &str = "/mnt/storage:/library";
+/// mount (the read-only `/library` mount was removed in SKADI-T-0704).
+/// Overridable so a non-deploy run can point elsewhere.
+const DEFAULT_BROWSE_ROOTS: &str = "/mnt/storage";
 
 /// The configured browse roots that actually exist on disk (canonicalized).
 fn browse_roots() -> Vec<PathBuf> {
@@ -87,8 +88,8 @@ async fn fs_browse(Query(q): Query<BrowseParams>) -> Result<impl IntoResponse, A
     let roots = browse_roots();
     if roots.is_empty() {
         // An empty listing, not a 500 (SKADI-T-0460). "Nothing to browse" is a
-        // normal client-visible condition — the defaults (`/mnt/storage`,
-        // `/library`) only exist inside the container, so every developer running
+        // normal client-visible condition — the default (`/mnt/storage`)
+        // only exists inside the container, so every developer running
         // the daemon on a laptop hit an `internal` error on a perfectly healthy
         // system. `internal` should mean the daemon is broken, and it is not.
         return Ok(Json(FsListing {

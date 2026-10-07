@@ -354,9 +354,10 @@ existing library by scanning it **through the writable `/mnt/storage` mount** �
 e.g. point Import at your old `/mnt/storage/movies` and it relinks each title into
 `/mnt/storage/skadi/movie`, removing the stale folder as it goes.
 
-> The optional read-only `/library` mount is **not** suitable for adoption now —
-> a move has to delete the source, which a `:ro` mount forbids. Mount your media
-> writable under `/mnt/storage` to adopt it; use `/library:ro` only for browsing.
+> There is no separate read-only library mount any more (the old `nas-library`
+> volume at `/library` was removed in SKADI-T-0704). An import hardlinks on the
+> same mount and then deletes the source, and a second `:ro` mount allows
+> neither. Put the media you want to adopt under the writable `/mnt/storage`.
 
 > **Migrating from an older stack** that registered `root_folders` (e.g.
 > `/mnt/storage/movies`): drop the registration — set `STORAGE_NFS_ADDR`/

@@ -515,9 +515,9 @@ pub fn AudiobookImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /library/audiobooks)"</label>
+                    <label>"Library path (as the server sees it, e.g. /mnt/storage/audiobooks)"</label>
                     <div class="checks">
-                        <PathPicker value=path placeholder="/library/audiobooks"/>
+                        <PathPicker value=path placeholder="/mnt/storage/audiobooks"/>
                         <button on:click=on_scan disabled=move || scanning.get()>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
                         </button>

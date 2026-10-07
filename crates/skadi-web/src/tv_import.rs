@@ -1086,9 +1086,9 @@ pub fn TvImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /library/tv)"</label>
+                    <label>"Library path (as the server sees it, e.g. /mnt/storage/tv)"</label>
                     <div class="checks">
-                        <PathPicker value=path placeholder="/library/tv"/>
+                        <PathPicker value=path placeholder="/mnt/storage/tv"/>
                         <button on:click=on_scan disabled=move || scanning.get()>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
                         </button>

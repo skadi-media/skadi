@@ -16,7 +16,7 @@ Feature: Lab stack (compose project skadi-lab, SKADI-T-0393)
     When `docker compose -p skadi-lab --env-file deploy/.env.lab -f docker-compose.yml -f docker-compose.lab.yml config` runs
     Then gluetun, flaresolverr, autoheal and vpn-watchdog are behind the `vpn` profile
     And the worker has no `network_mode` and depends only on postgres
-    And `storage` / `nas-library` named volumes are removed and /mnt/storage is a bind of deploy/.lab/storage
+    And the `storage` named volume is removed and /mnt/storage is a bind of deploy/.lab/storage
     And three "STORAGE_NFS_* not set" warnings are printed and are harmless (the base file interpolates before the merge)
 
   @passing @lab

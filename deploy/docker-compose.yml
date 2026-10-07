@@ -54,9 +54,8 @@
 # MIGRATION (SKADI-T-0303 made library-import a reorg-via-link MOVE): adopt an
 # existing library by scanning it through the WRITABLE mount (e.g. your old
 # /mnt/storage/movies) in Import — each file is hardlinked into /mnt/storage/skadi/movie
-# and the old path is dropped (same export ⇒ a free move, no copy). The old
-# read-only /library view is NOT suitable for adoption now (a move must delete the
-# source). Point SKADI_LIBRARY_ROOT at an EMPTY, skadi-only subfolder and VERIFY
+# and the old path is dropped (same export ⇒ a free move, no copy). There is no
+# read-only /library mount any more (SKADI-T-0704). Point SKADI_LIBRARY_ROOT at an EMPTY, skadi-only subfolder and VERIFY
 # the storage mount in .env before bringing up.
 #
 # Copy .env.example to .env, fill it in, then: docker compose up -d
@@ -509,12 +508,6 @@ services:
       # the layout under skadi's root is owned, not configured; your other folders
       # on the share are untouched.
       - storage:/mnt/storage
-      # Optional read-only view of an existing library, e.g. for browsing. NOTE:
-      # adoption is now a reorg-via-link MOVE (SKADI-T-0303), which must delete the
-      # source — so to ADOPT an existing library, scan it through the WRITABLE
-      # /mnt/storage mount instead (a :ro mount can't be moved from). Drop this
-      # volume + mount if unused; the stack runs fine without it.
-      - nas-library:/library:ro
     restart: unless-stopped
 
   # The built-in torrent client (SKADI-I-0013): a librqbit engine driven through
@@ -712,11 +705,3 @@ volumes:
       type: nfs
       o: "addr=${STORAGE_NFS_ADDR},nfsvers=4"
       device: ":${STORAGE_NFS_PATH}"
-  # Read-only NFS view of the Synology library for in-place import. The Docker
-  # VM mounts it; the host doesn't need it mounted. Adjust addr/device for your
-  # NAS, or drop this volume + the skadi `/library` mount to run without it.
-  nas-library:
-    driver_opts:
-      type: nfs
-      o: "addr=${STORAGE_NFS_ADDR},ro,nfsvers=4"
-      device: ":/volume1/media"

@@ -557,9 +557,9 @@ pub fn LibraryImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /library/movies)"</label>
+                    <label>"Library path (as the server sees it, e.g. /mnt/storage/movies)"</label>
                     <div class="checks">
-                        <PathPicker value=path placeholder="/library/movies"/>
+                        <PathPicker value=path placeholder="/mnt/storage/movies"/>
                         <button on:click=on_scan disabled=move || scanning.get()>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
                         </button>

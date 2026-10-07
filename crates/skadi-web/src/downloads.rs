@@ -5,9 +5,9 @@
 //! the values, never the selection.
 //!
 //! Every row has exactly one [`RowState`] ([`row_state`]), so the chip counts of
-//! [`state_counts`] add up to the "All" count. Later row badges (stalled /
-//! errored, SKADI-T-0687) and bulk select (SKADI-T-0688) key off the same
-//! state and the row `id`.
+//! [`state_counts`] add up to the "All" count. The row badges ([`row_badge`],
+//! SKADI-T-0687) come from the same state, so a badge always matches its chip;
+//! bulk select (SKADI-T-0688) keys off the row `id`.
 
 use std::cmp::Ordering;
 
@@ -52,6 +52,73 @@ pub fn row_state(d: &Download) -> RowState {
         "paused" => RowState::Paused,
         "stalled" => RowState::Stalled,
         _ => RowState::Downloading,
+    }
+}
+
+impl RowState {
+    /// The status level of the state, in the class names that `.badge`,
+    /// `.status-dot` and `.health-dot` share (`ok` / `pending` / `warn` / `bad`
+    /// / `muted`).
+    pub fn level(self) -> &'static str {
+        match self {
+            RowState::Downloading => "pending",
+            RowState::Seeding => "ok",
+            RowState::Paused => "muted",
+            RowState::Stalled => "warn",
+            RowState::Errored => "bad",
+        }
+    }
+}
+
+/// The badge a row shows before its name (SKADI-T-0687). Only the states that
+/// need attention have one: a healthy row stays quiet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowBadge {
+    pub label: &'static str,
+    /// `.badge` level class (`warn` / `bad`), the same as [`RowState::level`].
+    pub level: &'static str,
+    /// The tooltip.
+    pub title: String,
+}
+
+/// Tooltip of the "Stalled" badge. The worker records no time when a transfer
+/// stalls (the row's `updated_at` moves on each progress tick), so the
+/// tooltip gives the rule, not a duration.
+pub const STALLED_TITLE: &str =
+    "No peers and no progress for the stall timeout (start time not recorded)";
+
+/// The message of an errored row: its error text, else a fixed line, so an
+/// errored row always shows why.
+pub fn error_message(d: &Download) -> Option<String> {
+    if row_state(d) != RowState::Errored {
+        return None;
+    }
+    Some(
+        d.error
+            .as_deref()
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .unwrap_or("The transfer failed. The worker gave no reason.")
+            .to_string(),
+    )
+}
+
+/// The badge of one row: "Stalled" (warn) or "Error" (bad, the message as
+/// tooltip); `None` for a downloading, seeding or paused row.
+pub fn row_badge(d: &Download) -> Option<RowBadge> {
+    let state = row_state(d);
+    match state {
+        RowState::Stalled => Some(RowBadge {
+            label: "Stalled",
+            level: state.level(),
+            title: STALLED_TITLE.to_string(),
+        }),
+        RowState::Errored => Some(RowBadge {
+            label: "Error",
+            level: state.level(),
+            title: error_message(d).unwrap_or_default(),
+        }),
+        _ => None,
     }
 }
 
@@ -369,6 +436,51 @@ mod tests {
             status: status.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn stalled_and_errored_rows_get_a_badge_that_matches_their_chip() {
+        let stalled = row("s", "stalled");
+        let badge = row_badge(&stalled).expect("a stalled row has a badge");
+        assert_eq!((badge.label, badge.level), ("Stalled", "warn"));
+        assert_eq!(badge.title, STALLED_TITLE);
+        assert!(StateFilter::Only(RowState::Stalled).matches(&stalled));
+
+        let failed = Download {
+            error: Some(" tracker said no ".into()),
+            ..row("e", "error")
+        };
+        let badge = row_badge(&failed).expect("an errored row has a badge");
+        assert_eq!((badge.label, badge.level), ("Error", "bad"));
+        assert_eq!(badge.title, "tracker said no");
+        assert_eq!(error_message(&failed).as_deref(), Some("tracker said no"));
+        assert!(StateFilter::Only(RowState::Errored).matches(&failed));
+
+        // An error on a stalled or seeding row wins: one badge, the Error one.
+        let both = Download {
+            error: Some("disk full".into()),
+            ..row("b", "stalled")
+        };
+        assert_eq!(row_badge(&both).unwrap().label, "Error");
+
+        // Status `error` without a message still says why it is red.
+        let bare = row("x", "error");
+        assert_eq!(row_badge(&bare).unwrap().label, "Error");
+        assert!(!error_message(&bare).unwrap().is_empty());
+
+        for quiet in ["downloading", "queued", "seeding", "paused"] {
+            assert_eq!(row_badge(&row("q", quiet)), None, "{quiet}");
+            assert_eq!(error_message(&row("q", quiet)), None, "{quiet}");
+        }
+    }
+
+    #[test]
+    fn each_state_has_a_status_level() {
+        assert_eq!(RowState::Seeding.level(), "ok");
+        assert_eq!(RowState::Stalled.level(), "warn");
+        assert_eq!(RowState::Errored.level(), "bad");
+        assert_eq!(RowState::Paused.level(), "muted");
+        assert_eq!(RowState::Downloading.level(), "pending");
     }
 
     fn ref_name(d: &Download) -> String {

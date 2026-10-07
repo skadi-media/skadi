@@ -1055,7 +1055,7 @@ struct DownloadDto {
     id: String,
     acquirable_ref: String,
     info_hash: Option<String>,
-    /// `queued` / `downloading`.
+    /// `queued` / `downloading` / `paused` / `stalled` / `seeding` / `error`.
     status: String,
     progress_bytes: i64,
     total_bytes: i64,
@@ -1077,10 +1077,17 @@ struct DownloadDto {
     created_at: String,
 }
 
+/// How far back `/downloads` lists failed transfers (SKADI-T-0687).
+const ERRORED_DOWNLOADS_WINDOW: chrono::Duration = chrono::Duration::days(7);
+/// At most this many failed transfers on `/downloads`, the most recently updated.
+const ERRORED_DOWNLOADS_LIMIT: i64 = 50;
+
 /// `GET /downloads` — every torrent **under active management**: downloading,
 /// queued, paused, and **seeding** (completed-but-still-uploading) — with live
 /// metrics, so the Downloaders page is a real torrent client, not just an
-/// in-flight list (SKADI-T-0169). Failed jobs live in `/history`.
+/// in-flight list (SKADI-T-0169) — plus the **recent failures** (`error`, last
+/// updated within [`ERRORED_DOWNLOADS_WINDOW`], at most
+/// [`ERRORED_DOWNLOADS_LIMIT`], SKADI-T-0687). Older failures live in `/history`.
 /// Paging for `/downloads` (SKADI-T-0494).
 ///
 /// Applied **after** the dedup-by-info-hash and the stable sort, not in the
@@ -1143,6 +1150,25 @@ async fn downloads(
     }
     let mut jobs: Vec<skadi_store::DownloadJob> =
         no_hash.into_iter().chain(by_hash.into_values()).collect();
+    // Recent failures too (SKADI-T-0687), so the Errored chip and the error
+    // badge have rows to show. Bounded: `error` rows accumulate forever (prod has
+    // over a hundred old ones), and the older failures stay in History /
+    // Activity. A failure whose torrent is still managed (it was re-acquired) is
+    // left out: the live row is the one that matters.
+    let since = chrono::Utc::now() - ERRORED_DOWNLOADS_WINDOW;
+    let mut seen_hashes: std::collections::HashSet<String> =
+        jobs.iter().filter_map(|j| j.info_hash.clone()).collect();
+    for j in store
+        .list_recent_errored_downloads(since, ERRORED_DOWNLOADS_LIMIT)
+        .await?
+    {
+        if let Some(h) = &j.info_hash
+            && !seen_hashes.insert(h.clone())
+        {
+            continue;
+        }
+        jobs.push(j);
+    }
     // Deterministic, stable order so the UI doesn't reshuffle every poll
     // (SKADI-T-0170): active (downloading / paused / queued) before seeding, then
     // by a stable identity (info_hash, else id) — NOT by a changing field.
@@ -1151,7 +1177,8 @@ async fn downloads(
         DownloadJobStatus::Stalled => 1,
         DownloadJobStatus::Paused => 2,
         DownloadJobStatus::Queued => 3,
-        _ => 4,
+        DownloadJobStatus::Error => 4,
+        _ => 5,
     };
     jobs.sort_by(|a, b| {
         rank(a.status).cmp(&rank(b.status)).then_with(|| {

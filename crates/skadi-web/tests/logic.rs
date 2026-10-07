@@ -2713,3 +2713,28 @@ fn downloads_default_to_newest_first_and_the_sort_round_trips() {
     let s = SortState::default().clicked(SortKey::Ratio);
     assert_eq!(SortState::decode(Some(&s.encode())), s);
 }
+
+#[wasm_bindgen_test]
+fn an_errored_row_from_the_api_gets_the_error_badge_and_shows_why() {
+    use skadi_web::downloads::{RowState, StateFilter, error_message, row_badge};
+    // The shape `/downloads` now serves for a recent failure (SKADI-T-0687).
+    let failed: skadi_web::api::Download = serde_json::from_value(json!({
+        "id": "f", "acquirable_ref": "r", "status": "error",
+        "progress_bytes": 0, "total_bytes": 0, "percent": 0.0,
+        "error": "no peers after 3 attempts",
+        "created_at": "2026-10-06T10:00:00.000Z"
+    }))
+    .unwrap();
+    let badge = row_badge(&failed).unwrap();
+    assert_eq!((badge.label, badge.level), ("Error", "bad"));
+    assert_eq!(
+        error_message(&failed).as_deref(),
+        Some("no peers after 3 attempts")
+    );
+    assert!(StateFilter::Only(RowState::Errored).matches(&failed));
+
+    let stalled = dl("s", "stalled", None);
+    assert_eq!(row_badge(&stalled).unwrap().label, "Stalled");
+    assert!(StateFilter::Only(RowState::Stalled).matches(&stalled));
+    assert_eq!(row_badge(&dl("d", "downloading", None)), None);
+}

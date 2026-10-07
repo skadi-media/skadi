@@ -770,6 +770,15 @@ fn local_get(key: &str) -> Option<String> {
         .and_then(|s| s.get_item(key).ok().flatten())
 }
 
+/// The "Stalled" / "Error" badge of a download row (SKADI-T-0687), from
+/// [`crate::downloads::row_badge`]; nothing for a healthy row.
+fn row_badge_view(d: &api::Download) -> Option<AnyView> {
+    crate::downloads::row_badge(d).map(|b| {
+        let cls = format!("badge {} dl-badge", b.level);
+        view! { <span class=cls title=b.title>{b.label}</span> }.into_any()
+    })
+}
+
 /// Best-effort localStorage write (private mode / quota: ignored).
 fn local_set(key: &str, value: &str) {
     if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
@@ -968,6 +977,9 @@ fn DownloadsSection() -> impl IntoView {
                 let pct = j.percent;
                 let state = dlm::row_state(&j);
                 let paused = j.status == "paused";
+                // A failed job (status `error`) has nothing to pause or resume;
+                // Remove still clears it.
+                let failed = j.status == "error";
                 let row_cls = format!(
                     "dl-row-compact st-{}{}",
                     state.key(),
@@ -1035,11 +1047,15 @@ fn DownloadsSection() -> impl IntoView {
                     });
                 };
 
-                let error_row = j.error.clone().map(|e| view! { <div class="dl-error">{e}</div> });
+                // Stalled / errored: a badge before the name, and an errored
+                // row shows its message in full on its own line (SKADI-T-0687).
+                let badge = row_badge_view(&j);
+                let error_row = dlm::error_message(&j)
+                    .map(|e| view! { <div class="dl-error" title=e.clone()>{e.clone()}</div> });
 
                 view! {
                     <div class=row_cls>
-                        <span class="dl-name" title=full_name>{label}</span>
+                        <span class="dl-name" title=full_name>{badge}{label}</span>
                         <span class="dl-size mono tnum">{size_str}</span>
                         <span class="dl-progress">
                             <span class="dl-bar">
@@ -1053,9 +1069,11 @@ fn DownloadsSection() -> impl IntoView {
                         <span class="dl-eta mono tnum">{eta_str}</span>
                         <span class="dl-added mono tnum" title=added_title>{added_str}</span>
                         <div class="dl-actions">
-                            <button type="button" title={if paused { "Resume" } else { "Pause" }} on:click=on_pause_resume>
-                                {if paused { "▶" } else { "⏸" }}
-                            </button>
+                            {(!failed).then(|| view! {
+                                <button type="button" title={if paused { "Resume" } else { "Pause" }} on:click=on_pause_resume>
+                                    {if paused { "▶" } else { "⏸" }}
+                                </button>
+                            })}
                             <button type="button" title="Remove (keep files)" on:click=on_remove>"✕"</button>
                             <button type="button" class="danger" title="Delete files" on:click=on_delete>"🗑"</button>
                         </div>
@@ -1124,16 +1142,22 @@ fn DownloadsSection() -> impl IntoView {
                 };
                 let added_str = added_label(j.created_at.as_deref(), now_ms);
                 let added_title = j.created_at.clone().unwrap_or_default();
-                let row_cls = format!("seed-row st-{}", dlm::row_state(&j).key());
+                let state = dlm::row_state(&j);
+                let row_cls = format!("seed-row st-{}", state.key());
+                let dot_cls = format!("health-dot {}", state.level());
+                let badge = row_badge_view(&j);
+                let error_line = dlm::error_message(&j)
+                    .map(|e| view! { <div class="dl-error seed-error" title=e.clone()>{e.clone()}</div> });
                 view! {
                     <div class=row_cls>
-                        <span class="health-dot ok"></span>
+                        <span class=dot_cls></span>
                         <span class="tile-tag mono">{tag}</span>
-                        <span class="seed-title">{label}</span>
+                        <span class="seed-title">{badge}{label}</span>
                         <span class="seed-size mono">{size}</span>
                         <span class="seed-up mono gold">{up}</span>
                         <span class=ratio_cls>{ratio}</span>
                         <span class="seed-added mono faint" title=added_title>{added_str}</span>
+                        {error_line}
                     </div>
                 }
             })

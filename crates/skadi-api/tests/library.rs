@@ -596,3 +596,63 @@ async fn each_download_row_carries_a_sortable_created_at() {
     assert_eq!(created.len(), 24, "{created}");
     assert!(created.ends_with('Z'), "{created}");
 }
+
+/// `/downloads` lists recent failures next to the live transfers, with their
+/// message, but bounded: at most 50, the most recently updated ones
+/// (SKADI-T-0687). The 7-day age bound is pinned in skadi-store
+/// (`recent_errored_downloads_are_bounded_by_age_and_count`).
+#[tokio::test]
+async fn downloads_lists_the_recent_failures_bounded_to_fifty() {
+    use skadi_store::{DownloadJobRepo, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let live = db
+        .store
+        .enqueue(&NewDownloadJob {
+            acquirable_ref: "ref-live-0687".into(),
+            source: "magnet:?xt=urn:btih:live0687".into(),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+    let mut failed = Vec::new();
+    for i in 0..55 {
+        let job = db
+            .store
+            .enqueue(&NewDownloadJob {
+                acquirable_ref: format!("ref-err-0687-{i}"),
+                source: format!("magnet:?xt=urn:btih:err0687{i}"),
+                category: None,
+                incomplete_dir: None,
+                complete_dir: None,
+            })
+            .await
+            .unwrap();
+        db.store
+            .mark_error(&job.id, &format!("tracker said no ({i})"))
+            .await
+            .unwrap();
+        failed.push(db.store.get_download(&job.id).await.unwrap().unwrap());
+    }
+    // The store's order: newest update first, ties by id.
+    failed.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
+    let expected: std::collections::BTreeSet<String> =
+        failed.iter().take(50).map(|j| j.id.clone()).collect();
+
+    let (status, body) = call(&state, "/api/v1/downloads").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body.as_array().unwrap();
+    assert!(rows.iter().any(|r| r["id"] == live.id.as_str()));
+    let errored: Vec<&serde_json::Value> = rows.iter().filter(|r| r["status"] == "error").collect();
+    assert_eq!(errored.len(), 50, "at most 50 failures are served");
+    let served: std::collections::BTreeSet<String> = errored
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(served, expected, "the 50 most recent failures");
+    for r in &errored {
+        let msg = r["error"].as_str().expect("an errored row has its message");
+        assert!(msg.starts_with("tracker said no"), "{msg}");
+    }
+}

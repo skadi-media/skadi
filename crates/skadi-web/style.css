@@ -2097,3 +2097,16 @@ p.genres.muted {
 .seed-sort > span:not(.u-label):hover { color: var(--fg); }
 .seed-sort .sort-active { color: var(--fg-bright); }
 .seed-added { font-size: 0.75rem; min-width: 2.5rem; text-align: right; }
+
+/* Downloads row badges and tints (SKADI-T-0687). `.badge.warn` / `.badge.bad`
+   use the same levels as `.status-dot` / `.health-dot`. An errored row is
+   tinted and shows its message; a stalled row gets a warn edge. */
+.badge.warn { background: rgba(216, 166, 87, 0.15); color: var(--warn); }
+.badge.bad { background: rgba(240, 100, 100, 0.15); color: var(--bad); }
+.dl-badge { margin-right: 0.4rem; font-weight: 600; }
+.dl-row-compact.st-stalled, .seed-row.st-stalled { box-shadow: inset 2px 0 0 var(--warn); }
+.dl-row-compact.st-errored, .seed-row.st-errored { background: rgba(240, 100, 100, 0.07); box-shadow: inset 2px 0 0 var(--bad); }
+.dl-row-compact.st-errored:hover, .seed-row.st-errored:hover { background: rgba(240, 100, 100, 0.11); }
+.dl-row-compact .dl-error { white-space: normal; overflow-wrap: anywhere; }
+.seed-row.st-errored { flex-wrap: wrap; }
+.seed-row .seed-error { flex-basis: 100%; font-size: 0.75rem; color: var(--bad); overflow-wrap: anywhere; }

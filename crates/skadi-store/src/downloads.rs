@@ -261,6 +261,17 @@ pub trait DownloadJobRepo: Send + Sync {
         &self,
         statuses: &[DownloadJobStatus],
     ) -> Result<Vec<DownloadJob>>;
+    /// The most recent failures: `error` rows last updated at or after `since`,
+    /// newest `updated_at` first (ties by id), at most `limit` (SKADI-T-0687).
+    ///
+    /// The downloads page shows a failed transfer next to the live ones, but
+    /// `error` rows accumulate forever, so this is bounded in time *and* count.
+    /// Older failures stay in History / Activity.
+    async fn list_recent_errored_downloads(
+        &self,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<DownloadJob>>;
     /// Mark a job fully `removed` (the worker has torn it down).
     async fn mark_removed(&self, id: &str) -> Result<()>;
 }
@@ -842,6 +853,25 @@ impl DownloadJobRepo for Store {
         .await
     }
 
+    async fn list_recent_errored_downloads(
+        &self,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<DownloadJob>> {
+        self.with_conn(move |conn| {
+            let rows: Vec<Row> = downloads::table
+                .filter(downloads::status.eq(DownloadJobStatus::Error.as_str()))
+                .filter(downloads::updated_at.ge(Timestamp(since)))
+                .order((downloads::updated_at.desc(), downloads::id.asc()))
+                .limit(limit.max(0))
+                .select(Row::as_select())
+                .load(conn)
+                .map_err(db_err)?;
+            rows.into_iter().map(DownloadJob::try_from).collect()
+        })
+        .await
+    }
+
     async fn mark_removed(&self, id: &str) -> Result<()> {
         let id = id.to_string();
         self.with_conn(move |conn| {
@@ -952,6 +982,62 @@ mod tests {
         assert!(page.iter().any(|j| j.id == queued.id));
         assert!(page.iter().any(|j| j.id == downloading.id));
         assert!(page.iter().any(|j| j.id == done.id));
+    }
+
+    /// Errored rows for the downloads page are bounded by age and by count, and
+    /// come newest first (SKADI-T-0687).
+    #[tokio::test]
+    async fn recent_errored_downloads_are_bounded_by_age_and_count() {
+        let store = temp_store().await;
+        let now = Utc::now();
+        // Five failures, one minute apart (index 0 newest), plus one old one.
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let job = store
+                .enqueue(&req(&format!("e{i}"), &format!("magnet:?e{i}")))
+                .await
+                .unwrap();
+            store.mark_error(&job.id, "boom").await.unwrap();
+            ids.push(job.id);
+        }
+        let old = store.enqueue(&req("old", "magnet:?old")).await.unwrap();
+        store.mark_error(&old.id, "ancient").await.unwrap();
+        let live = store.enqueue(&req("live", "magnet:?live")).await.unwrap();
+        let backdate = |id: String, at: DateTime<Utc>| {
+            store.with_conn(move |conn| {
+                diesel::update(downloads::table.find(&id))
+                    .set(downloads::updated_at.eq(Timestamp(at)))
+                    .execute(conn)
+                    .map_err(db_err)?;
+                Ok(())
+            })
+        };
+        for (i, id) in ids.iter().enumerate() {
+            backdate(id.clone(), now - chrono::Duration::minutes(i as i64))
+                .await
+                .unwrap();
+        }
+        backdate(old.id.clone(), now - chrono::Duration::days(8))
+            .await
+            .unwrap();
+
+        let since = now - chrono::Duration::days(7);
+        let all = store
+            .list_recent_errored_downloads(since, 50)
+            .await
+            .unwrap();
+        assert_eq!(
+            all.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+            ids,
+            "newest first; the 8-day-old failure and the queued row are left out"
+        );
+        assert!(!all.iter().any(|j| j.id == old.id || j.id == live.id));
+
+        let capped = store.list_recent_errored_downloads(since, 3).await.unwrap();
+        assert_eq!(
+            capped.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+            ids[..3].to_vec()
+        );
     }
 
     #[tokio::test]

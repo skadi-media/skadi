@@ -36,6 +36,7 @@ pub mod pair;
 pub mod providers;
 pub mod quality;
 pub mod ranged;
+pub mod redact;
 pub mod search;
 pub mod serve;
 pub mod settings;

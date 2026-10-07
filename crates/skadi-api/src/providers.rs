@@ -122,13 +122,24 @@ async fn config_str(store: &Store, key: &str) -> Option<String> {
 /// treat it as an absent secret, because for a provider whose secret is optional
 /// (a public cardigann tracker, a webhook without a signing secret) that would
 /// silently build a half-configured provider instead.
+/// Hand a secret read from the vault to [`crate::redact`], so its value is
+/// masked in check messages and served log lines (SKADI-T-0685).
+fn remember(secret: Option<&str>) {
+    if let Some(s) = secret {
+        crate::redact::remember_secret(s);
+    }
+}
+
 async fn readable_secret(
     store: &Store,
     kind: &str,
     id: &str,
 ) -> std::result::Result<Option<String>, ()> {
     match store.get_secret(kind, id).await {
-        Ok(v) => Ok(v),
+        Ok(v) => {
+            remember(v.as_deref());
+            Ok(v)
+        }
         Err(e) => {
             tracing::error!(
                 kind = %kind,
@@ -394,6 +405,7 @@ pub async fn build_one(store: &Store, kind: &str, id: &str) -> Result<OneProvide
         .ok_or_else(|| AppError::NotFound(format!("{kind}/{id} not found")))?;
     let http = HttpClient::new(PROVIDER_HTTP_TIMEOUT)?;
     let secret = store.get_secret(kind, id).await?;
+    remember(secret.as_deref());
 
     match kind {
         "indexers" => {

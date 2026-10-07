@@ -9,6 +9,9 @@
 //! Deliberately bounded and deliberately not persistent: it is a diagnostic
 //! convenience, not a log store. `docker logs` and the host's journal remain the
 //! real record, and this ring is empty after a restart.
+//!
+//! Each line is redacted ([`crate::redact`]) before it is stored: a provider
+//! error can name a URL with its `apikey=`, and this ring is served over HTTP.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -80,11 +83,13 @@ where
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let mut message = String::new();
         event.record(&mut MessageVisitor(&mut message));
+        // Redacted on the way in (SKADI-T-0685): the ring never holds a
+        // secret, so nothing that reads it — `/log` today — can serve one.
         self.0.push(LogLine {
             time: chrono::Utc::now().to_rfc3339(),
             level: event.metadata().level().to_string(),
             target: event.metadata().target().to_string(),
-            message,
+            message: crate::redact::redact_string(message),
         });
     }
 }
@@ -129,6 +134,28 @@ mod tests {
         assert_eq!(recent[1].message, format!("line {}", CAPACITY + 8));
         // And the oldest were dropped rather than growing forever.
         assert_eq!(buf.recent(usize::MAX).len(), CAPACITY);
+    }
+
+    #[test]
+    fn a_captured_line_is_redacted_before_it_is_stored() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let buf = LogBuffer::new();
+        let subscriber = tracing_subscriber::registry().with(buf.layer());
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(
+                error = "error sending request for url (http://idx/api?t=caps&apikey=SEKRIT)",
+                "indexer test failed for http://u:hunter2@idx"
+            );
+        });
+        let line = &buf.recent(1)[0];
+        assert!(!line.message.contains("SEKRIT"), "{}", line.message);
+        assert!(!line.message.contains("hunter2"), "{}", line.message);
+        assert!(line.message.contains("apikey=***"), "{}", line.message);
+        assert!(
+            line.message.contains("http://u:***@idx"),
+            "{}",
+            line.message
+        );
     }
 
     #[test]

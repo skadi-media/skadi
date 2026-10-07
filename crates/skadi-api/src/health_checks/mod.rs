@@ -141,13 +141,18 @@ pub struct CheckResult {
 
 impl CheckResult {
     /// Stamp an outcome with the check's identity and the time it ran.
+    ///
+    /// The message and remediation are redacted here ([`crate::redact`],
+    /// SKADI-T-0685), so the cache never holds a secret and every reader —
+    /// `/health/checks`, the run endpoint, the supervisor refresh — gets clean
+    /// text. A provider error can carry the request URL with its `apikey=`.
     pub fn new(id: String, label: String, outcome: Outcome, checked_at: DateTime<Utc>) -> Self {
         CheckResult {
             id,
             label,
             severity: outcome.severity,
-            message: outcome.message,
-            remediation: outcome.remediation,
+            message: crate::redact::redact_string(outcome.message),
+            remediation: outcome.remediation.map(crate::redact::redact_string),
             checked_at: Some(checked_at),
         }
     }
@@ -513,6 +518,30 @@ mod tests {
             ..ok
         };
         assert!(serde_json::to_value(&pending).unwrap()["checked_at"].is_null());
+    }
+
+    #[test]
+    fn a_result_masks_a_keyed_url_in_its_message_and_remediation() {
+        let r = CheckResult::new(
+            "indexer:Leaky".into(),
+            "Indexer Leaky".into(),
+            Outcome::error(
+                "error sending request for url (http://idx:9117/api?t=caps&apikey=SEKRIT)",
+                "Check http://admin:hunter2@idx:9117 under Settings → Indexers.",
+            ),
+            Utc::now(),
+        );
+        assert_eq!(
+            r.message,
+            "error sending request for url (http://idx:9117/api?t=caps&apikey=***)"
+        );
+        let fix = r.remediation.as_deref().unwrap();
+        assert!(fix.contains("http://admin:***@idx:9117"), "{fix}");
+        let wire = serde_json::to_string(&r).unwrap();
+        assert!(
+            !wire.contains("SEKRIT") && !wire.contains("hunter2"),
+            "{wire}"
+        );
     }
 
     #[tokio::test]

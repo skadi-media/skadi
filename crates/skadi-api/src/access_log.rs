@@ -21,7 +21,7 @@
 //! header, so `?apikey=` is the only option there (see `auth.rs`). Logging the
 //! raw URI would therefore write the API token into the log file, into any log
 //! shipper, and into every screenshot of a terminal. [`redact_query`] strips it
-//! before anything is emitted.
+//! before anything is emitted, with the rules of [`crate::redact`].
 //!
 //! ## What gets logged
 //!
@@ -38,37 +38,16 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-/// Query-string keys whose values must never reach a log.
-///
-/// Matched case-insensitively. `token`/`key` are here pre-emptively: they are
-/// not used today, but the cost of covering them is nil and the cost of missing
-/// one is a credential in a log file forever.
-const SECRET_KEYS: &[&str] = &[
-    "apikey",
-    "api_key",
-    "token",
-    "access_token",
-    "key",
-    "secret",
-];
-
-/// Rewrite a query string so secret values become `REDACTED`.
+/// Rewrite a query string so secret values become `***`.
 ///
 /// Preserves the *shape* — which keys were present, in what order — because
 /// "the client sent an apikey" and "the client sent nothing" are different
 /// diagnoses and dropping the query entirely would erase that distinction.
+/// The rules are [`crate::redact`]'s, so the access log and the rest of the
+/// API mask the same keys the same way.
 #[must_use]
 pub fn redact_query(query: &str) -> String {
-    query
-        .split('&')
-        .map(|pair| match pair.split_once('=') {
-            Some((k, _)) if SECRET_KEYS.iter().any(|s| k.eq_ignore_ascii_case(s)) => {
-                format!("{k}=REDACTED")
-            }
-            _ => pair.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("&")
+    crate::redact::redact(query).into_owned()
 }
 
 /// Path plus redacted query, as it should appear in a log.
@@ -148,13 +127,13 @@ mod tests {
             !out.contains("super-secret-token"),
             "the credential must not survive redaction: {out}"
         );
-        assert_eq!(out, "apikey=REDACTED");
+        assert_eq!(out, "apikey=***");
     }
 
     #[test]
     fn redaction_is_case_insensitive_and_keeps_other_params() {
         let out = redact_query("view=summary&ApiKey=abc123&limit=50");
-        assert_eq!(out, "view=summary&ApiKey=REDACTED&limit=50");
+        assert_eq!(out, "view=summary&ApiKey=***&limit=50");
         assert!(!out.contains("abc123"));
     }
 
@@ -167,7 +146,7 @@ mod tests {
 
     #[test]
     fn every_known_secret_key_is_covered() {
-        for k in SECRET_KEYS {
+        for k in crate::redact::SECRET_KEYS {
             let out = redact_query(&format!("{k}=leak-me"));
             assert!(!out.contains("leak-me"), "{k} was not redacted: {out}");
         }
@@ -193,13 +172,13 @@ mod tests {
             .parse()
             .unwrap();
         let out = safe_target(&uri);
-        assert_eq!(out, "/api/v1/movies/abc/editions/def/video?apikey=REDACTED");
+        assert_eq!(out, "/api/v1/movies/abc/editions/def/video?apikey=***");
         assert!(!out.contains("hunter2"));
     }
 
     /// A valueless parameter must not panic or be mistaken for a secret.
     #[test]
     fn a_flag_parameter_without_a_value_is_left_alone() {
-        assert_eq!(redact_query("debug&apikey=s"), "debug&apikey=REDACTED");
+        assert_eq!(redact_query("debug&apikey=s"), "debug&apikey=***");
     }
 }

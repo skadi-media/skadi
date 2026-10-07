@@ -51,12 +51,17 @@ fn checked_at(check: &serde_json::Value) -> chrono::DateTime<chrono::Utc> {
 
 /// Store an indexer setting that points at `base_url`; remember its id by name.
 async fn store_indexer(w: &mut World, name: &str, base_url: &str) {
+    store_indexer_with_key(w, name, base_url, "k").await;
+}
+
+/// [`store_indexer`] with a given API key (sealed in the credential vault).
+async fn store_indexer_with_key(w: &mut World, name: &str, base_url: &str, api_key: &str) {
     let body = serde_json::json!({
         "kind": "torznab",
         "name": name,
         "base_url": base_url,
         "categories": [2000],
-        "api_key": "k",
+        "api_key": api_key,
     });
     let r = w
         .call(
@@ -127,6 +132,19 @@ async fn hanging_indexer(w: &mut World, name: String) {
     let uri = server.uri();
     w.fakes.insert(name.clone(), Fake::new(server));
     store_indexer(w, &name, &uri).await;
+}
+
+/// SKADI-T-0685: nothing listens on the port, so the test fails with reqwest's
+/// transport error, which names the request URL — `?t=caps&apikey=<key>`.
+#[given(
+    expr = "an indexer {string} at an address that refuses connections, with the API key {string}"
+)]
+async fn unreachable_keyed_indexer(w: &mut World, name: String, api_key: String) {
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
+        l.local_addr().expect("local addr").port()
+    };
+    store_indexer_with_key(w, &name, &format!("http://127.0.0.1:{port}"), &api_key).await;
 }
 
 #[then(expr = "the server of indexer {string} has received {int} requests")]
@@ -556,5 +574,28 @@ async fn checked_after(w: &mut World, id: String, name: String) {
     assert!(
         at > before,
         "checked_at {at} is not after {name} ({before})"
+    );
+}
+
+// ---- redaction (SKADI-T-0685) --------------------------------------------------
+
+/// Emit `line` at WARN through the log ring of the scenario's daemon, as the
+/// daemon's own subscriber does (`AppState::logs`, `LogBuffer::layer`).
+#[given(expr = "the daemon logs the warning {string}")]
+#[when(expr = "the daemon logs the warning {string}")]
+async fn daemon_logs(w: &mut World, line: String) {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let api = w.api().await;
+    let subscriber = tracing_subscriber::registry().with(api.logs.layer());
+    tracing::subscriber::with_default(subscriber, || tracing::warn!("{line}"));
+}
+
+#[then(expr = "the response body does not contain {string}")]
+async fn body_lacks(w: &mut World, needle: String) {
+    let r = w.reply();
+    assert!(
+        !r.text.contains(&needle),
+        "the response body contains {needle:?}: {}",
+        r.text
     );
 }

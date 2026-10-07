@@ -1810,6 +1810,47 @@ pub fn AuthorDetailPage() -> impl IntoView {
     }
 }
 
+/// The built-in audiobook quality ladder, best first (split out of
+/// [`AudiobooksConfigPage`] so a DOM test can render it with rows,
+/// SKADI-T-0697). Empty = still loading. Each cell carries a `data-label`, which
+/// the narrow-screen card layout prints beside the value.
+#[component]
+pub fn QualityLadderTable(tiers: Vec<api::AudiobookQuality>) -> impl IntoView {
+    let rows = if tiers.is_empty() {
+        view! { <tr><td colspan="4" class="muted">"Loading…"</td></tr> }.into_any()
+    } else {
+        let last = tiers.len().saturating_sub(1);
+        tiers
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let tag = if i == 0 {
+                    Some(view! { <span class="badge ok">"best"</span> })
+                } else if i == last {
+                    Some(view! { <span class="badge muted">"fallback"</span> })
+                } else {
+                    None
+                };
+                let bitrate = if row.kbps == 0 {
+                    "VBR".to_string()
+                } else {
+                    format!("{} kbps", row.kbps)
+                };
+                view! {
+                    <tr>
+                        <td data-label="Tier"><strong>{row.name}</strong></td>
+                        <td class="muted" data-label="Format">{row.format}</td>
+                        <td class="muted" data-label="Bitrate">{bitrate}</td>
+                        <td data-label="Rank">{tag}</td>
+                    </tr>
+                }
+            })
+            .collect_view()
+            .into_any()
+    };
+    view! { <table class="history-table"><tbody>{rows}</tbody></table> }
+}
+
 /// Audiobooks-domain configuration (SKADI-T-0142): audiobooks rank by a built-in,
 /// format-first quality ladder (every M4B beats every MP3) rather than a tunable
 /// movie-shaped profile, so this page *displays* that ladder read-only plus the
@@ -1833,40 +1874,6 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
             }
         });
     });
-
-    let ladder_rows = move || {
-        let q = ladder.get();
-        if q.is_empty() {
-            return view! { <tr><td colspan="4" class="muted">"Loading…"</td></tr> }.into_any();
-        }
-        let last = q.len().saturating_sub(1);
-        q.into_iter()
-            .enumerate()
-            .map(|(i, row)| {
-                let tag = if i == 0 {
-                    Some(view! { <span class="badge ok">"best"</span> })
-                } else if i == last {
-                    Some(view! { <span class="badge muted">"fallback"</span> })
-                } else {
-                    None
-                };
-                let bitrate = if row.kbps == 0 {
-                    "VBR".to_string()
-                } else {
-                    format!("{} kbps", row.kbps)
-                };
-                view! {
-                    <tr>
-                        <td><strong>{row.name}</strong></td>
-                        <td class="muted">{row.format}</td>
-                        <td class="muted">{bitrate}</td>
-                        <td>{tag}</td>
-                    </tr>
-                }
-            })
-            .collect_view()
-            .into_any()
-    };
 
     view! {
         <crate::subnav::SubNav/>
@@ -1893,7 +1900,7 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
                     </p>
                 </div>
             </div>
-            <table class="history-table"><tbody>{ladder_rows}</tbody></table>
+            {move || view! { <QualityLadderTable tiers=ladder.get()/> }}
         </section>
 
         <section class="provider-section">

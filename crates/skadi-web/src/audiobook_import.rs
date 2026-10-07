@@ -437,7 +437,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                 let row_class = if in_lib { "in-lib" } else { "" };
                 view! {
                     <tr class=row_class>
-                        <td>
+                        <td data-label="Import">
                             <input
                                 type="checkbox"
                                 prop:checked=row.selected
@@ -445,10 +445,10 @@ pub fn AudiobookImportPage() -> impl IntoView {
                                 on:change=toggle
                             />
                         </td>
-                        <td class="folder" title=cand.display_name.clone()>{cand.display_name.clone()}</td>
-                        <td>{parsed}</td>
-                        <td>{kind}</td>
-                        <td>
+                        <td class="folder" data-label="Folder / file" title=cand.display_name.clone()>{cand.display_name.clone()}</td>
+                        <td data-label="Parsed">{parsed}</td>
+                        <td data-label="Kind">{kind}</td>
+                        <td data-label="Match">
                             {match (matched, proposed) {
                                 (false, _) => view! { <span class="muted">"matching…"</span> }.into_any(),
                                 (true, Some(p)) => {
@@ -463,7 +463,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                                 }.into_any(),
                             }}
                         </td>
-                        <td class="import-actions">
+                        <td class="import-actions" data-label="ASIN">
                             <button
                                 class="btn-link import-find"
                                 disabled=in_lib

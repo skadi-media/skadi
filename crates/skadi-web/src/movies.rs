@@ -1106,12 +1106,12 @@ pub fn ReleasesTable(
 
             view! {
                 <tr>
-                    <td>{title}</td>
-                    <td>{quality}</td>
-                    <td>{size}</td>
-                    <td>{seeders}</td>
-                    <td>{age}</td>
-                    <td class=verdict_cls>{verdict}</td>
+                    <td class="release-title" data-label="Title">{title}</td>
+                    <td data-label="Quality">{quality}</td>
+                    <td data-label="Size">{size}</td>
+                    <td data-label="Seeders">{seeders}</td>
+                    <td data-label="Age">{age}</td>
+                    <td class=verdict_cls data-label="Verdict">{verdict}</td>
                     <td class="row-actions">{action}</td>
                 </tr>
             }

@@ -1,6 +1,8 @@
 //! The app shell: persistent left sidebar (brand + health, then Home / Domains
-//! / System groups) over a routed main area (SKADI-T-0071). Split out of
-//! `main.rs` into the lib so the bin stays a thin mount point.
+//! / System groups) over a routed main area (SKADI-T-0071). Under 720px the
+//! sidebar is an off-canvas drawer behind a menu button ([`AppFrame`],
+//! SKADI-T-0697). Split out of `main.rs` into the lib so the bin stays a thin
+//! mount point.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -141,49 +143,167 @@ fn Shell() -> impl IntoView {
     });
     view! {
         <Router>
-            <div class="app">
-                <Sidebar/>
-                <main class="main">
-                    <Routes fallback=|| view! { <p>"Not found"</p> }>
-                        <Route path=path!("/") view=Dashboard/>
-                        <Route path=path!("/add") view=AddPage/>
-                        <Route path=path!("/setup") view=crate::setup::SetupPage/>
-                        <Route path=path!("/activity") view=ActivityPage/>
-                        <Route path=path!("/wanted") view=crate::wanted::WantedPage/>
-                        <Route path=path!("/players") view=crate::offline::PlayersPage/>
-                        <Route path=path!("/upload") view=crate::upload::UploadPage/>
-                        <Route path=path!("/movies") view=MoviesPage/>
-                        <Route path=path!("/movies/import") view=LibraryImportPage/>
-                        <Route path=path!("/movies/config") view=MoviesConfigPage/>
-                        // Dynamic last; leptos_router ranks static segments higher
-                        // so /movies/import and /movies/config still win.
-                        <Route path=path!("/movies/:id") view=MovieDetailPage/>
-                        <Route path=path!("/tv") view=TvPage/>
-                        <Route path=path!("/tv/import") view=TvImportPage/>
-                        // Dynamic last so any future static /tv/* still wins.
-                        <Route path=path!("/tv/:id") view=SeriesDetailPage/>
-                        <Route path=path!("/audiobooks") view=AudiobooksPage/>
-                        <Route path=path!("/audiobooks/import") view=AudiobookImportPage/>
-                        <Route path=path!("/audiobooks/config") view=AudiobooksConfigPage/>
-                        <Route path=path!("/audiobooks/discover") view=AudiobookDiscoverPage/>
-                        <Route path=path!("/audiobooks/authors/:id") view=AuthorDetailPage/>
-                        // Dynamic last; static /audiobooks/config &
-                        // /audiobooks/authors/:id rank higher so they still win.
-                        <Route path=path!("/audiobooks/:id") view=BookDetailPage/>
-                        <Route path=path!("/listen") view=crate::offline::ListenPage/>
-                        <Route path=path!("/listen/:id/:fid") view=crate::player::PlayerPage/>
-                        <Route path=path!("/watch/movie/:id/:eid") view=crate::watch::WatchMoviePage/>
-                        <Route path=path!("/watch/tv/:id/:eid") view=crate::watch::WatchEpisodePage/>
-                        <Route path=path!("/indexers") view=IndexersPage/>
-                        <Route path=path!("/downloaders") view=DownloadersPage/>
-                        <Route path=path!("/config") view=ConfigPage/>
-                        <Route path=path!("/household") view=crate::household::HouseholdPage/>
-                        <Route path=path!("/naming") view=crate::naming::NamingPage/>
-                        <Route path=path!("/system") view=crate::system::SystemPage/>
-                    </Routes>
-                </main>
-            </div>
+            <AppFrame>
+                <Routes fallback=|| view! { <p>"Not found"</p> }>
+                    <Route path=path!("/") view=Dashboard/>
+                    <Route path=path!("/add") view=AddPage/>
+                    <Route path=path!("/setup") view=crate::setup::SetupPage/>
+                    <Route path=path!("/activity") view=ActivityPage/>
+                    <Route path=path!("/wanted") view=crate::wanted::WantedPage/>
+                    <Route path=path!("/players") view=crate::offline::PlayersPage/>
+                    <Route path=path!("/upload") view=crate::upload::UploadPage/>
+                    <Route path=path!("/movies") view=MoviesPage/>
+                    <Route path=path!("/movies/import") view=LibraryImportPage/>
+                    <Route path=path!("/movies/config") view=MoviesConfigPage/>
+                    // Dynamic last; leptos_router ranks static segments higher
+                    // so /movies/import and /movies/config still win.
+                    <Route path=path!("/movies/:id") view=MovieDetailPage/>
+                    <Route path=path!("/tv") view=TvPage/>
+                    <Route path=path!("/tv/import") view=TvImportPage/>
+                    // Dynamic last so any future static /tv/* still wins.
+                    <Route path=path!("/tv/:id") view=SeriesDetailPage/>
+                    <Route path=path!("/audiobooks") view=AudiobooksPage/>
+                    <Route path=path!("/audiobooks/import") view=AudiobookImportPage/>
+                    <Route path=path!("/audiobooks/config") view=AudiobooksConfigPage/>
+                    <Route path=path!("/audiobooks/discover") view=AudiobookDiscoverPage/>
+                    <Route path=path!("/audiobooks/authors/:id") view=AuthorDetailPage/>
+                    // Dynamic last; static /audiobooks/config &
+                    // /audiobooks/authors/:id rank higher so they still win.
+                    <Route path=path!("/audiobooks/:id") view=BookDetailPage/>
+                    <Route path=path!("/listen") view=crate::offline::ListenPage/>
+                    <Route path=path!("/listen/:id/:fid") view=crate::player::PlayerPage/>
+                    <Route path=path!("/watch/movie/:id/:eid") view=crate::watch::WatchMoviePage/>
+                    <Route path=path!("/watch/tv/:id/:eid") view=crate::watch::WatchEpisodePage/>
+                    <Route path=path!("/indexers") view=IndexersPage/>
+                    <Route path=path!("/downloaders") view=DownloadersPage/>
+                    <Route path=path!("/config") view=ConfigPage/>
+                    <Route path=path!("/household") view=crate::household::HouseholdPage/>
+                    <Route path=path!("/naming") view=crate::naming::NamingPage/>
+                    <Route path=path!("/system") view=crate::system::SystemPage/>
+                </Routes>
+            </AppFrame>
         </Router>
+    }
+}
+
+/// The `id` of the sidebar `<nav>`; the menu button's `aria-controls`.
+pub const NAV_ID: &str = "app-nav";
+
+/// Whether the narrow-screen drawer is open (SKADI-T-0697). Wide screens never
+/// set it: the menu button that does is hidden there.
+#[derive(Clone, Copy)]
+struct DrawerOpen(RwSignal<bool>);
+
+/// The first thing a keyboard user can reach inside `root`.
+fn first_focusable(root: &web_sys::Element) -> Option<web_sys::HtmlElement> {
+    use wasm_bindgen::JsCast;
+    root.query_selector("a[href], button:not([disabled]), input, select")
+        .ok()
+        .flatten()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+}
+
+/// The shell's frame: a top bar with the menu button (narrow screens only),
+/// the sidebar, and the routed `<main>` (SKADI-T-0697).
+///
+/// Under 720px the sidebar is an off-canvas drawer; `style.css` does all the
+/// layout from one signal, the `nav-open` class on `.app`. The drawer:
+/// - opens from a real `<button>` with `aria-expanded` / `aria-controls`, and
+///   focus moves to its first link;
+/// - closes on Esc (focus back on the menu button), on a click on the scrim,
+///   on any navigation, on a click on one of its links, and when the window
+///   grows past the breakpoint;
+/// - makes `<main>` `inert` while it is open, so Tab stays in the drawer.
+///
+/// Must sit inside a `<Router>` (it watches the location).
+#[component]
+pub fn AppFrame(children: Children) -> impl IntoView {
+    let open = RwSignal::new(false);
+    provide_context(DrawerOpen(open));
+    let menu_ref = NodeRef::<leptos::html::Button>::new();
+
+    // Close on navigation (the first run only records the path).
+    let location = leptos_router::hooks::use_location();
+    Effect::new(move |prev: Option<String>| {
+        let path = location.pathname.get();
+        if prev.is_some_and(|p| p != path) {
+            open.set(false);
+        }
+        path
+    });
+
+    // Focus into the drawer once it is open. After a frame: the drawer is
+    // `visibility: hidden` until the class lands, and a hidden link takes no
+    // focus.
+    Effect::new(move |was: Option<bool>| {
+        let now = open.get();
+        if now && was == Some(false) {
+            request_animation_frame(move || {
+                let nav = document().get_element_by_id(NAV_ID);
+                if let Some(target) = nav.as_ref().and_then(first_focusable) {
+                    let _ = target.focus();
+                }
+            });
+        }
+        now
+    });
+
+    let close_to_menu = move || {
+        open.set(false);
+        if let Some(b) = menu_ref.get_untracked() {
+            let _ = b.focus();
+        }
+    };
+    let keys = window_event_listener(leptos::ev::keydown, move |ev| {
+        // A confirm dialog above the drawer takes its own Esc.
+        let dialog_open = document()
+            .query_selector(".confirm-dialog")
+            .ok()
+            .flatten()
+            .is_some();
+        if ev.key() == "Escape" && open.get_untracked() && !dialog_open {
+            ev.prevent_default();
+            close_to_menu();
+        }
+    });
+    on_cleanup(move || keys.remove());
+    let resize = window_event_listener(leptos::ev::resize, move |_| {
+        let wide = window()
+            .inner_width()
+            .ok()
+            .and_then(|w| w.as_f64())
+            .is_some_and(|w| w > 720.0);
+        if wide && open.get_untracked() {
+            open.set(false);
+        }
+    });
+    on_cleanup(move || resize.remove());
+
+    view! {
+        <div class="app" class:nav-open=move || open.get()>
+            <header class="topbar">
+                <button
+                    type="button"
+                    class="menu-btn"
+                    node_ref=menu_ref
+                    aria-label="Menu"
+                    aria-controls=NAV_ID
+                    aria-expanded=move || if open.get() { "true" } else { "false" }
+                    on:click=move |_| open.update(|o| *o = !*o)
+                >
+                    <span class="menu-icon" aria-hidden="true"></span>
+                </button>
+                <span class="topbar-brand">
+                    <Snowflake/>
+                    <span class="brand-name">"Skadi"</span>
+                </span>
+            </header>
+            <div class="nav-scrim" aria-hidden="true" on:click=move |_| close_to_menu()></div>
+            <Sidebar/>
+            <main class="main" inert=move || open.get()>
+                {children()}
+            </main>
+        </div>
     }
 }
 
@@ -455,6 +575,7 @@ fn Sidebar() -> impl IntoView {
     // would make the enclosing view `FnOnce`.
     let navigate = use_navigate();
     let go_add = Callback::new(move |()| navigate("/add", Default::default()));
+    let drawer = use_context::<DrawerOpen>();
 
     // Which areas this account can actually reach (SKADI-T-0627). The API has
     // gated these since SKADI-T-0625, but the sidebar offered them to everyone
@@ -464,7 +585,24 @@ fn Sidebar() -> impl IntoView {
     // strips on the pages.
 
     view! {
-        <nav class="nav">
+        <nav
+            class="nav"
+            id=NAV_ID
+            aria-label="Main"
+            // A link to the page already shown changes no path, so close on
+            // the click itself too (SKADI-T-0697).
+            on:click=move |ev| {
+                use wasm_bindgen::JsCast;
+                let on_link = ev
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|e| e.closest("a[href]").ok().flatten())
+                    .is_some();
+                if on_link && let Some(DrawerOpen(open)) = drawer {
+                    open.set(false);
+                }
+            }
+        >
             <div class="brand">
                 <Snowflake/>
                 <span class="brand-name">"Skadi"</span>

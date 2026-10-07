@@ -53,6 +53,8 @@ web-sys = { version = "0.3", features = [
     # In-app confirm dialog (SKADI-T-0694): Esc and the Tab trap; the DOM
     # test builds the key events.
     "KeyboardEvent", "KeyboardEventInit",
+    # Responsive shell DOM test (SKADI-T-0697): where the closed drawer sits.
+    "DomRect",
 ] }
 console_error_panic_hook = "0.1"
 

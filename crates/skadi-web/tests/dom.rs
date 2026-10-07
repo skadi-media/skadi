@@ -873,3 +873,374 @@ async fn bulk_delete_names_the_count_and_asks_once() {
     assert_eq!(done.get_untracked(), 0, "a cancelled delete sends nothing");
     assert_eq!(sel.ids.get_untracked().len(), 4, "the selection is kept");
 }
+
+// --- Responsive shell (SKADI-T-0697) ----------------------------------------
+
+use skadi_web::{AppFrame, NAV_ID};
+
+fn attr(el: &HtmlElement, name: &str) -> Option<String> {
+    el.get_attribute(name)
+}
+
+/// Wait for the drawer's after-a-frame focus move.
+async fn next_frame() {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let _ = web_sys::window().unwrap().request_animation_frame(&resolve);
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+    settle_dom().await;
+}
+
+#[wasm_bindgen_test]
+async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
+    let host = host();
+    let _handle = mount_to(host.clone(), || {
+        view! { <Router><AppFrame><p class="page">"Page"</p></AppFrame></Router> }
+    });
+    settle_dom().await;
+    let menu = find(&host, "button.menu-btn");
+    let app = find(&host, ".app");
+    let main = find(&host, "main.main");
+    let nav = find(&host, &format!("nav#{NAV_ID}"));
+    assert_eq!(attr(&menu, "aria-controls").as_deref(), Some(NAV_ID));
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
+    assert_eq!(attr(&menu, "aria-label").as_deref(), Some("Menu"));
+    assert_eq!(attr(&menu, "type").as_deref(), Some("button"));
+    assert!(!app.class_list().contains("nav-open"));
+    assert!(attr(&main, "inert").is_none());
+
+    // Open: the one signal flips, main goes inert, focus lands in the drawer.
+    menu.focus().unwrap();
+    menu.click();
+    next_frame().await;
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("true"));
+    assert!(app.class_list().contains("nav-open"));
+    assert!(attr(&main, "inert").is_some(), "main is inert while open");
+    let active = active_element().expect("something has focus");
+    assert!(
+        nav.contains(Some(&active)),
+        "focus moved into the drawer, got <{}>",
+        active.tag_name()
+    );
+
+    // Esc closes and gives focus back to the menu button.
+    key(
+        &active.clone().dyn_into::<HtmlElement>().unwrap(),
+        "Escape",
+        false,
+    );
+    settle_dom().await;
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
+    assert!(!app.class_list().contains("nav-open"));
+    assert!(attr(&main, "inert").is_none());
+    let back = active_element().expect("focus");
+    let menu_el: &web_sys::Element = menu.as_ref();
+    assert!(back == *menu_el, "focus is back on the menu button");
+
+    // Esc with the drawer closed does nothing.
+    key(&menu, "Escape", false);
+    settle_dom().await;
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
+
+    // The scrim closes it too.
+    menu.click();
+    settle_dom().await;
+    assert!(app.class_list().contains("nav-open"));
+    find(&host, ".nav-scrim").click();
+    settle_dom().await;
+    assert!(!app.class_list().contains("nav-open"), "scrim click closes");
+
+    // So does picking a link, even the page already shown.
+    menu.click();
+    settle_dom().await;
+    let link = find(&host, &format!("#{NAV_ID} a[href]"));
+    link.click();
+    settle_dom().await;
+    assert!(!app.class_list().contains("nav-open"), "a nav link closes");
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
+    host.remove();
+}
+
+/// An iframe `width` px wide holding the real `style.css`, so its `@media`
+/// rules see a `width` viewport; returns the iframe and its `<body>`.
+async fn narrow_frame(width: u32) -> (HtmlElement, HtmlElement) {
+    let frame = document()
+        .create_element("iframe")
+        .unwrap()
+        .dyn_into::<HtmlElement>()
+        .unwrap();
+    frame
+        .set_attribute("style", &format!("width:{width}px;height:900px;border:0"))
+        .unwrap();
+    let srcdoc = format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>{}</style></head><body></body></html>",
+        include_str!("../style.css")
+    );
+    frame.set_attribute("srcdoc", &srcdoc).unwrap();
+    document().body().unwrap().append_child(&frame).unwrap();
+    // srcdoc loads asynchronously; wait for its own body.
+    for _ in 0..200 {
+        let doc = js_sys::Reflect::get(&frame, &"contentDocument".into()).unwrap();
+        if !doc.is_null() && !doc.is_undefined() {
+            let doc: Document = doc.unchecked_into();
+            // The initial about:blank is "complete" too; the srcdoc one is
+            // the document that has our <style>.
+            if doc.ready_state() == "complete"
+                && doc.query_selector("head style").ok().flatten().is_some()
+                && let Some(body) = doc.body()
+            {
+                // A cross-realm node: `dyn_into` would fail its instanceof.
+                return (frame, body.unchecked_into());
+            }
+        }
+        gloo_timers::future::TimeoutFuture::new(10).await;
+    }
+    panic!("the test iframe never loaded");
+}
+
+fn long_candidate(title: &str, key: &str) -> ReleaseCandidate {
+    let mut c = candidate(title, true, "Bluray-2160p", key);
+    c.quality = "Bluray-2160p Remux".into();
+    c
+}
+
+/// The overflow of `el` (its `scrollWidth - clientWidth`), named for the report.
+fn overflow(el: &web_sys::Element) -> i32 {
+    el.scroll_width() - el.client_width()
+}
+
+/// The descendant reaching furthest right, for the failure report: the likely
+/// culprit (overflow into the padding counts, so no edge test here).
+fn widest_inside(el: &web_sys::Element) -> String {
+    let all = el.query_selector_all("*").unwrap();
+    let mut worst: Option<(f64, String)> = None;
+    for i in 0..all.length() {
+        let e: web_sys::Element = all.item(i).unwrap().unchecked_into();
+        let right = e.get_bounding_client_rect().right();
+        if worst.as_ref().is_none_or(|(w, _)| right > *w) {
+            worst = Some((
+                right,
+                format!(
+                    "<{} class=\"{}\"> right edge {right:.0}px",
+                    e.tag_name(),
+                    e.class_name()
+                ),
+            ));
+        }
+    }
+    worst.map(|w| w.1).unwrap_or_else(|| "no children".into())
+}
+
+/// Every element under `root` matching `selector` must fit its own box.
+fn assert_fits(root: &HtmlElement, selector: &str, width: u32) {
+    let list = root.query_selector_all(selector).unwrap();
+    assert!(list.length() > 0, "{selector} rendered at {width}px");
+    for i in 0..list.length() {
+        let el: web_sys::Element = list.item(i).unwrap().unchecked_into();
+        assert!(
+            overflow(&el) <= 0,
+            "{selector} #{i} overflows by {}px at {width}px (scroll {} > client {}): {}",
+            overflow(&el),
+            el.scroll_width(),
+            el.client_width(),
+            widest_inside(&el)
+        );
+    }
+}
+
+/// The shell plus the views that can be rendered with data in a test: the
+/// history (quality ladder), import, releases and System tables, and the
+/// Overview. Long unbroken names are the worst case (release titles, paths).
+async fn mount_wide_content(width: u32) -> (HtmlElement, Box<dyn std::any::Any>) {
+    use skadi_web::api::{AudiobookQuality, LogLine, SystemTask};
+    use skadi_web::audiobooks::QualityLadderTable;
+    use skadi_web::system::{CheckTable, LogTable, TaskTable};
+    let (frame, body) = narrow_frame(width).await;
+    let long = "The.Extraordinarily.Long.Release.Name.2019.2160p.UHD.BluRay.REMUX.HDR10.HEVC.TrueHD.Atmos.7.1-SOMEGROUPNAME";
+    let handle = mount_to(body.clone(), move || {
+        let candidates = vec![long_candidate(long, "k1"), long_candidate("Short", "k2")];
+        let checks = vec![
+            sys_check(
+                "download-client:some-very-long-client-name-without-spaces",
+                "error",
+                Some(long),
+            ),
+            sys_check("database", "ok", None),
+        ];
+        let tasks = vec![SystemTask {
+            name: "rss-sync-for-every-enabled-indexer".into(),
+            interval_seconds: 900,
+            what: long.into(),
+            last_run: Some("2026-10-07T05:49:48.123456Z".into()),
+            next_run: None,
+        }];
+        let lines = vec![LogLine {
+            time: "2026-10-07T05:49:48.123456Z".into(),
+            level: "WARN".into(),
+            target: "skadi_hunter::pipeline::monitor::transfer".into(),
+            message: format!("/media/library/movies/{long}/{long}.mkv"),
+        }];
+        let tiers = vec![
+            AudiobookQuality {
+                name: "M4B-lossless-chaptered".into(),
+                format: "m4b".into(),
+                kbps: 0,
+            },
+            AudiobookQuality {
+                name: "MP3-320".into(),
+                format: "mp3".into(),
+                kbps: 320,
+            },
+            AudiobookQuality {
+                name: "MP3-64".into(),
+                format: "mp3".into(),
+                kbps: 64,
+            },
+        ];
+        view! {
+            <Router>
+                <AppFrame>
+                    <Dashboard/>
+                    <QualityLadderTable tiers=tiers/>
+                    // Mirrors the row markup of import.rs (LibraryImportPage)
+                    // and audiobook_import.rs, whose tables need a live scan.
+                    <table class="import-table">
+                        <colgroup>
+                            <col class="c-sel"/><col class="c-folder"/><col/>
+                            <col class="c-qual"/><col/><col class="c-tmdb"/>
+                        </colgroup>
+                        <thead><tr>
+                            <th></th><th>"Folder"</th><th>"Parsed"</th>
+                            <th>"Quality"</th><th>"Match"</th><th>"TMDB id"</th>
+                        </tr></thead>
+                        <tbody>
+                            <tr>
+                                <td data-label="Import"><input type="checkbox"/></td>
+                                <td class="folder" data-label="Folder">{long}</td>
+                                <td data-label="Parsed">{long}<div class="import-facts">{long}</div></td>
+                                <td data-label="Quality">"Bluray-2160p Remux"</td>
+                                <td data-label="Match"><span>{long}" (2019) "</span><span class="badge ok">"high"</span></td>
+                                <td class="import-actions" data-label="TMDB id">
+                                    <button class="btn-link import-find">"🔍"</button>
+                                    <input class="tmdb-input" type="text" placeholder="603"/>
+                                </td>
+                            </tr>
+                            <tr class="picker-tr">
+                                <td></td>
+                                <td colspan="5">
+                                    <div class="import-picker">
+                                        <div class="import-picker-search">
+                                            <input class="path-field" placeholder="Search movie title…"/>
+                                            <button>"Search"</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <ReleasesTable
+                        candidates=candidates
+                        on_grab=Callback::new(|_| {})
+                        on_block=Callback::new(|_| {})
+                        on_unblock=Callback::new(|_| {})
+                    />
+                    <CheckTable checks=checks/>
+                    <TaskTable tasks=tasks/>
+                    <LogTable lines=lines/>
+                </AppFrame>
+            </Router>
+        }
+    });
+    settle_dom().await;
+    let _ = body;
+    (frame, Box::new(handle))
+}
+
+#[wasm_bindgen_test]
+async fn nothing_scrolls_sideways_at_375px_and_the_drawer_is_off_canvas() {
+    let (frame, handle) = mount_wide_content(375).await;
+    let doc: Document = js_sys::Reflect::get(&frame, &"contentDocument".into())
+        .unwrap()
+        .unchecked_into();
+    let root: HtmlElement = doc.document_element().unwrap().unchecked_into();
+    assert_eq!(root.client_width(), 375, "the frame is 375px wide");
+    assert!(
+        overflow(&root) <= 0,
+        "the page scrolls sideways by {}px",
+        overflow(&root)
+    );
+    for sel in [
+        ".app",
+        ".topbar",
+        "main.main",
+        ".history-table",
+        ".import-table",
+        ".releases-table",
+        ".system-table",
+        ".ov-head",
+        ".metrics-row",
+    ] {
+        assert_fits(&root, sel, 375);
+    }
+    // Stacked cards: the header rows are gone, the cells carry their labels.
+    let thead: web_sys::Element = root.query_selector(".import-table thead").unwrap().unwrap();
+    assert_eq!(
+        thead.client_height(),
+        0,
+        "the import table hides its header"
+    );
+    // The closed drawer sits left of the viewport; the menu button shows.
+    let nav: web_sys::Element = root.query_selector(&format!("#{NAV_ID}")).unwrap().unwrap();
+    assert!(
+        nav.get_bounding_client_rect().right() <= 0.0,
+        "closed drawer is off-canvas"
+    );
+    let menu: web_sys::Element = root.query_selector(".menu-btn").unwrap().unwrap();
+    assert!(menu.client_width() > 0, "the menu button is shown");
+    // Hidden, not only moved: a closed drawer's link takes no focus.
+    let link: HtmlElement = nav
+        .query_selector("a[href]")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    link.focus().unwrap();
+    let link_el: &web_sys::Element = link.as_ref();
+    assert!(
+        doc.active_element().as_ref() != Some(link_el),
+        "closed drawer link is focusable"
+    );
+    drop(handle);
+    frame.remove();
+}
+
+#[wasm_bindgen_test]
+async fn nothing_scrolls_sideways_at_768px_beside_the_sidebar() {
+    let (frame, handle) = mount_wide_content(768).await;
+    let doc: Document = js_sys::Reflect::get(&frame, &"contentDocument".into())
+        .unwrap()
+        .unchecked_into();
+    let root: HtmlElement = doc.document_element().unwrap().unchecked_into();
+    assert!(
+        overflow(&root) <= 0,
+        "the page scrolls sideways by {}px",
+        overflow(&root)
+    );
+    for sel in [
+        ".app",
+        "main.main",
+        ".history-table",
+        ".import-table",
+        ".releases-table",
+        ".system-table",
+    ] {
+        assert_fits(&root, sel, 768);
+    }
+    // Wide layout: the sidebar is in the flow, the menu button is not.
+    let nav: web_sys::Element = root.query_selector(&format!("#{NAV_ID}")).unwrap().unwrap();
+    assert!(nav.get_bounding_client_rect().left() >= 0.0);
+    assert!(nav.client_width() > 0, "the sidebar shows at 768px");
+    let menu: web_sys::Element = root.query_selector(".menu-btn").unwrap().unwrap();
+    assert_eq!(menu.client_width(), 0, "no menu button at 768px");
+    drop(handle);
+    frame.remove();
+}

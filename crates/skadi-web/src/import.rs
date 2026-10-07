@@ -473,7 +473,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                 let row_class = if in_lib { "in-lib" } else { "" };
                 view! {
                     <tr class=row_class>
-                        <td>
+                        <td data-label="Import">
                             <input
                                 type="checkbox"
                                 prop:checked=row.selected
@@ -481,8 +481,8 @@ pub fn LibraryImportPage() -> impl IntoView {
                                 on:change=toggle
                             />
                         </td>
-                        <td class="folder" title=cand.display_name.clone()>{cand.display_name.clone()}</td>
-                        <td>
+                        <td class="folder" data-label="Folder" title=cand.display_name.clone()>{cand.display_name.clone()}</td>
+                        <td data-label="Parsed">
                             {parsed}
                             // NFO facts + synopsis — confirm the match at a glance
                             // (SKADI-T-0328).
@@ -490,8 +490,8 @@ pub fn LibraryImportPage() -> impl IntoView {
                                 <div class="import-facts" title=overview.clone().unwrap_or_default()>{f}</div>
                             })}
                         </td>
-                        <td>{quality}</td>
-                        <td>
+                        <td data-label="Quality">{quality}</td>
+                        <td data-label="Match">
                             {match (matched, proposed) {
                                 (false, _) => view! { <span class="muted">"matching…"</span> }.into_any(),
                                 (true, Some(p)) => {
@@ -506,7 +506,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                                 }.into_any(),
                             }}
                         </td>
-                        <td class="import-actions">
+                        <td class="import-actions" data-label="TMDB id">
                             <button
                                 class="btn-link import-find"
                                 disabled=in_lib

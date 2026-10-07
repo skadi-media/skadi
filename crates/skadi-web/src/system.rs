@@ -366,17 +366,17 @@ pub fn CheckTable(checks: Vec<api::HealthCheck>) -> impl IntoView {
             let when = time_label(c.checked_at.as_deref());
             view! {
                 <tr class=format!("check-row sev-{sev}")>
-                    <td class="nowrap">
+                    <td class="nowrap" data-label="Severity">
                         <span class=dot></span>
                         <span class="check-level mono">{level}</span>
                     </td>
-                    <td>
+                    <td data-label="Check">
                         <div class="check-label">{label}</div>
                         <div class="check-id mono muted">{c.name.clone()}</div>
                     </td>
-                    <td class="check-message">{c.detail.clone()}</td>
-                    <td class="check-remedy">{remedy}</td>
-                    <td class="nowrap mono muted">{when}</td>
+                    <td class="check-message" data-label="Message">{c.detail.clone()}</td>
+                    <td class="check-remedy" data-label="How to fix">{remedy}</td>
+                    <td class="nowrap mono muted" data-label="Checked (UTC)">{when}</td>
                 </tr>
             }
         })
@@ -411,13 +411,13 @@ pub fn TaskTable(tasks: Vec<api::SystemTask>) -> impl IntoView {
         .map(|t| {
             view! {
                 <tr class="task-row">
-                    <td>
+                    <td data-label="Task">
                         <div class="mono">{t.name.clone()}</div>
                         <div class="muted task-what">{t.what.clone()}</div>
                     </td>
-                    <td class="nowrap">{interval_label(t.interval_seconds)}</td>
-                    <td class="nowrap mono muted">{time_label(t.last_run.as_deref())}</td>
-                    <td class="nowrap mono muted">{time_label(t.next_run.as_deref())}</td>
+                    <td class="nowrap" data-label="Interval">{interval_label(t.interval_seconds)}</td>
+                    <td class="nowrap mono muted" data-label="Last run (UTC)">{time_label(t.last_run.as_deref())}</td>
+                    <td class="nowrap mono muted" data-label="Next run (UTC)">{time_label(t.next_run.as_deref())}</td>
                 </tr>
             }
         })
@@ -450,10 +450,10 @@ pub fn LogTable(lines: Vec<api::LogLine>) -> impl IntoView {
             let tone = format!("log-level mono {}", log_level_class(&l.level));
             view! {
                 <tr class="log-row">
-                    <td class="nowrap mono muted">{time_label(Some(&l.time))}</td>
-                    <td class="nowrap"><span class=tone>{l.level.clone()}</span></td>
-                    <td class="nowrap mono muted log-target">{l.target.clone()}</td>
-                    <td class="mono log-message">{l.message.clone()}</td>
+                    <td class="nowrap mono muted" data-label="Time (UTC)">{time_label(Some(&l.time))}</td>
+                    <td class="nowrap" data-label="Level"><span class=tone>{l.level.clone()}</span></td>
+                    <td class="nowrap mono muted log-target" data-label="Source">{l.target.clone()}</td>
+                    <td class="mono log-message" data-label="Message">{l.message.clone()}</td>
                 </tr>
             }
         })

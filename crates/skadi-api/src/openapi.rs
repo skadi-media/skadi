@@ -107,7 +107,7 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "GET",
         "/system/status",
         "system",
-        "Daemon version, uptime, and store backend",
+        "Daemon version, build commit, uptime, and store backend",
     ),
     (
         "GET",

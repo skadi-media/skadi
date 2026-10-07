@@ -368,6 +368,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # The commit for `GET /system/status` (SKADI-T-0684). `angreal deploy`
+      # and `angreal lab` set it from git; unset, the daemon reports `unknown`.
+      args:
+        SKADI_BUILD_COMMIT: ${SKADI_BUILD_COMMIT:-}
     # Local build by default — unchanged behaviour, and what development wants.
     #
     # Set `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in deploy/.env to run the

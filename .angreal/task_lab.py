@@ -49,7 +49,26 @@ def _LAB_compose(args):
     for f in LAB_COMPOSE_FILES:
         cmd += ["-f", f]
     # cwd=deploy so the base file's relative `./apk` mount resolves like prod.
-    return subprocess.run(cmd + args, cwd=deploy_dir)
+    return subprocess.run(cmd + args, cwd=deploy_dir, env=_LAB_build_env())
+
+
+def _LAB_build_env():
+    """The environment for compose, with SKADI_BUILD_COMMIT set (SKADI-T-0684).
+
+    `.git/` is not in the image's build context, so the Dockerfile takes the
+    commit as a build arg, which the compose file fills from this variable. A
+    value already in the environment wins; outside a git checkout it stays
+    unset, and the daemon reports `unknown`.
+    """
+    env = dict(os.environ)
+    if not env.get("SKADI_BUILD_COMMIT"):
+        r = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=cwd, capture_output=True, text=True,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            env["SKADI_BUILD_COMMIT"] = r.stdout.strip()
+    return env
 
 
 def _LAB_ensure_storage():

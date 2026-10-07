@@ -32,6 +32,7 @@ pub mod player;
 mod settings;
 mod setup;
 pub mod subnav;
+pub mod system;
 pub mod upload;
 
 pub use app::App;

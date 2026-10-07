@@ -2043,3 +2043,46 @@ p.genres.muted {
 /* Marked the same way the sidebar marks its current entry, so "you are here"
    reads identically in both navigations. */
 .subnav-link.is-here { color: var(--fg); background: var(--ice-tint); box-shadow: inset 0 -2px 0 var(--ice); }
+
+/* Settings → System (SKADI-T-0684): status facts, check / task / log tables.
+   Same chrome as the releases table; tones from the semantic tokens. */
+.notice.bad {
+  color: var(--bad);
+  border-left-color: var(--bad);
+  background: rgba(240, 100, 100, 0.1);
+}
+.system-banner { margin: 0 0 0.6rem; }
+.system-facts { padding-top: 0; }
+.system-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.system-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  padding: 0.3rem 0.5rem;
+}
+.system-table td {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid var(--border-soft);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.system-table td.nowrap { white-space: nowrap; overflow-wrap: normal; }
+.system-table .status-dot { position: static; display: inline-block; margin-right: 0.4rem; vertical-align: middle; }
+.check-level { font-size: 0.72rem; color: var(--fg-2); }
+.check-id, .task-what { font-size: 0.72rem; }
+.check-remedy { color: var(--fg-2); }
+.check-row.sev-warn .check-remedy { color: var(--warn); }
+.check-row.sev-bad .check-remedy { color: var(--bad); }
+.log-table { font-size: 0.75rem; }
+.log-table td { padding: 0.2rem 0.5rem; }
+.log-message { white-space: pre-wrap; color: var(--fg-2); }
+.log-target { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.log-level { font-size: 0.7rem; }
+.log-level.bad { color: var(--bad); }
+.log-level.warn { color: var(--warn); }
+.log-level.muted { color: var(--faint); }

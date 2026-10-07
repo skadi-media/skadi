@@ -33,7 +33,13 @@ pub const SETTINGS_SECTIONS: &[Section] = &[
     // one word each — a pill is a label, not a sentence.
     ("/players", "Players"),
     ("/listen", "Device"),
+    // Status, health checks, tasks and logs (SKADI-T-0684).
+    ("/system", "System"),
 ];
+
+/// Pages drawn only for a role known to be the admin: an unresolved role does
+/// not get them, as it gets the rest of the strip (SKADI-T-0684).
+const KNOWN_ADMIN_ONLY: &[&str] = &["/system"];
 
 /// "What is skadi doing, and what is it still missing" — one question, and it
 /// used to be two top-level pages. Upload sits here rather than under Settings
@@ -66,7 +72,12 @@ pub fn visible(role: Option<&str>, sections: &'static [Section]) -> Vec<Section>
     match role {
         // Unknown role (still loading, or open mode with no household): show
         // everything rather than flash a truncated strip.
-        None | Some("admin") => sections.to_vec(),
+        Some("admin") => sections.to_vec(),
+        None => sections
+            .iter()
+            .copied()
+            .filter(|(href, _)| !KNOWN_ADMIN_ONLY.contains(href))
+            .collect(),
         // A contributor may see what is missing and send a file in, but not the
         // hunter's running jobs. Mirrors `path_allowed` (SKADI-T-0630).
         Some("contributor") => sections
@@ -184,10 +195,29 @@ mod tests {
     #[test]
     fn an_unknown_role_shows_everything_rather_than_flashing_a_short_strip() {
         // `/me` has not answered yet, or this is open mode with no household.
+        // The one exception is a page gated on a known admin (SKADI-T-0684).
         assert_eq!(
             visible(None, SETTINGS_SECTIONS).len(),
-            SETTINGS_SECTIONS.len()
+            SETTINGS_SECTIONS.len() - KNOWN_ADMIN_ONLY.len()
         );
+    }
+
+    #[test]
+    fn the_system_page_is_offered_to_a_known_admin_only() {
+        assert!(hrefs(Some("admin"), SETTINGS_SECTIONS).contains(&"/system"));
+        for role in [
+            None,
+            Some("contributor"),
+            Some("member"),
+            Some("kid"),
+            Some("Admin"),
+            Some(""),
+        ] {
+            assert!(
+                !hrefs(role, SETTINGS_SECTIONS).contains(&"/system"),
+                "{role:?} must not be offered /system"
+            );
+        }
     }
 
     #[test]

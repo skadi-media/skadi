@@ -120,6 +120,7 @@ Feature: C34 health & diagnostics
     Then the response status is 200
     And the response field "version" is present
     And the response field "startTime" is present
+    And the response field "commit" is present
 
   @C34 @passing @SKADI-T-0467
   Scenario: System → Tasks lists the scheduled jobs with their next run

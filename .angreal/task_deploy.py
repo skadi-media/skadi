@@ -125,8 +125,26 @@ def _DEP_compose(args):
     #
     # --project-directory also anchors the base file's relative `./apk` mount, so
     # it resolves the same whichever directory the command is invoked from.
-    env_file = os.path.join(DEP_DEPLOY_DIR, ".env")
-    return subprocess.run(_DEP_compose_argv(args), cwd=DEP_DEPLOY_DIR)
+    return subprocess.run(_DEP_compose_argv(args), cwd=DEP_DEPLOY_DIR, env=_DEP_build_env())
+
+
+def _DEP_build_env():
+    """The environment for compose, with SKADI_BUILD_COMMIT set (SKADI-T-0684).
+
+    `.git/` is not in the image's build context, so the Dockerfile takes the
+    commit as a build arg, which the compose file fills from this variable. A
+    value already in the environment wins; outside a git checkout it stays
+    unset, and the daemon reports `unknown`.
+    """
+    env = dict(os.environ)
+    if not env.get("SKADI_BUILD_COMMIT"):
+        r = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=cwd, capture_output=True, text=True,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            env["SKADI_BUILD_COMMIT"] = r.stdout.strip()
+    return env
 
 
 def _DEP_compose_argv(args):

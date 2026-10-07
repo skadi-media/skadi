@@ -107,24 +107,28 @@ fn health_checks_render_status_dots() {
             status: "ok".into(),
             detail: "skadi 0.0.1".into(),
             severity: Some("ok".into()),
+            ..Default::default()
         },
         HealthCheck {
             name: "indexer:dead".into(),
             status: "fail".into(),
             detail: "connection refused".into(),
             severity: Some("error".into()),
+            ..Default::default()
         },
         HealthCheck {
             name: "disk-space".into(),
             status: "warn".into(),
             detail: "80 % used".into(),
             severity: Some("warn".into()),
+            ..Default::default()
         },
         HealthCheck {
             name: "domain:movies".into(),
             status: "warn".into(),
             detail: "not checked yet".into(),
             severity: Some("pending".into()),
+            ..Default::default()
         },
     ];
     let host = host();
@@ -273,4 +277,202 @@ fn dashboard_renders_overview_static_structure_offline() {
     );
     // Offline → the active-hunt list shows its empty state.
     assert!(text.contains("No active transfers"));
+}
+
+// --- System page (SKADI-T-0684) ---------------------------------------------
+
+fn sys_check(id: &str, severity: &str, remediation: Option<&str>) -> HealthCheck {
+    HealthCheck {
+        name: id.into(),
+        status: "ok".into(),
+        detail: format!("{id} says {severity}"),
+        severity: Some(severity.into()),
+        label: Some(format!("Label {id}")),
+        remediation: remediation.map(str::to_string),
+        checked_at: (severity != "pending").then(|| "2026-10-07T05:49:48.1Z".to_string()),
+    }
+}
+
+#[wasm_bindgen_test]
+fn system_check_table_shows_every_check_with_its_fix_under_a_banner() {
+    use skadi_web::system::CheckTable;
+    let checks = vec![
+        sys_check("database", "ok", None),
+        sys_check(
+            "disk-space",
+            "warn",
+            Some("Free some space on the library disk."),
+        ),
+        sys_check("vpn", "error", Some("Start gluetun.")),
+        sys_check("worker", "pending", None),
+    ];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <CheckTable checks=checks.clone()/> },
+    );
+    assert_eq!(count(&host, "tbody tr.check-row"), 4, "one row per check");
+    assert_eq!(
+        count(&host, ".system-banner.bad"),
+        1,
+        "an error raises the red banner"
+    );
+    assert_eq!(count(&host, ".status-dot.warn"), 1);
+    assert_eq!(count(&host, ".status-dot.bad"), 1);
+    assert_eq!(count(&host, ".status-dot.pending"), 1);
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Start gluetun."), "remediation shown: {text}");
+    assert!(text.contains("Label disk-space"), "label shown");
+    assert!(text.contains("2026-10-07 05:49:48"), "checked_at shown");
+    assert!(text.contains("—"), "a pending check has no time: {text}");
+}
+
+#[wasm_bindgen_test]
+fn system_check_table_has_no_banner_when_all_is_well() {
+    use skadi_web::system::CheckTable;
+    let checks = vec![
+        sys_check("database", "ok", None),
+        sys_check("worker", "pending", None),
+    ];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <CheckTable checks=checks.clone()/> },
+    );
+    assert_eq!(count(&host, ".system-banner"), 0);
+    let checks = vec![
+        sys_check("database", "ok", None),
+        sys_check("disk-space", "warn", Some("x")),
+    ];
+    let host = self::host();
+    let _handle2 = mount_to(
+        host.clone(),
+        move || view! { <CheckTable checks=checks.clone()/> },
+    );
+    assert_eq!(
+        count(&host, ".system-banner.warn"),
+        1,
+        "a warning raises the amber banner"
+    );
+}
+
+#[wasm_bindgen_test]
+fn system_tasks_keep_the_run_columns_with_a_dash() {
+    use skadi_web::api::SystemTask;
+    use skadi_web::system::TaskTable;
+    let tasks = vec![SystemTask {
+        name: "rss-sweep".into(),
+        interval_seconds: 900,
+        what: "fast pass over RSS".into(),
+        last_run: None,
+        next_run: None,
+    }];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <TaskTable tasks=tasks.clone()/> },
+    );
+    assert_eq!(
+        count(&host, "thead th"),
+        4,
+        "last and next run columns are there"
+    );
+    assert_eq!(count(&host, "tbody tr.task-row"), 1);
+    let text = host.text_content().unwrap();
+    assert!(text.contains("every 15 min"), "{text}");
+    assert_eq!(
+        text.matches('—').count(),
+        2,
+        "last + next run are dashes: {text}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn system_status_shows_the_build_commit() {
+    use skadi_web::api::SystemStatus;
+    use skadi_web::system::StatusFacts;
+    let status = SystemStatus {
+        version: "0.1.4".into(),
+        commit: Some("0fd05ce3cf9d".into()),
+        start_time: "2026-10-07T05:00:00+00:00".into(),
+        uptime_seconds: 3 * 3600 + 120,
+        database: "postgres".into(),
+        library_root: "/data/library".into(),
+        domains: vec![],
+    };
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <StatusFacts status=status.clone()/> },
+    );
+    let commit = host.query_selector(".system-commit").unwrap().unwrap();
+    assert_eq!(commit.text_content().as_deref(), Some("0fd05ce3cf9d"));
+    let text = host.text_content().unwrap();
+    for want in ["0.1.4", "3h 2m", "postgres", "/data/library"] {
+        assert!(text.contains(want), "{want} in {text}");
+    }
+}
+
+#[wasm_bindgen_test]
+fn system_status_says_unknown_for_a_build_without_a_commit() {
+    use skadi_web::api::SystemStatus;
+    use skadi_web::system::StatusFacts;
+    let status = SystemStatus {
+        version: "0.1.4".into(),
+        commit: None,
+        ..Default::default()
+    };
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <StatusFacts status=status.clone()/> },
+    );
+    let commit = host.query_selector(".system-commit").unwrap().unwrap();
+    assert_eq!(commit.text_content().as_deref(), Some("unknown"));
+}
+
+#[wasm_bindgen_test]
+fn system_log_rows_carry_their_level_tone() {
+    use skadi_web::api::LogLine;
+    use skadi_web::system::LogTable;
+    let line = |level: &str| LogLine {
+        time: "2026-10-07T05:49:48.1+00:00".into(),
+        level: level.into(),
+        target: "skadi_api".into(),
+        message: format!("a {level} line"),
+    };
+    let lines = vec![line("ERROR"), line("WARN"), line("INFO")];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <LogTable lines=lines.clone()/> },
+    );
+    assert_eq!(count(&host, "tbody tr.log-row"), 3);
+    assert_eq!(count(&host, ".log-level.bad"), 1);
+    assert_eq!(count(&host, ".log-level.warn"), 1);
+    assert!(host.text_content().unwrap().contains("a WARN line"));
+}
+
+/// A non-admin, or a role not known yet, gets no panels, and so no fetch: the
+/// panels and their requests live in a child only the admin mounts.
+#[wasm_bindgen_test]
+fn the_system_page_draws_no_panels_for_anyone_but_the_admin() {
+    use skadi_web::subnav::RoleCtx;
+    use skadi_web::system::SystemPage;
+    for (role, says) in [
+        (Some("member"), "household admin"),
+        (Some("contributor"), "household admin"),
+        (Some("kid"), "household admin"),
+        (None, "Loading"),
+    ] {
+        let host = host();
+        let _handle = mount_to(host.clone(), move || {
+            provide_context(RoleCtx(RwSignal::new(role.map(str::to_string))));
+            view! { <SystemPage/> }
+        });
+        let text = host.text_content().unwrap();
+        assert!(text.contains(says), "{role:?}: {text}");
+        assert_eq!(count(&host, ".provider-section"), 0, "{role:?} got panels");
+        assert_eq!(count(&host, "button"), 0, "{role:?} got a Run now button");
+    }
 }

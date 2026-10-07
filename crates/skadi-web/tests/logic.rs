@@ -145,6 +145,7 @@ fn check(name: &str, status: &str, severity: Option<&str>) -> skadi_web::api::He
         status: status.into(),
         detail: String::new(),
         severity: severity.map(str::to_string),
+        ..Default::default()
     }
 }
 
@@ -2124,10 +2125,12 @@ fn a_member_or_a_kid_gets_no_strip_at_all() {
 #[wasm_bindgen_test]
 fn an_unknown_role_shows_everything_rather_than_flashing_a_short_strip() {
     use skadi_web::subnav::{SETTINGS_SECTIONS, visible};
+    // Everything but the one page gated on a known admin (SKADI-T-0684).
     assert_eq!(
         visible(None, SETTINGS_SECTIONS).len(),
-        SETTINGS_SECTIONS.len()
+        SETTINGS_SECTIONS.len() - 1
     );
+    assert!(!subnav_hrefs(None, SETTINGS_SECTIONS).contains(&"/system"));
 }
 
 #[wasm_bindgen_test]
@@ -2481,4 +2484,162 @@ fn subtitle_preference_picks_the_track() {
     assert_eq!(subtitle_to_show("fr", &tracks), Some(2));
     assert_eq!(subtitle_to_show("de", &tracks), None);
     assert_eq!(subtitle_to_show("forced", &tracks[1..]), None);
+}
+
+// --- System page (SKADI-T-0684) ---------------------------------------------
+
+#[wasm_bindgen_test]
+fn the_system_page_opens_for_a_known_admin_only() {
+    use skadi_web::subnav::SETTINGS_SECTIONS;
+    use skadi_web::system::can_open;
+    assert!(can_open(Some("admin")));
+    // Gated on the good role, not on the absence of a bad one: an unresolved
+    // role, an unknown string and every other role are all refused.
+    for role in [
+        None,
+        Some(""),
+        Some("Admin"),
+        Some("operator"),
+        Some("member"),
+        Some("kid"),
+        Some("contributor"),
+    ] {
+        assert!(!can_open(role), "{role:?}");
+        assert!(
+            !subnav_hrefs(role, SETTINGS_SECTIONS).contains(&"/system"),
+            "{role:?} is offered /system"
+        );
+    }
+    assert!(subnav_hrefs(Some("admin"), SETTINGS_SECTIONS).contains(&"/system"));
+}
+
+#[wasm_bindgen_test]
+fn the_build_commit_label_is_short_and_honest() {
+    use skadi_web::system::commit_label;
+    assert_eq!(commit_label(Some("0fd05ce3cf9d")), "0fd05ce3cf9d");
+    assert_eq!(
+        commit_label(Some("0fd05ce3cf9d1234567890abcdef1234567890ab")),
+        "0fd05ce3cf9d",
+        "a full CI sha is cut to 12"
+    );
+    assert_eq!(commit_label(Some("unknown")), "unknown");
+    assert_eq!(commit_label(Some("")), "unknown");
+    assert_eq!(
+        commit_label(None),
+        "unknown",
+        "a daemon older than the field"
+    );
+}
+
+#[wasm_bindgen_test]
+fn uptime_and_interval_labels() {
+    use skadi_web::system::{interval_label, uptime_label};
+    assert_eq!(uptime_label(40), "40s");
+    assert_eq!(uptime_label(7 * 60 + 12), "7m 12s");
+    assert_eq!(uptime_label(2 * 3600 + 5 * 60 + 9), "2h 5m");
+    assert_eq!(uptime_label(3 * 86_400 + 4 * 3600 + 1), "3d 4h");
+    assert_eq!(uptime_label(-5), "0s");
+    assert_eq!(interval_label(300), "every 5 min");
+    assert_eq!(interval_label(7200), "every 2 h");
+    assert_eq!(interval_label(90), "every 90 s");
+    assert_eq!(interval_label(30), "every 30 s");
+}
+
+#[wasm_bindgen_test]
+fn time_label_shows_a_dash_for_no_time() {
+    use skadi_web::system::{NO_VALUE, time_label};
+    assert_eq!(time_label(None), NO_VALUE);
+    assert_eq!(time_label(Some("")), NO_VALUE);
+    assert_eq!(
+        time_label(Some("2026-10-07T05:49:48.123456Z")),
+        "2026-10-07 05:49:48"
+    );
+    assert_eq!(
+        time_label(Some("2026-10-07T05:49:48.1+00:00")),
+        "2026-10-07 05:49:48"
+    );
+    assert_eq!(time_label(Some("yesterday")), "yesterday");
+}
+
+#[wasm_bindgen_test]
+fn the_banner_shows_the_worst_level() {
+    use skadi_web::system::banner_level;
+    let c = |severity: &str| skadi_web::api::HealthCheck {
+        name: severity.into(),
+        status: "ok".into(),
+        severity: Some(severity.into()),
+        ..Default::default()
+    };
+    assert_eq!(banner_level(&[]), None);
+    assert_eq!(
+        banner_level(&[c("ok"), c("pending")]),
+        None,
+        "pending is not a warning"
+    );
+    assert_eq!(banner_level(&[c("ok"), c("warn")]), Some("warn"));
+    assert_eq!(
+        banner_level(&[c("warn"), c("error"), c("ok")]),
+        Some("error")
+    );
+    assert_eq!(
+        banner_level(&[c("ok"), c("new-level")]),
+        Some("error"),
+        "unknown counts as error"
+    );
+}
+
+#[wasm_bindgen_test]
+fn the_log_filter_keeps_lines_at_least_as_severe() {
+    use skadi_web::api::LogLine;
+    use skadi_web::system::{LOG_FILTERS, filter_log, log_level_class};
+    let l = |level: &str| LogLine {
+        level: level.into(),
+        message: level.into(),
+        ..Default::default()
+    };
+    let lines = vec![l("ERROR"), l("WARN"), l("INFO"), l("DEBUG"), l("TRACE")];
+    let kept = |min: &str| -> Vec<String> {
+        filter_log(&lines, min)
+            .into_iter()
+            .map(|l| l.level)
+            .collect()
+    };
+    assert_eq!(kept("TRACE").len(), 5);
+    assert_eq!(kept("INFO"), vec!["ERROR", "WARN", "INFO"]);
+    assert_eq!(kept("WARN"), vec!["ERROR", "WARN"]);
+    assert_eq!(kept("ERROR"), vec!["ERROR"]);
+    // An unknown level is never hidden.
+    assert_eq!(filter_log(&[l("FATAL")], "ERROR").len(), 1);
+    // Every filter option is a level the filter knows.
+    for (min, _) in LOG_FILTERS {
+        assert!(!kept(min).is_empty(), "{min}");
+    }
+    assert_eq!(log_level_class("ERROR"), "bad");
+    assert_eq!(log_level_class("warn"), "warn");
+    assert_eq!(log_level_class("DEBUG"), "muted");
+}
+
+#[wasm_bindgen_test]
+fn system_status_parses_with_and_without_a_commit() {
+    use skadi_web::api::SystemStatus;
+    let with: SystemStatus = serde_json::from_value(json!({
+        "version": "0.1.4", "commit": "0fd05ce3cf9d", "startTime": "2026-10-07T05:00:00+00:00",
+        "uptimeSeconds": 61, "database": "postgres", "libraryRoot": "/data",
+        "domains": [{"name": "movies", "enabled": true, "workerFailures": 2}]
+    }))
+    .unwrap();
+    assert_eq!(with.commit.as_deref(), Some("0fd05ce3cf9d"));
+    assert_eq!(with.domains[0].worker_failures, 2);
+    let without: SystemStatus = serde_json::from_value(json!({
+        "version": "0.1.3", "startTime": "t", "uptimeSeconds": 1,
+        "database": "sqlite", "libraryRoot": ""
+    }))
+    .unwrap();
+    assert_eq!(without.commit, None);
+    let task: skadi_web::api::SystemTask = serde_json::from_value(json!({
+        "name": "rss-sweep", "intervalSeconds": 900, "what": "rss"
+    }))
+    .unwrap();
+    assert_eq!(task.last_run, None);
+    assert_eq!(task.next_run, None);
 }

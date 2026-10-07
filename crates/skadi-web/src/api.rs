@@ -1186,7 +1186,7 @@ pub async fn unblock_release(id: &str) -> Result<(), ApiError> {
 
 /// One daemon health check (mirror of skadi-api `CheckResult`; `name`,
 /// `status` and `detail` are its legacy projection).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct HealthCheck {
     /// The check id (`database`, `indexers`, `indexer:<name>`, …).
     pub name: String,
@@ -1197,6 +1197,15 @@ pub struct HealthCheck {
     /// the severity model.
     #[serde(default)]
     pub severity: Option<String>,
+    /// Human name for the check (SKADI-T-0679). Absent from an older daemon.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// How to fix it; set for `warn` and `error`.
+    #[serde(default)]
+    pub remediation: Option<String>,
+    /// RFC 3339 time of the last run; `None` while the check is pending.
+    #[serde(default)]
+    pub checked_at: Option<String>,
 }
 
 impl HealthCheck {
@@ -1237,6 +1246,113 @@ pub async fn health_checks() -> Result<Vec<HealthCheck>, ApiError> {
         return Err(ApiError(format!("health checks -> HTTP {}", resp.status())));
     }
     Ok(resp.json::<Vec<HealthCheck>>().await?)
+}
+
+/// `POST /health/checks/run` — run every check now and return them all, as
+/// `GET /health/checks` would (SKADI-T-0680). Admin only.
+pub async fn run_health_checks() -> Result<Vec<HealthCheck>, ApiError> {
+    let resp = post(&format!("{API_BASE}/health/checks/run"))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "run health checks -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<Vec<HealthCheck>>().await?)
+}
+
+/// One domain in `GET /system/status`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemDomain {
+    pub name: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub worker_failures: u64,
+}
+
+/// `GET /system/status` (mirror of skadi-api `SystemStatus`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemStatus {
+    pub version: String,
+    /// The build commit (SKADI-T-0684): a git sha, or `unknown`. Absent from a
+    /// daemon older than the field.
+    #[serde(default)]
+    pub commit: Option<String>,
+    pub start_time: String,
+    pub uptime_seconds: i64,
+    /// `postgres` or `sqlite`.
+    pub database: String,
+    pub library_root: String,
+    #[serde(default)]
+    pub domains: Vec<SystemDomain>,
+}
+
+/// One recurring job in `GET /system/task`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemTask {
+    pub name: String,
+    pub interval_seconds: u64,
+    #[serde(default)]
+    pub what: String,
+    /// Empty until the daemon records task runs (SKADI-T-0440).
+    #[serde(default)]
+    pub last_run: Option<String>,
+    #[serde(default)]
+    pub next_run: Option<String>,
+}
+
+/// One line of the daemon's log ring (`GET /log`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogLine {
+    pub time: String,
+    /// `ERROR` | `WARN` | `INFO` | `DEBUG` | `TRACE`.
+    pub level: String,
+    #[serde(default)]
+    pub target: String,
+    pub message: String,
+}
+
+/// `GET /system/status` — version, commit, uptime, database, library root.
+pub async fn system_status() -> Result<SystemStatus, ApiError> {
+    let resp = get(&format!("{API_BASE}/system/status"))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("system status -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<SystemStatus>().await?)
+}
+
+/// `GET /system/task` — the recurring jobs and their cadence.
+pub async fn system_tasks() -> Result<Vec<SystemTask>, ApiError> {
+    let resp = get(&format!("{API_BASE}/system/task"))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("system tasks -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<Vec<SystemTask>>().await?)
+}
+
+/// `GET /log?pageSize=n` — the newest `page_size` log lines, newest first.
+pub async fn system_log(page_size: usize) -> Result<Vec<LogLine>, ApiError> {
+    let resp = get(&format!("{API_BASE}/log?pageSize={page_size}"))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("log -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<Vec<LogLine>>().await?)
 }
 
 /// `GET /root-folders` — per root folder free/total bytes + writability.

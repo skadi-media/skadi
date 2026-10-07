@@ -86,6 +86,9 @@ async fn system_log(
     Json(state.logs.recent(limit))
 }
 
+/// The commit `build.rs` embedded (SKADI-T-0684).
+pub const BUILD_COMMIT: &str = env!("SKADI_BUILD_COMMIT");
+
 /// When this process started, for the uptime `/system/status` reports.
 static STARTED_AT: std::sync::LazyLock<chrono::DateTime<chrono::Utc>> =
     std::sync::LazyLock::new(chrono::Utc::now);
@@ -96,6 +99,9 @@ static STARTED_AT: std::sync::LazyLock<chrono::DateTime<chrono::Utc>> =
 #[serde(rename_all = "camelCase")]
 struct SystemStatus {
     version: &'static str,
+    /// The git commit this binary was built from (SKADI-T-0684), or `unknown`
+    /// when the build had neither `SKADI_BUILD_COMMIT` nor a git checkout.
+    commit: &'static str,
     start_time: String,
     uptime_seconds: i64,
     /// `postgres` or `sqlite`, derived from the configured URL scheme.
@@ -149,6 +155,7 @@ async fn system_status(State(state): State<Arc<AppState>>) -> Result<impl IntoRe
     let started = *STARTED_AT;
     Ok(Json(SystemStatus {
         version: env!("CARGO_PKG_VERSION"),
+        commit: BUILD_COMMIT,
         start_time: started.to_rfc3339(),
         uptime_seconds: chrono::Utc::now()
             .signed_duration_since(started)

@@ -98,7 +98,12 @@ COPY . .
 RUN cd crates/skadi-web && trunk build --release
 # 2) Compile the daemon with the UI embedded (rust-embed reads ../skadi-web/dist
 #    at compile time, so this MUST run after the trunk build above).
-RUN cargo build --release -p skadi-cli --features embed-ui
+#    The commit for `GET /system/status` (SKADI-T-0684) comes in as a build
+#    arg, because `.git/` is not in the build context. Left empty, the binary
+#    reports `unknown`. Declared here, not at the top, so a new commit does not
+#    invalidate the trunk layer above.
+ARG SKADI_BUILD_COMMIT=
+RUN SKADI_BUILD_COMMIT="${SKADI_BUILD_COMMIT}" cargo build --release -p skadi-cli --features embed-ui
 
 # --- runtime stage -------------------------------------------------------
 FROM debian:bookworm-slim

@@ -730,3 +730,54 @@ async fn only_the_admin_can_force_a_health_check_run() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+/// SKADI-T-0684: the web System page reads these four endpoints. The page is
+/// drawn for the admin only, and the API must agree: every other role gets a
+/// 403 on each (SKADI-T-0639, "UI and API agree"). Signed in as each non-admin
+/// role, because the admin skips `path_allowed`.
+#[tokio::test]
+async fn the_system_page_endpoints_are_the_admins_alone() {
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let uris = [
+        "/api/v1/system/status",
+        "/api/v1/system/task",
+        "/api/v1/log?pageSize=50",
+        "/api/v1/health/checks",
+    ];
+    for (name, role) in [("Kim", "kid"), ("Jo", "member"), ("Cam", "contributor")] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            Some("operator-token"),
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        let tok = created["token"].as_str().unwrap().to_string();
+        for uri in uris {
+            let (st, body) = call(&state, "GET", uri, Some(&tok), None).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "GET {uri} as {role}: {body}");
+            assert_eq!(body["message"], "not allowed on this account");
+        }
+    }
+    for uri in uris {
+        let (st, body) = call(&state, "GET", uri, Some("operator-token"), None).await;
+        assert_eq!(st, StatusCode::OK, "GET {uri} as admin: {body}");
+    }
+    // The status header shows the build commit: a git sha here (the tests
+    // build from a checkout), never an empty string.
+    let (_, status) = call(
+        &state,
+        "GET",
+        "/api/v1/system/status",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    let commit = status["commit"].as_str().expect("commit is a string");
+    assert!(!commit.is_empty(), "{status}");
+    assert_eq!(commit, skadi_api::diagnostics::BUILD_COMMIT);
+}

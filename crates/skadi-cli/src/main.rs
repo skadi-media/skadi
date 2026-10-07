@@ -810,6 +810,14 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
     Arc::get_mut(&mut state)
         .expect("AppState not yet shared")
         .logs = logs;
+    // The domains migrate into the store's database; the `database` health
+    // check compares the applied schema with the store's AND these sets
+    // (SKADI-T-0682).
+    Arc::get_mut(&mut state)
+        .expect("AppState not yet shared")
+        .domain_migrations = skadi_api::bootstrap::domain_migration_versions(&store, &registry)
+        .context("read the domain migration versions")?
+        .into();
 
     // Import-list providers (SKADI-T-0511, SKADI-T-0564).
     {

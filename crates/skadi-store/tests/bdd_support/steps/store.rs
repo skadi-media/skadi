@@ -392,3 +392,94 @@ async fn all_written(w: &mut World, n: usize) {
         .count();
     assert_eq!(keys, n);
 }
+
+// ---- applied schema version vs the binary (SKADI-T-0682) --------------------------
+
+/// Run one statement on the active backend (test fixtures only).
+async fn execute(store: &Store, sql: String) {
+    store
+        .with_conn(move |conn| {
+            conn.dispatch(
+                |pg| diesel::sql_query(&sql).execute(pg),
+                |sq| diesel::sql_query(&sql).execute(sq),
+            )
+            .map_err(|e| skadi_core::AppError::Internal(e.to_string()))
+        })
+        .await
+        .expect("fixture statement");
+}
+
+async fn schema_status(w: &World) -> skadi_store::SchemaStatus {
+    w.store().schema_status(&[]).await.expect("schema status")
+}
+
+#[then("the schema status matches the embedded migrations")]
+async fn schema_matches(w: &mut World) {
+    let s = schema_status(w).await;
+    assert!(!s.embedded.is_empty(), "no embedded migrations: {s:?}");
+    assert_eq!(s.applied, s.embedded, "{s:?}");
+    assert!(s.pending().is_empty() && s.unknown().is_empty(), "{s:?}");
+}
+
+#[then("the schema status lists every embedded migration as pending")]
+async fn schema_all_pending(w: &mut World) {
+    let s = schema_status(w).await;
+    assert!(s.applied.is_empty(), "{s:?}");
+    assert_eq!(s.pending().len(), s.embedded.len(), "{s:?}");
+}
+
+#[when("the record of the newest embedded migration is removed from the database")]
+async fn drop_newest_record(w: &mut World) {
+    let s = schema_status(w).await;
+    let newest = s
+        .latest_embedded()
+        .expect("an embedded migration")
+        .to_string();
+    w.notes.push(newest.clone());
+    execute(
+        &w.store(),
+        format!(
+            "DELETE FROM {} WHERE version = '{newest}'",
+            skadi_store::MIGRATIONS_TABLE
+        ),
+    )
+    .await;
+}
+
+#[when(expr = "the database records the migration {string} that this binary does not embed")]
+async fn record_unknown(w: &mut World, version: String) {
+    execute(
+        &w.store(),
+        format!(
+            "INSERT INTO {} (version) VALUES ('{version}')",
+            skadi_store::MIGRATIONS_TABLE
+        ),
+    )
+    .await;
+}
+
+#[then("the schema status lists the newest embedded migration as pending")]
+async fn newest_pending(w: &mut World) {
+    let s = schema_status(w).await;
+    let newest = s.latest_embedded().expect("an embedded migration");
+    assert_eq!(s.pending(), vec![newest], "{s:?}");
+}
+
+#[then(expr = "the schema status lists {string} as unknown")]
+async fn listed_unknown(w: &mut World, version: String) {
+    let s = schema_status(w).await;
+    assert_eq!(s.unknown(), vec![version.as_str()], "{s:?}");
+    assert_eq!(s.latest_applied(), Some(version.as_str()), "{s:?}");
+}
+
+#[then("the schema status lists no unknown migration")]
+async fn no_unknown(w: &mut World) {
+    let s = schema_status(w).await;
+    assert!(s.unknown().is_empty(), "{s:?}");
+}
+
+#[then("the schema status lists no pending migration")]
+async fn no_pending(w: &mut World) {
+    let s = schema_status(w).await;
+    assert!(s.pending().is_empty(), "{s:?}");
+}

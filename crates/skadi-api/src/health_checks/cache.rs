@@ -226,6 +226,7 @@ mod tests {
                 domains: vec![],
                 worker_failures: Arc::default(),
                 disk_probe: super::super::statvfs_probe(),
+                domain_migrations: Arc::from(Vec::new()),
             },
         ))
     }

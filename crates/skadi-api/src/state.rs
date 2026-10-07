@@ -85,6 +85,12 @@ pub struct AppState {
     /// How the `disk-space` health check measures the library root
     /// (SKADI-T-0681): `statvfs`, or a fixed fill level in a test.
     pub disk_probe: crate::health_checks::DiskProbe,
+    /// The migration versions of the registered domains, for the active
+    /// backend (SKADI-T-0682). The domains migrate into the store's database, so
+    /// the `database` health check needs them to tell a domain migration from
+    /// one this binary does not know. Empty = no domain migrations expected.
+    /// The daemon fills it from [`crate::bootstrap::domain_migration_versions`].
+    pub domain_migrations: Arc<[String]>,
 }
 
 impl AppState {
@@ -169,6 +175,7 @@ impl AppState {
                 crate::health_checks::HealthRegistry::builtin(),
             )),
             disk_probe: crate::health_checks::statvfs_probe(),
+            domain_migrations: Arc::from(Vec::new()),
         })
     }
 }

@@ -150,6 +150,9 @@ pub struct World {
     /// The fill level, in percent, the disk-space check reads for the library
     /// root (`AppState::disk_probe`); `None` = the real `statvfs`.
     pub disk_used_percent: Option<u32>,
+    /// The registered domains' migration versions the daemon expects
+    /// (`AppState::domain_migrations`); `None` = none.
+    pub domain_migrations: Option<Vec<String>>,
 }
 
 /// Sets an env var and puts back the prior value on drop, so a failing
@@ -274,6 +277,11 @@ impl World {
                 Arc::get_mut(&mut state)
                     .expect("the AppState was just built")
                     .disk_probe = Arc::new(move |_| Some((free, total)));
+            }
+            if let Some(versions) = self.domain_migrations.clone() {
+                Arc::get_mut(&mut state)
+                    .expect("the AppState was just built")
+                    .domain_migrations = versions.into();
             }
             self.api = Some(Api(state));
         }

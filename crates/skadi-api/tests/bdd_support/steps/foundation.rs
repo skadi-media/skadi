@@ -94,7 +94,7 @@ impl skadi_api::ProviderReloader for FailingReloader {
     }
 }
 
-fn probe(name: &'static str, mode: WorkerMode) -> Arc<ProbeModule> {
+pub(crate) fn probe(name: &'static str, mode: WorkerMode) -> Arc<ProbeModule> {
     Arc::new(ProbeModule {
         name,
         mode,

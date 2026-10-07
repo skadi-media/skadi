@@ -41,6 +41,24 @@ const FORMATS_SEEDED_KEY: &str = "bootstrap.default_formats_seen";
 /// hunter's runner can connect at startup.
 const CLOACINA_DATABASE: &str = "cloacina";
 
+/// The migration versions of every registered domain, for the backend of
+/// `store` (SKADI-T-0682). [`bootstrap`] applies these sets into the store's
+/// database; the `database` health check (`AppState::domain_migrations`) needs
+/// them to compare the applied schema with this binary.
+pub fn domain_migration_versions(
+    store: &Store,
+    registry: &[Arc<dyn DomainModule>],
+) -> Result<Vec<String>> {
+    let mut versions = Vec::new();
+    for module in registry {
+        versions.extend(
+            store.migration_versions(module.sqlite_migrations(), module.postgres_migrations())?,
+        );
+    }
+    versions.sort();
+    Ok(versions)
+}
+
 /// Bring the database up to date for the configured backend and domain set.
 ///
 /// 1. On Postgres, ensure the `cloacina` database exists (needs `CREATEDB`).

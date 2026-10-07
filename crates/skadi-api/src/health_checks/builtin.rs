@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
-use skadi_store::{DomainStateRepo, SettingsRepo, Store};
+use skadi_store::{DomainStateRepo, SchemaStatus, SettingsRepo, Store};
 
 use super::{CheckContext, CheckResult, CheckSource, DiskProbe, HealthCheck, Outcome, Severity};
 use crate::diagnostics::{
@@ -110,14 +110,59 @@ impl HealthCheck for DaemonCheck {
 
 // ---- database ------------------------------------------------------------------
 
-/// Database reachability: a cheap read that touches the connection.
+/// Database reachability, then the schema version (SKADI-T-0682): the
+/// migrations the database has applied must be exactly the ones this binary
+/// embeds. A half-applied upgrade (behind) or an older image started against a
+/// database that a newer one migrated (ahead) otherwise shows up only as odd
+/// query errors.
+///
+/// The domains migrate into the same database, so the expected set is the
+/// store's migrations plus `domain_migrations`.
 pub struct DatabaseCheck {
     store: Store,
+    domain_migrations: Arc<[String]>,
 }
 
 impl DatabaseCheck {
-    pub fn new(store: Store) -> Self {
-        DatabaseCheck { store }
+    pub fn new(store: Store, domain_migrations: Arc<[String]>) -> Self {
+        DatabaseCheck {
+            store,
+            domain_migrations,
+        }
+    }
+
+    /// The outcome for a reachable database with this schema status. Pure, so
+    /// the behind and ahead texts are tested without a database.
+    pub fn schema_outcome(status: &SchemaStatus) -> Outcome {
+        let unknown = status.unknown();
+        if !unknown.is_empty() {
+            return Outcome::error(
+                format!(
+                    "The database is newer than this binary: it has {} migration(s) that this binary does not know ({}). This binary expects schema version {}.",
+                    unknown.len(),
+                    unknown.join(", "),
+                    status.latest_embedded().unwrap_or("none"),
+                ),
+                "Run the Skadi version that migrated this database, or a newer one. Do not run an older image against it; skadi cannot undo a migration that it does not know.",
+            );
+        }
+        let pending = status.pending();
+        if !pending.is_empty() {
+            return Outcome::error(
+                format!(
+                    "Pending migrations: the database is at schema version {}, but this binary expects {} ({} not applied: {}).",
+                    status.latest_applied().unwrap_or("none"),
+                    status.latest_embedded().unwrap_or("none"),
+                    pending.len(),
+                    pending.join(", "),
+                ),
+                "Restart the daemon: it applies the pending migrations at startup. If they fail again, the daemon log has the migration error.",
+            );
+        }
+        Outcome::ok(format!(
+            "reachable, schema version {}",
+            status.latest_applied().unwrap_or("none")
+        ))
     }
 }
 
@@ -130,12 +175,18 @@ impl HealthCheck for DatabaseCheck {
         "Database".into()
     }
     async fn run(&self) -> Outcome {
-        match self.store.list_settings("profiles").await {
-            Ok(_) => Outcome::ok("reachable"),
-            Err(e) => Outcome::error(
+        let unreachable = |e: skadi_core::AppError| {
+            Outcome::error(
                 format!("{e}"),
                 "Check that the database server is running and that SKADI_DATABASE_URL points at it; the daemon log has the connection error.",
-            ),
+            )
+        };
+        if let Err(e) = self.store.list_settings("profiles").await {
+            return unreachable(e);
+        }
+        match self.store.schema_status(&self.domain_migrations).await {
+            Ok(status) => Self::schema_outcome(&status),
+            Err(e) => unreachable(e),
         }
     }
 }
@@ -967,5 +1018,55 @@ mod tests {
         assert_eq!(out[0].severity, Severity::Error, "no indexer at all");
         assert!(out[0].checked_at.is_some());
         assert_eq!(out[1].severity, Severity::Pending);
+    }
+
+    fn schema(applied: &[&str], embedded: &[&str]) -> SchemaStatus {
+        SchemaStatus {
+            applied: applied.iter().map(|s| (*s).to_string()).collect(),
+            embedded: embedded.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_database_at_the_binarys_schema_is_ok() {
+        let o = DatabaseCheck::schema_outcome(&schema(&["1", "2"], &["1", "2"]));
+        assert_eq!(o.severity, Severity::Ok);
+        assert!(o.message.contains("schema version 2"), "{}", o.message);
+    }
+
+    #[test]
+    fn a_database_behind_the_binary_reports_pending_migrations() {
+        let o = DatabaseCheck::schema_outcome(&schema(&["1"], &["1", "2", "3"]));
+        assert_eq!(o.severity, Severity::Error);
+        assert!(o.message.starts_with("Pending migrations"), "{}", o.message);
+        assert!(o.message.contains("at schema version 1"), "{}", o.message);
+        assert!(o.message.contains("expects 3"), "{}", o.message);
+        assert!(o.message.contains("2 not applied: 2, 3"), "{}", o.message);
+        assert!(o.remediation.unwrap().contains("Restart the daemon"));
+    }
+
+    #[test]
+    fn a_database_ahead_of_the_binary_says_it_is_newer() {
+        let o = DatabaseCheck::schema_outcome(&schema(&["1", "2", "9"], &["1", "2"]));
+        assert_eq!(o.severity, Severity::Error);
+        assert!(
+            o.message
+                .starts_with("The database is newer than this binary"),
+            "{}",
+            o.message
+        );
+        assert!(o.message.contains("(9)"), "{}", o.message);
+        assert!(o.remediation.unwrap().contains("older image"));
+    }
+
+    #[test]
+    fn a_never_migrated_database_is_behind() {
+        let o = DatabaseCheck::schema_outcome(&schema(&[], &["1"]));
+        assert_eq!(o.severity, Severity::Error);
+        assert!(
+            o.message.contains("at schema version none"),
+            "{}",
+            o.message
+        );
     }
 }

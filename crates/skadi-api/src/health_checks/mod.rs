@@ -218,6 +218,8 @@ pub struct CheckContext {
     /// How the disk-space check measures the library root
     /// (`AppState::disk_probe`; tests give it a fixed fill level).
     pub disk_probe: DiskProbe,
+    /// The registered domains' migration versions (`AppState::domain_migrations`).
+    pub domain_migrations: Arc<[String]>,
 }
 
 impl CheckContext {
@@ -232,6 +234,7 @@ impl CheckContext {
             domains: state.domains.clone(),
             worker_failures: state.worker_failures.clone(),
             disk_probe: state.disk_probe.clone(),
+            domain_migrations: state.domain_migrations.clone(),
         })
     }
 }
@@ -375,7 +378,10 @@ impl HealthRegistry {
         Self::new()
             .with(single(|_| Arc::new(DaemonCheck)))
             .with(single(|ctx| {
-                Arc::new(DatabaseCheck::new(ctx.store.clone()))
+                Arc::new(DatabaseCheck::new(
+                    ctx.store.clone(),
+                    ctx.domain_migrations.clone(),
+                ))
             }))
             .with(Arc::new(DomainChecks))
             .with(single(|ctx| Arc::new(RootCheck::new(ctx.store.clone()))))
@@ -540,6 +546,7 @@ mod tests {
             domains: vec![],
             worker_failures: Arc::default(),
             disk_probe: statvfs_probe(),
+            domain_migrations: Arc::from(Vec::new()),
         };
         let registry = HealthRegistry::new()
             .with(Arc::new(FixedSource(vec![Arc::new(Fixed(

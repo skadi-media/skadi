@@ -237,6 +237,106 @@ async fn indexer_search_history(w: &mut World, failed: u32, total: u32, name: St
     }
 }
 
+// ---- schema version (SKADI-T-0682) ----------------------------------------------
+
+/// Run one fixture statement on the scenario store's backend.
+async fn execute(w: &mut World, sql: String) {
+    w.store()
+        .await
+        .with_conn(move |conn| {
+            conn.dispatch(
+                |pg| diesel::sql_query(&sql).execute(pg),
+                |sq| diesel::sql_query(&sql).execute(sq),
+            )
+            .map_err(|e| skadi_core::AppError::Internal(e.to_string()))
+        })
+        .await
+        .expect("fixture statement");
+}
+
+/// A half-applied upgrade: the record of the newest migration is gone, so the
+/// database is behind this binary.
+#[given("the database has not applied the newest embedded migration")]
+async fn newest_migration_missing(w: &mut World) {
+    let status = w
+        .store()
+        .await
+        .schema_status(&[])
+        .await
+        .expect("schema status");
+    let newest = status.latest_embedded().expect("an embedded migration");
+    let sql = format!(
+        "DELETE FROM {} WHERE version = '{newest}'",
+        skadi_store::MIGRATIONS_TABLE
+    );
+    execute(w, sql).await;
+}
+
+/// An older binary against a database that a newer one migrated.
+#[given(expr = "the database has applied the migration {string} that this binary does not embed")]
+async fn unknown_migration_applied(w: &mut World, version: String) {
+    let sql = format!(
+        "INSERT INTO {} (version) VALUES ('{version}')",
+        skadi_store::MIGRATIONS_TABLE
+    );
+    execute(w, sql).await;
+}
+
+/// Apply the migration set of a probe domain (`foundation::ProbeModule`) to
+/// the scenario database, as `bootstrap` does for each registered domain.
+async fn apply_probe_domain(
+    w: &mut World,
+    name: &str,
+) -> Vec<std::sync::Arc<dyn skadi_core::DomainModule>> {
+    use diesel_migrations::MigrationHarness;
+    use skadi_core::DomainModule;
+    assert_eq!(
+        name, "probe",
+        "only the probe domain has a migration set here"
+    );
+    let probe = crate::bdd_support::steps::foundation::probe(
+        "probe",
+        crate::bdd_support::steps::foundation::WorkerMode::WaitForCancel,
+    );
+    let url = w.store().await.url().to_string();
+    let module = probe.clone();
+    tokio::task::spawn_blocking(move || {
+        if url.starts_with("postgres") {
+            let mut conn = diesel::PgConnection::establish(&url).expect("connect postgres");
+            conn.run_pending_migrations(module.postgres_migrations())
+                .map(|_| ())
+                .expect("domain migrations");
+        } else {
+            let path = url.strip_prefix("sqlite://").unwrap_or(&url).to_string();
+            let mut conn = diesel::SqliteConnection::establish(&path).expect("open sqlite");
+            conn.run_pending_migrations(module.sqlite_migrations())
+                .map(|_| ())
+                .expect("domain migrations");
+        }
+    })
+    .await
+    .expect("migration task");
+    vec![probe as std::sync::Arc<dyn DomainModule>]
+}
+
+#[given(expr = "the registered domain {string} has applied its migrations to the database")]
+async fn registered_domain_migrated(w: &mut World, name: String) {
+    let registry = apply_probe_domain(w, &name).await;
+    let store = w.store().await;
+    let versions = skadi_api::bootstrap::domain_migration_versions(&store, &registry)
+        .expect("domain migration versions");
+    assert!(!versions.is_empty(), "the probe domain embeds no migration");
+    w.domain_migrations = Some(versions);
+}
+
+#[given(
+    expr = "the migrations of a domain {string} that this binary does not register are applied to the database"
+)]
+async fn unregistered_domain_migrated(w: &mut World, name: String) {
+    apply_probe_domain(w, &name).await;
+    w.domain_migrations = None;
+}
+
 // ---- workers -------------------------------------------------------------------
 
 /// The failure counts that `Supervisor::reap_finished` publishes into

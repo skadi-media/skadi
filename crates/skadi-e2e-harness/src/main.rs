@@ -277,7 +277,7 @@ async fn main() {
         bind_addr: format!("127.0.0.1:{port}").parse().unwrap(),
         bearer_token: None,
     };
-    let state = AppState::new_full(
+    let mut state = AppState::new_full(
         config,
         Some(store.clone()),
         vec![
@@ -295,6 +295,23 @@ async fn main() {
         // book detail page + `GET /books`, not the unified `/library`.
         vec![movies_library],
     );
+    // The domain sets applied above, so the `database` health check expects
+    // them (SKADI-T-0682).
+    let mut domain_migrations = store
+        .migration_versions(SQLITE_MIGRATIONS, skadi_movies::POSTGRES_MIGRATIONS)
+        .expect("movies migration versions");
+    domain_migrations.extend(
+        store
+            .migration_versions(
+                skadi_audiobooks::SQLITE_MIGRATIONS,
+                skadi_audiobooks::POSTGRES_MIGRATIONS,
+            )
+            .expect("audiobooks migration versions"),
+    );
+    Arc::get_mut(&mut state)
+        .expect("AppState not yet shared")
+        .domain_migrations = domain_migrations.into();
+    let state = state;
     let routes = HttpModule::routes(&movies_http);
     let ab_routes = HttpModule::routes(&audiobooks_http);
 

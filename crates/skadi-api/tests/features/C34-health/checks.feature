@@ -87,6 +87,46 @@ Feature: C34 health check model, cache, warnings and config sanity
     When the client requests GET "/api/v1/health/checks"
     Then the health check "database" was checked after "first"
 
+  # ---- schema version (SKADI-T-0682) ---------------------------------------
+  # These run on the backend of the scenario store: SQLite by default, Postgres
+  # when SKADI_TEST_DATABASE_URL is set.
+
+  @C34 @passing
+  Scenario: a freshly migrated database matches the schema version of the binary
+    When the health checks have run
+    Then the health check "database" has severity "ok"
+    And the health check "database" message contains "schema version"
+
+  @C34 @passing
+  Scenario: a database without the newest migration reports pending migrations
+    Given the database has not applied the newest embedded migration
+    When the health checks have run
+    Then the health check "database" has severity "error"
+    And the health check "database" message contains "Pending migrations"
+    And the health check "database" remediation contains "Restart the daemon"
+
+  @C34 @passing
+  Scenario: a database migrated by a newer binary reports that it is newer
+    Given the database has applied the migration "29991231000000" that this binary does not embed
+    When the health checks have run
+    Then the health check "database" has severity "error"
+    And the health check "database" message contains "The database is newer than this binary"
+    And the health check "database" message contains "29991231000000"
+    And the health check "database" remediation contains "older image"
+
+  @C34 @passing
+  Scenario: the migrations of a registered domain are part of the expected schema
+    Given the registered domain "probe" has applied its migrations to the database
+    When the health checks have run
+    Then the health check "database" has severity "ok"
+
+  @C34 @passing
+  Scenario: domain migrations that no registered domain embeds make the database newer
+    Given the migrations of a domain "probe" that this binary does not register are applied to the database
+    When the health checks have run
+    Then the health check "database" has severity "error"
+    And the health check "database" message contains "The database is newer than this binary"
+
   # ---- free space (SKADI-T-0681) --------------------------------------------
 
   @C34 @passing

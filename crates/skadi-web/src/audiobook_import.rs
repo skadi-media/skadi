@@ -468,6 +468,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                                 class="btn-link import-find"
                                 disabled=in_lib
                                 title="Search the Audible catalog"
+                                aria-label="Search the Audible catalog"
                                 on:click=toggle_picker
                             >
                                 "🔍"
@@ -476,6 +477,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                                 class="tmdb-input"
                                 type="text"
                                 placeholder="B08G9PRS1K"
+                                aria-label="ASIN"
                                 prop:value=row.asin.clone()
                                 disabled=in_lib
                                 on:change=on_asin
@@ -595,7 +597,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                         </colgroup>
                         <thead>
                             <tr>
-                                <th></th>
+                                <th><span class="sr-only">"Import"</span></th>
                                 <th>"Folder / file"</th>
                                 <th>"Parsed"</th>
                                 <th>"Kind"</th>

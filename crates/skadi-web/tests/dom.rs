@@ -1730,3 +1730,239 @@ async fn a_provider_form_refuses_a_blank_required_field_before_it_saves() {
     drop(handle);
     host.remove();
 }
+
+// --- Accessibility baseline (SKADI-T-0700) -----------------------------------
+//
+// The keyboard-only pass add → grab → watch → settings runs against the real
+// UI in web-e2e/tests/a11y.spec.ts (with axe-core). These tests pin the pieces
+// that pass relies on, one per step where a step has a mountable piece.
+
+use skadi_web::{MAIN_ID, SCROLL_LOCK_CLASS};
+
+fn key_mod(target: &web_sys::EventTarget, key: &str, ctrl: bool) -> bool {
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_key(key);
+    init.set_ctrl_key(ctrl);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let ev = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap();
+    target.dispatch_event(&ev).unwrap();
+    ev.default_prevented()
+}
+
+fn is_active(el: &HtmlElement) -> bool {
+    let el: &web_sys::Element = el.as_ref();
+    active_element().is_some_and(|a| a == *el)
+}
+
+fn mount_frame(
+    host: &HtmlElement,
+) -> leptos::mount::UnmountHandle<impl leptos::tachys::view::Mountable> {
+    mount_to(host.clone(), || {
+        view! {
+            <Router>
+                <AppFrame>
+                    <p class="page">"Page"</p>
+                    <input type="text" class="lib-filter-input" aria-label="Filter"/>
+                    <button type="button" class="opener">"Opener"</button>
+                </AppFrame>
+            </Router>
+        }
+    })
+}
+
+#[wasm_bindgen_test]
+async fn the_skip_link_is_the_first_stop_and_moves_focus_to_main() {
+    let host = host();
+    let _handle = mount_frame(&host);
+    settle_dom().await;
+    let first = find(&host, "a[href], button, input, select, [tabindex='0']");
+    assert!(
+        first.class_list().contains("skip-link"),
+        "first Tab stop is the skip link"
+    );
+    assert_eq!(first.text_content().as_deref(), Some("Skip to content"));
+    let main = find(&host, &format!("main#{MAIN_ID}"));
+    assert_eq!(
+        attr(&main, "tabindex").as_deref(),
+        Some("-1"),
+        "main takes focus but no Tab stop"
+    );
+    let before = web_sys::window().unwrap().location().href().unwrap();
+    first.click();
+    settle_dom().await;
+    assert!(is_active(&main), "the skip link puts the focus in <main>");
+    assert_eq!(
+        web_sys::window().unwrap().location().href().unwrap(),
+        before,
+        "the skip link is not a navigation"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn the_open_drawer_locks_the_page_scroll_and_unmount_releases_it() {
+    let root = document().document_element().unwrap();
+    let host = host();
+    let handle = mount_frame(&host);
+    settle_dom().await;
+    let menu = find(&host, "button.menu-btn");
+    assert!(!root.class_list().contains(SCROLL_LOCK_CLASS));
+    menu.click();
+    settle_dom().await;
+    assert!(
+        root.class_list().contains(SCROLL_LOCK_CLASS),
+        "open drawer locks the page"
+    );
+    menu.click();
+    settle_dom().await;
+    assert!(
+        !root.class_list().contains(SCROLL_LOCK_CLASS),
+        "closed drawer unlocks it"
+    );
+    menu.click();
+    settle_dom().await;
+    drop(handle);
+    settle_dom().await;
+    assert!(
+        !root.class_list().contains(SCROLL_LOCK_CLASS),
+        "unmount never leaves the page locked"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn slash_focuses_the_search_field_but_not_while_typing_or_with_ctrl() {
+    let host = host();
+    let _handle = mount_frame(&host);
+    settle_dom().await;
+    let filter = find(&host, ".lib-filter-input");
+    let opener = find(&host, "button.opener");
+    opener.focus().unwrap();
+    // Ctrl+/ is not the shortcut.
+    assert!(!key_mod(opener.as_ref(), "/", true));
+    assert!(is_active(&opener));
+    assert!(
+        key_mod(opener.as_ref(), "/", false),
+        "the shortcut takes the key"
+    );
+    assert!(is_active(&filter), "/ moved the focus to the filter field");
+    // In a text field `/` and `?` are text.
+    assert!(!key_mod(filter.as_ref(), "/", false));
+    assert!(!key_mod(filter.as_ref(), "?", false));
+    settle_dom().await;
+    assert_eq!(count(&host, "[role=dialog]"), 0);
+}
+
+#[wasm_bindgen_test]
+async fn question_mark_lists_the_shortcuts_and_esc_gives_focus_back() {
+    let host = host();
+    let _handle = mount_frame(&host);
+    settle_dom().await;
+    let opener = find(&host, "button.opener");
+    opener.focus().unwrap();
+    key_mod(opener.as_ref(), "?", false);
+    settle_dom().await;
+    let dialog = find(&host, &format!("#{}", skadi_web::shortcuts::HELP_ID));
+    assert_eq!(attr(&dialog, "role").as_deref(), Some("dialog"));
+    assert_eq!(attr(&dialog, "aria-modal").as_deref(), Some("true"));
+    let text = dialog.text_content().unwrap();
+    for (k, _) in skadi_web::shortcuts::SHORTCUTS {
+        assert!(text.contains(k), "the list names {k}");
+    }
+    let close = find(&dialog, "button");
+    assert!(is_active(&close), "Close has the first focus");
+    // Tab stays in the dialog.
+    key(&close, "Tab", false);
+    assert!(is_active(&close));
+    key(&close, "Escape", false);
+    settle_dom().await;
+    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert!(is_active(&opener), "focus is back where it was");
+}
+
+#[wasm_bindgen_test]
+async fn enter_and_space_activate_a_non_button_control_only_on_its_own_key() {
+    let hits = RwSignal::new(0);
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! {
+            <div class="ctl" role="button" tabindex="0"
+                on:keydown=move |ev| {
+                    if skadi_web::a11y::activates(&ev) {
+                        hits.update(|n| *n += 1);
+                    }
+                }>
+                <button type="button" class="inner">"Inner"</button>
+            </div>
+        }
+    });
+    let ctl = find(&host, ".ctl");
+    let inner = find(&host, ".inner");
+    assert!(key_mod(ctl.as_ref(), "Enter", false), "Enter is taken");
+    assert!(
+        key_mod(ctl.as_ref(), " ", false),
+        "Space is taken (no page scroll)"
+    );
+    assert_eq!(hits.get_untracked(), 2);
+    assert!(!key_mod(ctl.as_ref(), "a", false));
+    assert!(
+        !key_mod(ctl.as_ref(), "Enter", true),
+        "Ctrl+Enter is not activation"
+    );
+    key_mod(inner.as_ref(), "Enter", false);
+    assert_eq!(
+        hits.get_untracked(),
+        2,
+        "a key on a child control is the child's"
+    );
+}
+
+#[wasm_bindgen_test]
+fn a_tile_is_a_link_and_a_checkbox_in_select_mode() {
+    use skadi_web::library_select::{Selection, tile_checked, tile_role};
+    let sel = Selection::new();
+    let role = tile_role(Some(sel));
+    let checked = tile_checked(Some(sel), "m1".into());
+    assert_eq!(role(), "link");
+    assert_eq!(checked(), None);
+    sel.mode.set(true);
+    assert_eq!(role(), "checkbox");
+    assert_eq!(checked(), Some("false"));
+    sel.toggle("m1");
+    assert_eq!(checked(), Some("true"));
+    assert_eq!(tile_role(None)(), "link", "a cluster tile never selects");
+}
+
+/// Step "grab": every Grab / Block button names its release, and the table's
+/// action column has a header for screen readers.
+#[wasm_bindgen_test]
+fn grab_buttons_name_their_release() {
+    let candidates = vec![
+        candidate("The.Matrix.1080p", true, "Bluray-1080p", "k1"),
+        candidate("The.Matrix.720p", true, "Bluray-720p", "k2"),
+    ];
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! {
+            <ReleasesTable
+                candidates=candidates.clone()
+                on_grab=Callback::new(|_| {})
+                on_block=Callback::new(|_| {})
+                on_unblock=Callback::new(|_| {})
+            />
+        }
+    });
+    assert_eq!(
+        count(&host, "button[aria-label='Grab The.Matrix.1080p']"),
+        1
+    );
+    assert_eq!(count(&host, "button[aria-label='Grab The.Matrix.720p']"), 1);
+    assert_eq!(
+        count(&host, "button[aria-label='Block The.Matrix.720p']"),
+        1
+    );
+    assert_eq!(
+        count(&host, "thead th .sr-only"),
+        1,
+        "the action column has a name"
+    );
+}

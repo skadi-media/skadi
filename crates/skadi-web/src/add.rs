@@ -171,6 +171,7 @@ pub fn AddPage() -> impl IntoView {
                             view! {
                                 <button
                                     class="btn-primary add-btn"
+                                    aria-label=format!("Add {}", s.title)
                                     on:click=move |_| add_series(tvdb, title.clone())
                                 >
                                     "+ Add"
@@ -208,6 +209,7 @@ pub fn AddPage() -> impl IntoView {
                             view! {
                                 <button
                                     class="btn-primary add-btn"
+                                    aria-label=format!("Add {}", b.title)
                                     on:click=move |_| add_book(asin.clone(), title.clone())
                                 >
                                     "+ Add"
@@ -238,6 +240,7 @@ pub fn AddPage() -> impl IntoView {
                             view! {
                                 <button
                                     class="btn-primary add-btn"
+                                    aria-label=format!("Add {}", m.title)
                                     on:click=move |_| add_movie(tmdb, title.clone(), year)
                                 >
                                     "+ Add"
@@ -271,15 +274,16 @@ pub fn AddPage() -> impl IntoView {
                 </div>
             </div>
             <div class="add-search">
-                <select class="add-domain" on:change=on_domain_change prop:value=move || domain.get()>
+                <select class="add-domain" aria-label="Media type" on:change=on_domain_change prop:value=move || domain.get()>
                     <option value="movie">"Movie"</option>
                     <option value="tv">"TV"</option>
                     <option value="audiobook">"Audiobook"</option>
                 </select>
-                <span class="add-search-icon">"⌕"</span>
+                <span class="add-search-icon" aria-hidden="true">"⌕"</span>
                 <input
                     class="add-search-input"
                     r#type="text"
+                    aria-label="Search"
                     prop:placeholder=placeholder
                     prop:value=move || query.get()
                     on:input=move |ev| query.set(event_target_value(&ev))
@@ -291,11 +295,15 @@ pub fn AddPage() -> impl IntoView {
                 />
             </div>
             {results}
-            {move || {
-                toast
-                    .get()
-                    .map(|m| view! { <div class="toast"><span class="health-dot ok"></span>{m}</div> })
-            }}
+            // One live region that is always there, so a screen reader reads
+            // each new toast (SKADI-T-0700).
+            <div class="toast-region" role="status" aria-live="polite">
+                {move || {
+                    toast.get().map(|m| {
+                        view! { <div class="toast"><span class="health-dot ok" aria-hidden="true"></span>{m}</div> }
+                    })
+                }}
+            </div>
         </div>
     }
 }
@@ -315,8 +323,8 @@ fn result_row(
     let tag = tag.to_string();
     // Real artwork when the search carried a poster/cover; otherwise the placeholder.
     let poster_view = match poster {
-        Some(url) => view! { <img class="add-poster" src=url loading="lazy"/> }.into_any(),
-        None => view! { <div class="add-poster"></div> }.into_any(),
+        Some(url) => view! { <img class="add-poster" src=url alt="" loading="lazy"/> }.into_any(),
+        None => view! { <div class="add-poster" aria-hidden="true"></div> }.into_any(),
     };
     let overview_view = overview
         .filter(|o| !o.trim().is_empty())

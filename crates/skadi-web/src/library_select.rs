@@ -335,6 +335,24 @@ pub fn tile_class(base: &'static str, sel: Option<Selection>, id: String) -> imp
     }
 }
 
+/// A tile's role (SKADI-T-0700): a link to the detail page, or a checkbox in
+/// select mode. The tile itself carries the role and the state, so its check
+/// mark is decoration only.
+pub fn tile_role(sel: Option<Selection>) -> impl Fn() -> &'static str {
+    move || match sel {
+        Some(s) if s.mode.get() => "checkbox",
+        _ => "link",
+    }
+}
+
+/// The tile's `aria-checked`: set in select mode only.
+pub fn tile_checked(sel: Option<Selection>, id: String) -> impl Fn() -> Option<&'static str> {
+    move || match sel {
+        Some(s) if s.mode.get() => Some(if s.has(&id) { "true" } else { "false" }),
+        _ => None,
+    }
+}
+
 /// The check mark a tile shows in select mode.
 pub fn tile_check(sel: Option<Selection>, id: String) -> impl IntoView {
     move || {
@@ -344,7 +362,7 @@ pub fn tile_check(sel: Option<Selection>, id: String) -> impl IntoView {
         }
         let on = s.has(&id);
         Some(view! {
-            <span class=if on { "tile-check on" } else { "tile-check" } role="checkbox" aria-checked=on.to_string()>
+            <span class=if on { "tile-check on" } else { "tile-check" } aria-hidden="true">
                 {if on { "✓" } else { "" }}
             </span>
         })

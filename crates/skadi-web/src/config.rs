@@ -96,14 +96,27 @@ fn DomainsSection() -> impl IntoView {
                 };
                 let state = if d.enabled { "enabled" } else { "disabled" };
                 let (accent, title, desc) = domain_meta(&d.kind);
-                let title = if title.is_empty() { d.name.clone() } else { title.to_string() };
-                let desc = if desc.is_empty() { d.kind.clone() } else { desc.to_string() };
+                let title = if title.is_empty() {
+                    d.name.clone()
+                } else {
+                    title.to_string()
+                };
+                let desc = if desc.is_empty() {
+                    d.kind.clone()
+                } else {
+                    desc.to_string()
+                };
                 let switch_cls = if d.enabled {
                     format!("switch on {accent}")
                 } else {
                     "switch".to_string()
                 };
-                let state_cls = if d.enabled { "domain-state ok" } else { "domain-state muted" };
+                let switch_label = format!("{title} domain");
+                let state_cls = if d.enabled {
+                    "domain-state ok"
+                } else {
+                    "domain-state muted"
+                };
                 view! {
                     <div class="domain-row">
                         <div class="domain-row-main">
@@ -115,7 +128,14 @@ fn DomainsSection() -> impl IntoView {
                         </div>
                         <div class="domain-row-right">
                             <span class=state_cls>{state}</span>
-                            <button class=switch_cls on:click=toggle disabled=move || busy.get()></button>
+                            <button
+                                class=switch_cls
+                                role="switch"
+                                aria-checked=if d.enabled { "true" } else { "false" }
+                                aria-label=switch_label
+                                on:click=toggle
+                                disabled=move || busy.get()
+                            ></button>
                         </div>
                     </div>
                 }
@@ -358,16 +378,20 @@ fn ConfigRow(
     let reset_key = key.clone();
     let stored = k.value.clone().unwrap_or_default();
     let is_set = k.is_set;
+    // The label names the input, and the help text describes it (SKADI-T-0700).
+    let input_id = format!("cfg-{key}");
+    let help = k.help.clone().filter(|h| !h.trim().is_empty());
+    let help_id = help.as_ref().map(|_| format!("cfg-help-{key}"));
     view! {
         <div class="config-row">
-            <label class="config-key">
+            <label class="config-key" for=input_id.clone()>
                 {k.leaf().to_string()}
                 {locked.then(|| view! { <span class="pill">"read-only"</span> })}
                 {env_backed.then(|| view! { <span class="pill warn">"set by env"</span> })}
             </label>
             {if redacted {
                 view! {
-                    <span class="muted">
+                    <span class="muted" id=input_id.clone()>
                         {if k.is_set { "set" } else { "not set" }}
                     </span>
                 }.into_any()
@@ -375,6 +399,8 @@ fn ConfigRow(
                 view! {
                     <input
                         type=input_kind(&k.kind)
+                        id=input_id.clone()
+                        aria-describedby=help_id.clone()
                         prop:value=move || draft.get()
                         placeholder=k.default.clone()
                         disabled=locked
@@ -401,8 +427,8 @@ fn ConfigRow(
                     </span>
                 }
             })}
-            {k.help.clone().filter(|h| !h.trim().is_empty()).map(|h| view! {
-                <p class="muted config-help">{h}</p>
+            {help.map(|h| view! {
+                <p class="muted config-help" id=help_id.clone()>{h}</p>
             })}
             {env_backed.then(|| view! {
                 <p class="muted">

@@ -62,7 +62,7 @@ pub fn PathPicker(
             };
             let up_btn = l.parent.clone().map(|p| {
                 let go = move |_| browse(Some(p.clone()));
-                view! { <button type="button" class="fs-entry fs-up" on:click=go>".."</button> }
+                view! { <button type="button" class="fs-entry fs-up" aria-label="Up one folder" on:click=go>".."</button> }
             });
             let rows = l
                 .entries

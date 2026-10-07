@@ -511,6 +511,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                                 class="btn-link import-find"
                                 disabled=in_lib
                                 title="Search for the right movie"
+                                aria-label="Search for the right movie"
                                 on:click=toggle_picker
                             >
                                 "🔍"
@@ -519,6 +520,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                                 class="tmdb-input"
                                 type="text"
                                 placeholder="603"
+                                aria-label="TMDB id"
                                 prop:value=row.tmdb.clone()
                                 disabled=in_lib
                                 on:change=on_tmdb
@@ -637,7 +639,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                         </colgroup>
                         <thead>
                             <tr>
-                                <th></th>
+                                <th><span class="sr-only">"Import"</span></th>
                                 <th>"Folder"</th>
                                 <th>"Parsed"</th>
                                 <th>"Quality"</th>

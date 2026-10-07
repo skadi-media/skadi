@@ -17,7 +17,9 @@ use serde_json::{Value, json};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
-use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
+use crate::library_select::{
+    BulkBar, Selection, apply_report, tile_check, tile_checked, tile_class, tile_role,
+};
 use crate::library_toolbar::{
     LibCounts, LibraryToolbar, MOVIES_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
@@ -216,7 +218,7 @@ fn poster_tile(m: api::Movie, sel: Option<Selection>) -> AnyView {
     let id = m.id.clone();
     // Open the full-page detail (the drawer was dropped).
     let nav = use_navigate();
-    let on_open = move |_| match sel {
+    let open = move || match sel {
         Some(s) if s.mode.get_untracked() => s.toggle(&id),
         _ => nav(&format!("/movies/{id}"), Default::default()),
     };
@@ -241,9 +243,30 @@ fn poster_tile(m: api::Movie, sel: Option<Selection>) -> AnyView {
         .filter(|u| !u.is_empty())
         .map(|u| tmdb_img(u, "w342"));
     let title = m.title.clone();
+    let label = if year.is_empty() {
+        title.clone()
+    } else {
+        format!("{title} ({year})")
+    };
+    let tile_id = m.id.clone();
 
     view! {
-        <div class=class on:click=on_open>
+        <div
+            class=class
+            tabindex="0"
+            role=tile_role(sel)
+            aria-checked=tile_checked(sel, tile_id)
+            aria-label=label
+            on:click={
+                let open = open.clone();
+                move |_| open()
+            }
+            on:keydown=move |ev| {
+                if crate::a11y::activates(&ev) {
+                    open();
+                }
+            }
+        >
             <div class="poster-img">
                 {match poster {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
@@ -973,10 +996,13 @@ pub fn ReleasesPanel(
                 <button class="secondary" on:click=on_search disabled=move || searching.get()>
                     {move || if searching.get() { "Searching…" } else { "Search releases" }}
                 </button>
-                {move || note.get().map(|s| match s {
-                    Ok(m) => view! { <span class="ok">{m}</span> }.into_any(),
-                    Err(m) => view! { <span class="bad">{m}</span> }.into_any(),
-                })}
+                // A live region, so the result of a grab is read out (SKADI-T-0700).
+                <span class="releases-note" role="status">
+                    {move || note.get().map(|s| match s {
+                        Ok(m) => view! { <span class="ok">{m}</span> }.into_any(),
+                        Err(m) => view! { <span class="bad">{m}</span> }.into_any(),
+                    })}
+                </span>
             </div>
             <details
                 class="manual-grab"
@@ -993,6 +1019,7 @@ pub fn ReleasesPanel(
                 <input
                     type="text"
                     placeholder="magnet:?xt=… or https://…/release.torrent"
+                    aria-label="Magnet or .torrent URL"
                     prop:value=move || link.get()
                     on:input=move |ev| link.set(event_target_value(&ev))
                 />
@@ -1079,8 +1106,10 @@ pub fn ReleasesTable(
                 // the correct and often the only available option.
                 let is_pack = c.season_pack;
                 let confirm_title = title.clone();
+                let grab_label = format!("{} {title}", if is_pack { "Grab pack" } else { "Grab" });
+                let block_label = format!("Block {title}");
                 view! {
-                    <button on:click=move |_| {
+                    <button aria-label=grab_label on:click=move |_| {
                         let rel = rel.clone();
                         let body = format!(
                             "{confirm_title} is a season pack — grabbing it will \
@@ -1100,6 +1129,7 @@ pub fn ReleasesTable(
                     </button>
                     <button
                         class="secondary"
+                        aria-label=block_label
                         on:click=move |_| on_block.run((rk.clone(), t.clone()))
                     >
                         "Block"
@@ -1127,7 +1157,7 @@ pub fn ReleasesTable(
             <thead>
                 <tr>
                     <th>"Title"</th><th>"Quality"</th><th>"Size"</th>
-                    <th>"Seeders"</th><th>"Age"</th><th>"Verdict"</th><th></th>
+                    <th>"Seeders"</th><th>"Age"</th><th>"Verdict"</th><th><span class="sr-only">"Actions"</span></th>
                 </tr>
             </thead>
             <tbody>{rows}</tbody>

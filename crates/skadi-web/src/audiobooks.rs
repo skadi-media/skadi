@@ -16,7 +16,9 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
-use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
+use crate::library_select::{
+    BulkBar, Selection, apply_report, tile_check, tile_checked, tile_class, tile_role,
+};
 use crate::library_toolbar::{
     AUDIOBOOKS_SORT_STORAGE, BOOK_SORT_KEYS, LibCounts, LibraryToolbar, chip_matches, sort_items,
     stored_sort,
@@ -373,6 +375,7 @@ fn BookCluster(
         _ => n.to_string(),
     };
     let key_chev = key.clone();
+    let key_aria = key.clone();
     let key_tog = key.clone();
     let key_body = key.clone();
     let key_fx = key;
@@ -464,6 +467,10 @@ fn BookCluster(
             <div class="lib-cluster-head-row">
                 <button
                     class="lib-cluster-head"
+                    aria-expanded={
+                        let k = key_aria;
+                        move || crate::a11y::expanded(expanded.with(|s| s.contains(&k)))
+                    }
                     on:click=move |_| {
                         expanded
                             .update(|s| {
@@ -473,7 +480,7 @@ fn BookCluster(
                             })
                     }
                 >
-                    <span class="cluster-chevron">
+                    <span class="cluster-chevron" aria-hidden="true">
                         {move || if expanded.get().contains(&key_chev) { "▾" } else { "▸" }}
                     </span>
                     <span class="lib-cluster-name">{name}</span>
@@ -913,7 +920,7 @@ fn cover_tile_in(b: api::Book, sel: Option<Selection>) -> AnyView {
     let id = b.id.clone();
     // Open the full-page detail (the drawer was dropped).
     let nav = use_navigate();
-    let on_open = move |_| match sel {
+    let open = move || match sel {
         Some(s) if s.mode.get_untracked() => s.toggle(&id),
         _ => nav(&format!("/audiobooks/{id}"), Default::default()),
     };
@@ -934,9 +941,30 @@ fn cover_tile_in(b: api::Book, sel: Option<Selection>) -> AnyView {
     let cover = b.cover_url.clone().filter(|u| !u.is_empty());
     let title = b.title.clone();
     let byline = b.authors.join(", ");
+    let label = if byline.is_empty() {
+        title.clone()
+    } else {
+        format!("{title} by {byline}")
+    };
+    let tile_id = b.id.clone();
 
     view! {
-        <div class=class on:click=on_open>
+        <div
+            class=class
+            tabindex="0"
+            role=tile_role(sel)
+            aria-checked=tile_checked(sel, tile_id)
+            aria-label=label
+            on:click={
+                let open = open.clone();
+                move |_| open()
+            }
+            on:keydown=move |ev| {
+                if crate::a11y::activates(&ev) {
+                    open();
+                }
+            }
+        >
             <div class="poster-img book-cover">
                 {match cover {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),

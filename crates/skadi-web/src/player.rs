@@ -687,16 +687,18 @@ pub fn PlayerPage() -> impl IntoView {
                     <span>{move || fmt_clock(duration.get())}</span>
                 </div>
                 <div class="player-controls">
-                    <button type="button" class="player-btn" disabled=move || !has_chapters() on:click=prev_ch title="Previous chapter">"⏮"</button>
-                    <button type="button" class="player-btn" on:click=move |_| skip(-30.0) title="Back 30s">"↺30"</button>
-                    <button type="button" class="player-btn player-play" on:click=toggle_play>
+                    <button type="button" class="player-btn" disabled=move || !has_chapters() on:click=prev_ch title="Previous chapter" aria-label="Previous chapter">"⏮"</button>
+                    <button type="button" class="player-btn" on:click=move |_| skip(-30.0) title="Back 30s" aria-label="Back 30 seconds">"↺30"</button>
+                    <button type="button" class="player-btn player-play" on:click=toggle_play
+                        aria-label=move || if playing.get() { "Pause" } else { "Play" }>
                         {move || if playing.get() { "⏸" } else { "▶" }}
                     </button>
-                    <button type="button" class="player-btn" on:click=move |_| skip(30.0) title="Forward 30s">"30↻"</button>
-                    <button type="button" class="player-btn" disabled=move || !has_chapters() on:click=next_ch title="Next chapter">"⏭"</button>
+                    <button type="button" class="player-btn" on:click=move |_| skip(30.0) title="Forward 30s" aria-label="Forward 30 seconds">"30↻"</button>
+                    <button type="button" class="player-btn" disabled=move || !has_chapters() on:click=next_ch title="Next chapter" aria-label="Next chapter">"⏭"</button>
                 </div>
                 <div class="player-sub">
-                    <button type="button" class="player-btn-sm mono" on:click=cycle_speed title="Playback speed">
+                    <button type="button" class="player-btn-sm mono" on:click=cycle_speed title="Playback speed"
+                        aria-label=move || format!("Playback speed {}×", rate.get())>
                         {move || format!("{}×", rate.get())}
                     </button>
                     {move || {
@@ -719,11 +721,12 @@ pub fn PlayerPage() -> impl IntoView {
                         type="button"
                         class="player-btn-sm"
                         disabled=move || !has_chapters()
+                        aria-expanded=move || crate::a11y::expanded(show_chapters.get())
                         on:click=move |_| show_chapters.update(|v| *v = !*v)
                     >
                         "Chapters"
                     </button>
-                    <select class="player-sleep" on:change=arm_sleep title="Sleep timer">
+                    <select class="player-sleep" on:change=arm_sleep title="Sleep timer" aria-label="Sleep timer">
                         <option value="">{move || {
                             // `current` ticks with timeupdate, so the countdown
                             // refreshes while playing (SKADI-T-0657).

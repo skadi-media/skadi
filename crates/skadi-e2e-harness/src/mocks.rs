@@ -156,8 +156,21 @@ impl MetadataProvider for FakeTmdb {
     fn supports(&self, kind: MediaKind) -> bool {
         kind == MediaKind::Movie
     }
+    /// Any search finds The Matrix, so the Add page can be driven end to end
+    /// (the a11y keyboard pass, SKADI-T-0700).
     async fn search(&self, _q: &MetadataQuery) -> SkadiResult<Vec<MetadataMatch>> {
-        Ok(vec![])
+        Ok(vec![MetadataMatch {
+            external_ids: ExternalIds {
+                tmdb: Some(TmdbId(603)),
+                imdb: Some(ImdbId("tt0133093".into())),
+                ..Default::default()
+            },
+            title: "The Matrix".into(),
+            year: Some(1999),
+            score: 1.0,
+            poster_url: None,
+            overview: Some("A hacker learns the truth about his reality.".into()),
+        }])
     }
     async fn lookup(&self, _id: &ExternalId) -> SkadiResult<MetadataRecord> {
         Ok(MetadataRecord {

@@ -840,10 +840,11 @@ fn picker(
                     .map(|t| t.label.clone())
                     .unwrap_or_else(|| id.clone());
                 let id2 = id.clone();
+                let label_for_btn = label.clone();
                 view! {
                     <span class="chip">
                         {label}
-                        <button type="button" title="Remove" on:click=move |_| {
+                        <button type="button" title="Remove" aria-label=format!("Remove {label_for_btn}") on:click=move |_| {
                             let mut now = picked.get_untracked();
                             now.retain(|x| x != &id2);
                             set.run(now);

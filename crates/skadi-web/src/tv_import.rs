@@ -1503,12 +1503,14 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
             <div class="edition-row season-head">
                 <input
                     type="checkbox"
+                    aria-label=format!("Import {title_text}")
                     prop:checked=move || selected.get()
                     disabled=in_lib
                     on:change=move |_| selected.update(|s| *s = !*s)
                 />
                 <button
                     class="btn-link season-toggle"
+                    aria-expanded=move || crate::a11y::expanded(!collapsed.get())
                     on:click=move |_| {
                         let opening = collapsed.get();
                         collapsed.update(|c| *c = !*c);
@@ -1526,7 +1528,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                         }
                     }
                 >
-                    <span class="chevron">{move || if collapsed.get() { "▸" } else { "▾" }}</span>
+                    <span class="chevron" aria-hidden="true">{move || if collapsed.get() { "▸" } else { "▾" }}</span>
                     <strong>{title_text}</strong>
                 </button>
                 {(matched && has_match).then(|| view! {
@@ -1540,6 +1542,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                     class="btn-link import-find"
                     disabled=in_lib
                     title="Search for the right show"
+                    aria-label="Search for the right show"
                     on:click=toggle_picker
                 >
                     "🔍 Find show"
@@ -1702,13 +1705,14 @@ fn import_season_block(
             <div class="edition-row season-head">
                 <button
                     class="btn-link season-toggle"
+                    aria-expanded=move || crate::a11y::expanded(is_open())
                     on:click=move |_| expanded.update(|s| {
                         if !s.remove(&num) {
                             s.insert(num);
                         }
                     })
                 >
-                    <span class="chevron">{move || if is_open() { "▾" } else { "▸" }}</span>
+                    <span class="chevron" aria-hidden="true">{move || if is_open() { "▾" } else { "▸" }}</span>
                     <strong>{label}</strong>
                 </button>
                 <span class=count_cls>{format!("{mapped}/{total} mapped")}</span>

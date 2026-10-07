@@ -190,6 +190,49 @@ fn Shell() -> impl IntoView {
 /// The `id` of the sidebar `<nav>`; the menu button's `aria-controls`.
 pub const NAV_ID: &str = "app-nav";
 
+/// The `id` of the routed `<main>`; the skip link's target (SKADI-T-0700).
+pub const MAIN_ID: &str = "main";
+
+/// The class on `<html>` that stops the page scrolling behind the open drawer.
+pub const SCROLL_LOCK_CLASS: &str = "nav-lock";
+
+fn set_scroll_lock(on: bool) {
+    if let Some(root) = document().document_element() {
+        let _ = root.class_list().toggle_with_force(SCROLL_LOCK_CLASS, on);
+    }
+}
+
+/// After a route change: focus `<main>`, unless the new page already put the
+/// focus inside it.
+fn focus_main_after_navigation() {
+    use wasm_bindgen::JsCast;
+    let Some(main) = document()
+        .get_element_by_id(MAIN_ID)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let inside = document()
+        .active_element()
+        .is_some_and(|a| a.is_connected() && main.contains(Some(&a)));
+    if !inside {
+        let _ = main.focus();
+    }
+}
+
+/// The skip link moves focus to `<main>` itself. It does not change the URL:
+/// the router would read `#main` as a navigation.
+fn skip_to_main(ev: leptos::ev::MouseEvent) {
+    use wasm_bindgen::JsCast;
+    ev.prevent_default();
+    if let Some(main) = document()
+        .get_element_by_id(MAIN_ID)
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = main.focus();
+    }
+}
+
 /// Whether the narrow-screen drawer is open (SKADI-T-0697). Wide screens never
 /// set it: the menu button that does is hidden there.
 #[derive(Clone, Copy)]
@@ -225,10 +268,14 @@ pub fn AppFrame(children: Children) -> impl IntoView {
 
     // Close on navigation (the first run only records the path).
     let location = leptos_router::hooks::use_location();
+    // A new page also takes the keyboard focus to <main> (SKADI-T-0700): the
+    // link that was used stays in the sidebar, or is gone with the old page,
+    // and Tab would start again from the top.
     Effect::new(move |prev: Option<String>| {
         let path = location.pathname.get();
         if prev.is_some_and(|p| p != path) {
             open.set(false);
+            request_animation_frame(focus_main_after_navigation);
         }
         path
     });
@@ -280,8 +327,14 @@ pub fn AppFrame(children: Children) -> impl IntoView {
     });
     on_cleanup(move || resize.remove());
 
+    // Lock the page behind the open drawer, so a swipe scrolls the drawer and
+    // not the page under the scrim (SKADI-T-0700).
+    Effect::new(move |_| set_scroll_lock(open.get()));
+    on_cleanup(|| set_scroll_lock(false));
+
     view! {
         <div class="app" class:nav-open=move || open.get()>
+            <a class="skip-link" href=format!("#{MAIN_ID}") on:click=skip_to_main>"Skip to content"</a>
             <header class="topbar">
                 <button
                     type="button"
@@ -301,7 +354,8 @@ pub fn AppFrame(children: Children) -> impl IntoView {
             </header>
             <div class="nav-scrim" aria-hidden="true" on:click=move |_| close_to_menu()></div>
             <Sidebar/>
-            <main class="main" inert=move || open.get()>
+            <crate::shortcuts::ShortcutsHost/>
+            <main class="main" id=MAIN_ID tabindex="-1" inert=move || open.get()>
                 {children()}
             </main>
         </div>
@@ -1045,12 +1099,14 @@ fn DownloadsSection() -> impl IntoView {
             local_set(storage_key, &next.encode());
         };
         view! {
-            <span
-                class=move || if sort.get().key == key { "sort-active" } else { "" }
+            // A real button, so Tab reaches it and Enter / Space sort (SKADI-T-0700).
+            <button
+                type="button"
+                class=move || if sort.get().key == key { "sort-head sort-active" } else { "sort-head" }
                 on:click=on_click
             >
-                {label}{move || sort.get().arrow(key)}
-            </span>
+                {label}<span aria-hidden="true">{move || sort.get().arrow(key)}</span>
+            </button>
         }
     };
 
@@ -1273,6 +1329,10 @@ fn DownloadsSection() -> impl IntoView {
                 let eta_str = fmt_eta(j.eta_seconds);
                 let added_str = added_label(j.created_at.as_deref(), now_ms);
                 let added_title = j.created_at.clone().unwrap_or_default();
+                // Icon buttons say what they do and to which row (SKADI-T-0700).
+                let pr_label = format!("{} {full_name}", if paused { "Resume" } else { "Pause" });
+                let rm_label = format!("Remove {full_name} (keep files)");
+                let del_label = format!("Delete {full_name} and its files");
 
                 // Row checkbox (SKADI-T-0688): its own reactive read, so a
                 // toggle does not rebuild the table.
@@ -1376,12 +1436,12 @@ fn DownloadsSection() -> impl IntoView {
                         <div class="dl-actions">
                             {q_buttons}
                             {(!failed).then(|| view! {
-                                <button type="button" title={if paused { "Resume" } else { "Pause" }} on:click=on_pause_resume>
+                                <button type="button" title={if paused { "Resume" } else { "Pause" }} aria-label=pr_label on:click=on_pause_resume>
                                     {if paused { "▶" } else { "⏸" }}
                                 </button>
                             })}
-                            <button type="button" title="Remove (keep files)" on:click=on_remove>"✕"</button>
-                            <button type="button" class="danger" title="Delete files" on:click=on_delete>"🗑"</button>
+                            <button type="button" title="Remove (keep files)" aria-label=rm_label on:click=on_remove>"✕"</button>
+                            <button type="button" class="danger" title="Delete files" aria-label=del_label on:click=on_delete>"🗑"</button>
                         </div>
                         {error_row}
                     </div>
@@ -1599,7 +1659,7 @@ fn DownloadsSection() -> impl IntoView {
             })
             .collect_view();
         // Toggle handler persists to localStorage
-        let on_toggle = move |_| {
+        let on_toggle = move || {
             let next = !seeding_open.get();
             seeding_open.set(next);
             local_set("seeding_open", if next { "true" } else { "false" });
@@ -1615,8 +1675,19 @@ fn DownloadsSection() -> impl IntoView {
             .collect_view();
         view! {
             <div class="seed-accordion">
-                <div class="seed-header" on:click=on_toggle>
-                    <span class="seed-chevron">{chevron}</span>
+                <div
+                    class="seed-header"
+                    role="button"
+                    tabindex="0"
+                    aria-expanded=move || crate::a11y::expanded(is_open())
+                    on:click=move |_| on_toggle()
+                    on:keydown=move |ev| {
+                        if crate::a11y::activates(&ev) {
+                            on_toggle();
+                        }
+                    }
+                >
+                    <span class="seed-chevron" aria-hidden="true">{chevron}</span>
                     <span class="u-label">{format!("Seeding ({count})")}</span>
                 </div>
                 <div class="seed-body" class:collapsed=move || !is_open()>

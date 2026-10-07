@@ -19,8 +19,8 @@
   --fg-bright: #f1f4f8;
   --fg-2: #c3cbd5;
   --muted: #8b95a3;
-  --faint: #5b6573;
-  --fainter: #4a525e;
+  --faint: #808a98; /* was #5b6573; lifted to 4.5:1 on --control (SKADI-T-0700) */
+  --fainter: #7a8492; /* was #4a525e; 4.5:1 on --panel (SKADI-T-0700) */
   /* accents + semantic */
   --ice: #7fb2ff;
   --brand-stroke: #8fbcff;
@@ -45,8 +45,28 @@
   --r-tile: 8px;
   --r-card: 10px;
   --r-pill: 20px;
+  /* keyboard focus ring (SKADI-T-0700): one ring for every focusable thing */
+  --focus-ring: 2px solid var(--ice);
+  --focus-offset: 2px;
 }
 * { box-sizing: border-box; }
+/* Keyboard focus is always visible (SKADI-T-0700). Do not drop the outline
+   of a focusable element: style its :focus-visible instead. */
+:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
+/* Text fields in a search bar: the bar shows the ring, not the bare input. */
+.add-search:focus-within { border-color: var(--ice); box-shadow: 0 0 0 1px var(--ice); }
+/* A skip link for keyboard users: hidden until it has focus. */
+.skip-link {
+  position: absolute; left: 0.5rem; top: -3rem; z-index: 1000;
+  background: var(--panel); color: var(--fg-bright); border: 1px solid var(--ice);
+  border-radius: 6px; padding: 0.45rem 0.8rem; font-size: 13px;
+}
+.skip-link:focus { top: 0.5rem; }
+/* Text for screen readers only. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 body {
   margin: 0;
   font-family: var(--sans);
@@ -676,7 +696,7 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
   font-size: 0.9rem;
   font-family: var(--sans);
 }
-.field input:focus, .field select:focus { outline: none; border-color: var(--ice); }
+.field input:focus, .field select:focus { border-color: var(--ice); }
 .checks { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--fg); }
 .form-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
@@ -1086,7 +1106,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   border-radius: 9px; color: var(--fg); padding: 0.45rem 0.7rem; font-size: 13px;
   font-family: var(--sans);
 }
-.lib-filter-input:focus { outline: none; border-color: var(--ice); }
+.lib-filter-input:focus { border-color: var(--ice); }
 
 /* "Organize by" pivot (SKADI-T-0254): switcher chips + collapsible author/series
    clusters (collapsed by default for a fast scroll). */
@@ -1271,7 +1291,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   border: 1px solid var(--border-soft); border-radius: 8px;
   padding: 7px 30px 7px 12px; margin-right: 0.2rem;
   font-size: 13px; font-weight: 500; font-family: var(--sans); line-height: 1.1;
-  cursor: pointer; outline: none;
+  cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237f8b9e' stroke-width='1.6' stroke-linecap='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 10px center;
   transition: border-color 0.15s ease;
@@ -1582,7 +1602,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .setup-domain-text span { font-size: 11px; color: var(--faint); }
 .setup-check { color: var(--ice); font-weight: 700; }
 .setup-input { width: 100%; background: var(--panel); border: 1px solid var(--border-control); border-radius: 10px; color: var(--fg); padding: 0.7rem 0.9rem; font-size: 14px; margin-bottom: 0.7rem; font-family: var(--sans); }
-.setup-input:focus { outline: none; border-color: var(--ice); }
+.setup-input:focus { border-color: var(--ice); }
 .setup-downloader { background: rgba(95, 208, 197, 0.07); border: 1px solid rgba(95, 208, 197, 0.25); border-radius: 11px; padding: 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .setup-downloader strong { color: var(--teal); }
 .setup-downloader span { color: var(--fg-2); font-size: 13px; }
@@ -1607,7 +1627,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   flex: 1; background: var(--control); border: 1px solid var(--border-control);
   border-radius: 8px; color: var(--fg); padding: 0.45rem 0.6rem; font-size: 0.85rem;
 }
-.catalog-filter:focus { outline: none; border-color: var(--ice); }
+.catalog-filter:focus { border-color: var(--ice); }
 .catalog-list {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;
   max-height: 340px; overflow-y: auto;
@@ -1644,8 +1664,8 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 /* Compact table-style downloads (SKADI-I-0053). */
 .dl-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .dl-header { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.4rem 0.6rem; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
-.dl-header span { cursor: pointer; user-select: none; }
-.dl-header span:hover { color: var(--fg); }
+.dl-header .sort-head { cursor: pointer; user-select: none; }
+.dl-header .sort-head:hover { color: var(--fg); }
 .dl-header .sort-active { color: var(--fg-bright); }
 .dl-row-compact { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.35rem 0.6rem; align-items: center; font-size: 0.82rem; border-bottom: 1px solid var(--border); position: relative; }
 .dl-row-compact:last-child { border-bottom: none; }
@@ -1898,7 +1918,7 @@ a.health-rollup:hover { border-color: var(--accent); }
 .watch-head h2 { margin: 0; font-size: 20px; }
 .watch-nav { margin-left: auto; display: flex; gap: 0.5rem; }
 .watch-nav .watch-next { color: var(--fg); border-color: var(--border-control); }
-.watch-video { display: block; width: 100%; max-height: 78vh; background: #000; border-radius: 10px; outline: none; }
+.watch-video { display: block; width: 100%; max-height: 78vh; background: #000; border-radius: 10px; }
 .watch-note { padding: 0.55rem 0.9rem; border-radius: 8px; margin-bottom: 0.8rem; font-size: 13px; line-height: 1.45; }
 .watch-note.warn { background: rgba(216, 166, 87, 0.12); color: var(--warn); }
 .watch-note.bad { background: rgba(240, 100, 100, 0.12); color: var(--bad); }
@@ -2071,8 +2091,8 @@ p.genres.muted {
 .dl-header, .dl-row-compact { grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px 50px; }
 .dl-row-compact .dl-added { text-align: right; color: var(--muted); white-space: nowrap; }
 .seed-sort { display: flex; align-items: center; gap: 0.9rem; padding: 0.35rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
-.seed-sort > span:not(.u-label) { cursor: pointer; user-select: none; }
-.seed-sort > span:not(.u-label):hover { color: var(--fg); }
+.seed-sort > .sort-head { cursor: pointer; user-select: none; }
+.seed-sort > .sort-head:hover { color: var(--fg); }
 .seed-sort .sort-active { color: var(--fg-bright); }
 .seed-added { font-size: 0.75rem; min-width: 2.5rem; text-align: right; }
 
@@ -2164,7 +2184,7 @@ p.genres.muted {
   white-space: pre-line;
 }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-.confirm-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.confirm-dialog button:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
 .confirm-dialog button.confirm-ok.danger {
   color: var(--bad);
   border-color: rgba(240, 100, 100, 0.5);
@@ -2184,7 +2204,7 @@ p.genres.muted {
   background: var(--panel); border: 1px solid var(--border); color: var(--fg);
   border-radius: 9px; padding: 0.4rem 0.55rem; font-size: 13px; font-family: var(--sans);
 }
-.lib-sort-key:focus { outline: none; border-color: var(--ice); }
+.lib-sort-key:focus { border-color: var(--ice); }
 .lib-sort-dir {
   background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
   border-radius: 9px; padding: 0.35rem 0.6rem; font-size: 13px; cursor: pointer;
@@ -2240,7 +2260,7 @@ p.genres.muted {
   cursor: pointer;
 }
 .menu-btn:hover { background: var(--control); }
-.menu-btn:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
+.menu-btn:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
 /* Three bars: the span is the middle one, its shadows the outer two. */
 .menu-icon {
   width: 16px;
@@ -2403,3 +2423,28 @@ p.genres.muted {
 .card-test .last-test { font-size: 12px; }
 .card-test .last-test.warn { color: var(--warn); }
 .config-row .config-help { flex: 1 1 100%; }
+
+/* --- Accessibility (SKADI-T-0700) ------------------------------------------
+   The skip link focuses <main> (tabindex=-1, not a Tab stop): no ring on the
+   whole page for that. The open drawer locks the page scroll under it. */
+.main:focus-visible { outline: none; }
+html.nav-lock, html.nav-lock body { overflow: hidden; }
+/* A link inside running text must not rely on colour alone. */
+p > a:not([class]) { text-decoration: underline; text-underline-offset: 2px; }
+/* A sort header is a button that looks like header text. */
+.sort-head {
+  background: none; border: 0; padding: 0; margin: 0; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+/* The "?" list of keyboard shortcuts (SKADI-T-0700). */
+.shortcut-list { margin: 0 0 1rem; display: grid; gap: 0.45rem; }
+.shortcut-row { display: grid; grid-template-columns: 9rem 1fr; gap: 0.75rem; align-items: baseline; }
+.shortcut-row dt, .shortcut-row dd { margin: 0; }
+.shortcut-row dd { color: var(--fg-2); font-size: 13px; }
+kbd {
+  font-family: var(--mono); font-size: 12px; color: var(--fg-bright);
+  background: var(--control); border: 1px solid var(--border-control);
+  border-radius: 4px; padding: 1px 6px;
+}
+.poster-tile:focus-visible { outline-offset: 3px; border-radius: var(--r-tile); }
+.poster-tile:focus-visible .poster-img { border-color: var(--accent); }

@@ -12,7 +12,9 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
-use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
+use crate::library_select::{
+    BulkBar, Selection, apply_report, tile_check, tile_checked, tile_class, tile_role,
+};
 use crate::library_toolbar::{
     LibCounts, LibraryToolbar, TV_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
@@ -190,7 +192,7 @@ pub fn TvPage() -> impl IntoView {
 fn series_tile(s: api::Series, sel: Option<Selection>) -> AnyView {
     let id = s.id.clone();
     let nav = use_navigate();
-    let on_open = move |_| match sel {
+    let open = move || match sel {
         Some(x) if x.mode.get_untracked() => x.toggle(&id),
         _ => nav(&format!("/tv/{id}"), Default::default()),
     };
@@ -215,9 +217,30 @@ fn series_tile(s: api::Series, sel: Option<Selection>) -> AnyView {
         .filter(|u| !u.is_empty())
         .map(|u| tmdb_img(u, "w342"));
     let title = s.title.clone();
+    let label = if year.is_empty() {
+        title.clone()
+    } else {
+        format!("{title} ({year})")
+    };
+    let tile_id = s.id.clone();
 
     view! {
-        <div class=class on:click=on_open>
+        <div
+            class=class
+            tabindex="0"
+            role=tile_role(sel)
+            aria-checked=tile_checked(sel, tile_id)
+            aria-label=label
+            on:click={
+                let open = open.clone();
+                move |_| open()
+            }
+            on:keydown=move |ev| {
+                if crate::a11y::activates(&ev) {
+                    open();
+                }
+            }
+        >
             <div class="poster-img">
                 {match poster {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
@@ -510,8 +533,12 @@ fn season_block(
     view! {
         <div class="edition-block season-block">
             <div class="edition-row season-head">
-                <button class="btn-link season-toggle" on:click=toggle_open>
-                    <span class="chevron">{move || if collapsed() { "▸" } else { "▾" }}</span>
+                <button
+                    class="btn-link season-toggle"
+                    aria-expanded=move || crate::a11y::expanded(!collapsed())
+                    on:click=toggle_open
+                >
+                    <span class="chevron" aria-hidden="true">{move || if collapsed() { "▸" } else { "▾" }}</span>
                     <strong>{label}</strong>
                 </button>
                 <span class=count_cls>{format!("{collected}/{total} collected")}</span>
@@ -539,6 +566,16 @@ fn episode_row(
 ) -> AnyView {
     let sid = series_id.to_string();
     let code = format!("S{:02}E{:02}", e.season, e.number);
+    // Icon buttons on the row name the episode (SKADI-T-0700).
+    let hist_label = format!("History of {code}");
+    let play_label = format!("Play {code}");
+    let save_label = format!("Save {code}");
+    let mon_label = format!(
+        "{} {code}",
+        if e.monitored { "Unmonitor" } else { "Monitor" }
+    );
+    let acquire_label = format!("Search and acquire {code}");
+    let reset_label = format!("Reset {code} to Missing");
     let title = e.title.clone().unwrap_or_default();
     let air = e.air_date.clone().unwrap_or_default();
     let label = api::status_label(&e.status);
@@ -603,6 +640,7 @@ fn episode_row(
         move || open_episodes.get().contains(&k)
     };
     let expanded_body = expanded.clone();
+    let expanded_aria = expanded.clone();
     let toggle_expanded = move |_| {
         let k = ep_key.clone();
         open_episodes.update(|o| {
@@ -626,28 +664,30 @@ fn episode_row(
                 <button
                     class="btn-link hist-toggle"
                     title="History"
+                    aria-label=hist_label
+                    aria-expanded=move || crate::a11y::expanded(expanded_aria())
                     on:click=toggle_expanded
                 >
-                    {move || if expanded() { "▾" } else { "▸" }}
+                    <span aria-hidden="true">{move || if expanded() { "▾" } else { "▸" }}</span>
                 </button>
                 <span class="mono">{code}</span>
                 <span class="episode-title">{title}</span>
                 <span class="mono muted">{air}</span>
                 <span class=cls>{label}</span>
                 {watch_href.map(|h| view! {
-                    <A href=h attr:class="btn-link" attr:title="Play in this browser">"▶"</A>
+                    <A href=h attr:class="btn-link" attr:title="Play in this browser" attr:aria-label=play_label.clone()>"▶"</A>
                 })}
                 {save.map(|(href, name)| view! {
                     <a href=href download=name class="btn-link"
-                       title="Save this episode to your computer">"⇩"</a>
+                       title="Save this episode to your computer" aria-label=save_label.clone()>"⇩"</a>
                 })}
-                <button class="btn-link" on:click=toggle title="Toggle monitoring">
+                <button class="btn-link" on:click=toggle title="Toggle monitoring" aria-label=mon_label>
                     {if monitored { "●" } else { "○" }}
                 </button>
-                <button class="btn-link" on:click=on_acquire title="Search and acquire">
+                <button class="btn-link" on:click=on_acquire title="Search and acquire" aria-label=acquire_label>
                     "⤓"
                 </button>
-                <button class="btn-link" on:click=on_reset title="Reset to Missing">
+                <button class="btn-link" on:click=on_reset title="Reset to Missing" aria-label=reset_label>
                     "↺"
                 </button>
             </div>

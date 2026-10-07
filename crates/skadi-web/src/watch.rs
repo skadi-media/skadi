@@ -350,11 +350,12 @@ fn Watch(item: WatchItem) -> impl IntoView {
             advance();
         }
     };
-    // `n` / `p` from anywhere on the page. No text inputs live here, so a
-    // bare key is safe to claim.
+    // `n` / `p` from anywhere on the page, but not with a modifier held
+    // (Cmd+N is the browser's) or while typing in a field (SKADI-T-0700).
     let handle = window_event_listener(leptos::ev::keydown, {
         let navigate = navigate.clone();
         move |ev| match ev.key().as_str() {
+            _ if !crate::a11y::shortcut_event(&ev) => {}
             "n" | "N" => advance(),
             "p" | "P" => {
                 if let Some(h) = &prev_href {

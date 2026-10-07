@@ -1158,13 +1158,27 @@ pub fn ActivityPage() -> impl IntoView {
                 let outcome_facts = facts(g.head.detail.as_deref());
                 let search_facts = is_open.then(|| facts(g.head.search_detail.as_deref()));
                 let toggle_key = key.clone();
-                let on_click = move |_| {
+                let toggle = move || {
                     expanded.update(|e| {
                         *e = if e.as_deref() == Some(toggle_key.as_str()) { None } else { Some(toggle_key.clone()) }
                     });
                 };
+                let toggle_key_press = toggle.clone();
                 view! {
-                    <div class="run-row" class:bad=is_bad class:open=is_open on:click=on_click>
+                    <div
+                        class="run-row"
+                        class:bad=is_bad
+                        class:open=is_open
+                        role="button"
+                        tabindex="0"
+                        aria-expanded=crate::a11y::expanded(is_open)
+                        on:click=move |_| toggle()
+                        on:keydown=move |ev| {
+                            if crate::a11y::activates(&ev) {
+                                toggle_key_press();
+                            }
+                        }
+                    >
                         <div class="run-line">
                             <span class="run-time mono" title=g.head.at.clone()>{ago(&g.head.at, now)}</span>
                             <span class=format!("run-ev mono {color}")>{event_label(&g.head.event).to_string()}</span>

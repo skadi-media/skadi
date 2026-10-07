@@ -1123,9 +1123,14 @@ fn row_view(
                         .then(|| view! { <span class="provider-sub mono">{summary}</span> })}
                 </div>
                 <div class="provider-actions">
-                    <button on:click=on_test>"Test"</button>
-                    {(!is_cardigann).then(|| view! { <button on:click=on_edit>"Edit"</button> })}
-                    <button class="danger" on:click=on_delete>"Delete"</button>
+                    // Each card has the same three buttons: the label names the
+                    // card too (SKADI-T-0700).
+                    <button on:click=on_test aria-label=format!("Test {name}")>"Test"</button>
+                    {(!is_cardigann).then(|| {
+                        let edit_label = format!("Edit {name}");
+                        view! { <button on:click=on_edit aria-label=edit_label>"Edit"</button> }
+                    })}
+                    <button class="danger" on:click=on_delete aria-label=format!("Delete {name}")>"Delete"</button>
                 </div>
             </div>
             <div class="card-test">{test_view}</div>

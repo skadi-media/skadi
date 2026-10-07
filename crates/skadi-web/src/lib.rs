@@ -7,6 +7,7 @@
 //! `pub`; the rest stay crate-internal so the `#[component]` macro's generated
 //! `pub` items don't leak crate-private helper types.
 
+pub mod a11y;
 pub mod activity;
 pub mod api;
 pub mod audiobook_import;
@@ -37,11 +38,12 @@ pub mod persist;
 pub mod player;
 mod settings;
 mod setup;
+pub mod shortcuts;
 pub mod subnav;
 pub mod system;
 pub mod upload;
 
-pub use app::{App, AppFrame, DownloadersPage, IndexersPage, NAV_ID};
+pub use app::{App, AppFrame, DownloadersPage, IndexersPage, MAIN_ID, NAV_ID, SCROLL_LOCK_CLASS};
 
 /// Genre facet over a wall (SKADI-T-0605): each genre with how many items
 /// carry it, most common first then by name — one chip per entry. A genre

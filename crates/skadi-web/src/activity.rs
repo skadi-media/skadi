@@ -10,9 +10,6 @@ use leptos::task::spawn_local;
 
 use crate::api;
 
-/// Poll cadence for the live activity + history (ms).
-const POLL_MS: u32 = 2500;
-
 /// Longest inline detail before we truncate and tuck the full text behind a
 /// disclosure. Keeps the history table to one readable line per row.
 const MAX_INLINE: usize = 80;
@@ -847,9 +844,11 @@ pub fn ActivityPage() -> impl IntoView {
             }
             titles.set(map);
         });
-        // Poll activity + history until the page is torn down.
-        spawn_local(async move {
-            loop {
+        // Poll activity + history until the page is torn down: ~2 s while the
+        // tab is visible, nothing while it is hidden (SKADI-T-0693).
+        spawn_local(crate::live_poll::poll_while_visible(
+            move || alive.try_get_untracked().unwrap_or(false),
+            move || async move {
                 match api::activity().await {
                     Ok(a) => {
                         runs.set(a);
@@ -860,12 +859,8 @@ pub fn ActivityPage() -> impl IntoView {
                 if let Ok(t) = api::traces(160).await {
                     traces.set(t);
                 }
-                gloo_timers::future::TimeoutFuture::new(POLL_MS).await;
-                if !alive.try_get_untracked().unwrap_or(false) {
-                    break;
-                }
-            }
-        });
+            },
+        ));
     });
     on_cleanup(move || alive.set(false));
 

@@ -2848,3 +2848,22 @@ fn a_queued_download_parses_its_place_and_offers_the_admin_its_moves() {
     assert!(queue_moves(&rows[1], Some("member"), 2).is_empty());
     assert!(queue_moves(&rows[2], Some("admin"), 2).is_empty());
 }
+
+// SKADI-T-0693: the shared live poll fetches only for a live page in a visible
+// tab, and a torn-down page never ticks.
+#[wasm_bindgen_test]
+fn live_poll_fetches_only_when_alive_and_visible() {
+    use skadi_web::live_poll::{PollStep, next_step};
+    assert_eq!(next_step(true, false), PollStep::Fetch);
+    assert_eq!(next_step(true, true), PollStep::WaitVisible);
+    assert_eq!(next_step(false, true), PollStep::Stop);
+}
+
+#[wasm_bindgen_test]
+async fn live_poll_never_ticks_for_a_torn_down_page() {
+    skadi_web::live_poll::poll_while_visible(
+        || false,
+        || async { panic!("a torn-down page must not fetch") },
+    )
+    .await;
+}

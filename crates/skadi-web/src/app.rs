@@ -873,18 +873,16 @@ fn DownloadsSection() -> impl IntoView {
             }
             titles.set(map);
         });
-        spawn_local(async move {
-            loop {
+        // ~2 s while the tab is visible, nothing while it is hidden (SKADI-T-0693).
+        spawn_local(crate::live_poll::poll_while_visible(
+            move || alive.try_get_untracked().unwrap_or(false),
+            move || async move {
                 if let Ok(d) = api::list_downloads().await {
                     jobs.set(d);
                 }
                 loaded.set(true);
-                gloo_timers::future::TimeoutFuture::new(DOWNLOADS_POLL_MS).await;
-                if !alive.try_get_untracked().unwrap_or(false) {
-                    break;
-                }
-            }
-        });
+            },
+        ));
     });
     on_cleanup(move || alive.set(false));
 
@@ -1647,10 +1645,6 @@ fn import_panel_view(
     }
     .into_any()
 }
-
-/// Poll cadence for the torrent list (ms) — near-real-time so active transfers
-/// tick smoothly (progress/speed/peers). Cheap query; fine for a home deploy.
-const DOWNLOADS_POLL_MS: u32 = 500;
 
 /// Bytes/sec → "KB/s" string for the form (`0` ⇒ "0", i.e. unlimited). Pure.
 fn bps_to_kbps(bps: u64) -> String {

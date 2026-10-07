@@ -46,6 +46,8 @@ web-sys = { version = "0.3", features = [
     # Browser uploads (SKADI-T-0631): read a picked file and send it in Blob
     # slices, so only the chunk in flight is ever in memory.
     "HtmlInputElement", "FileList",
+    # Live poll (SKADI-T-0693): stop polling while the tab is hidden.
+    "AddEventListenerOptions",
 ] }
 console_error_panic_hook = "0.1"
 

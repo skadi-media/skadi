@@ -1184,13 +1184,34 @@ pub async fn unblock_release(id: &str) -> Result<(), ApiError> {
 // Diagnostics (SKADI-T-0116) — health checks + root-folder free space.
 // ---------------------------------------------------------------------------
 
-/// One daemon health check (mirror of skadi-api `Check`).
+/// One daemon health check (mirror of skadi-api `CheckResult`; `name`,
+/// `status` and `detail` are its legacy projection).
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthCheck {
+    /// The check id (`database`, `indexers`, `indexer:<name>`, …).
     pub name: String,
-    /// `ok` | `warn` | `fail`.
+    /// `ok` | `warn` | `fail` (legacy: `warn` also covers pending).
     pub status: String,
     pub detail: String,
+    /// `ok` | `warn` | `error` | `pending`. Absent from a daemon older than
+    /// the severity model.
+    #[serde(default)]
+    pub severity: Option<String>,
+}
+
+impl HealthCheck {
+    /// The level of the check: the daemon's `severity`, or, from an older
+    /// daemon, the legacy `status` mapped onto it.
+    pub fn level(&self) -> &str {
+        match self.severity.as_deref() {
+            Some(s) => s,
+            None => match self.status.as_str() {
+                "ok" => "ok",
+                "warn" => "warn",
+                _ => "error",
+            },
+        }
+    }
 }
 
 /// Free-space + writability report for one root folder (mirror of

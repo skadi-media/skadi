@@ -82,6 +82,9 @@ pub struct AppState {
     /// `GET /health/checks` reads it; the supervisor tick refreshes it
     /// ([`AppState::refresh_health`]).
     pub health: Arc<crate::health_checks::HealthCache>,
+    /// How the `disk-space` health check measures the library root
+    /// (SKADI-T-0681): `statvfs`, or a fixed fill level in a test.
+    pub disk_probe: crate::health_checks::DiskProbe,
 }
 
 impl AppState {
@@ -165,6 +168,7 @@ impl AppState {
             health: Arc::new(crate::health_checks::HealthCache::new(
                 crate::health_checks::HealthRegistry::builtin(),
             )),
+            disk_probe: crate::health_checks::statvfs_probe(),
         })
     }
 }

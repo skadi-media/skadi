@@ -363,6 +363,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
 }
 .status-dot.ok { background: var(--ok); }
 .status-dot.pending { background: var(--accent); }
+.status-dot.warn { background: var(--warn); }
 .status-dot.muted { background: #5a6470; }
 .status-dot.bad { background: var(--bad); }
 /* Inline status dot for list rows (provider/downloader health) — unlike
@@ -376,6 +377,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
 }
 .health-dot.ok { background: var(--ok); }
 .health-dot.pending { background: var(--accent); }
+.health-dot.warn { background: var(--warn); }
 .health-dot.bad { background: var(--bad); }
 .health-dot.muted { background: #5a6470; }
 .poster-meta { display: flex; flex-direction: column; margin-top: 0.4rem; }

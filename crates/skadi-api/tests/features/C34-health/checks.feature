@@ -89,7 +89,7 @@ Feature: C34 health check model, cache, warnings and config sanity
 
   # ---- free space (SKADI-T-0681) --------------------------------------------
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a library root that is 80 % full is a warning
     Given the library root points at an existing writable directory
     And the library root's filesystem is 80 % full
@@ -98,7 +98,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     Then the health check "disk-space" has severity "warn"
     And the health check "disk-space" message contains "80"
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a library root that is 95 % full is an error
     Given the library root points at an existing writable directory
     And the library root's filesystem is 95 % full
@@ -109,7 +109,7 @@ Feature: C34 health check model, cache, warnings and config sanity
 
   # ---- config sanity (SKADI-T-0681) -----------------------------------------
 
-  @C34 @gap
+  @C34 @passing
   Scenario: no indexers configured is an error that names the settings page
     Given no indexer is configured
     When the health checks have run
@@ -117,23 +117,24 @@ Feature: C34 health check model, cache, warnings and config sanity
     Then the health check "indexers" has severity "error"
     And the health check "indexers" remediation contains "Indexers"
 
-  @C34 @gap
+  @C34 @passing
   Scenario: no download client configured is an error that names the settings page
     Given no download client is configured
     When the health checks have run
     And the client requests GET "/api/v1/health/checks"
     Then the health check "download-clients" has severity "error"
-    And the health check "download-clients" remediation contains "Downloaders"
+    And the health check "download-clients" remediation contains "Downloads"
 
-  @C34 @gap
+  @C34 @passing
   Scenario: no library root configured is an error that names the setting
     Given the library root is not set
     When the health checks have run
     And the client requests GET "/api/v1/health/checks"
     Then the health check "root" has severity "error"
+    And the health check "root" message contains "not set"
     And the health check "root" remediation contains "library.root"
 
-  @C34 @gap
+  @C34 @passing
   Scenario: an enabled domain whose root folder is missing is an error
     Given the library root points at an existing writable directory
     And the "movies" domain is enabled
@@ -143,9 +144,25 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the health check "root:movies" message contains "movie"
     And the health check "root:movies" has a remediation
 
+  # ---- slow or degraded providers (SKADI-T-0681) ---------------------------
+
+  # The slow arm (a test answer after more than 20 s) is a unit test of
+  # `ProviderCheck::outcome`: a scenario would have to wait 20 s.
+  @C34 @passing
+  Scenario: an indexer that answers but whose searches often fail is a warning
+    Given an indexer "flakyixr" whose server counts its requests
+    And 4 of the last 10 searches of indexer "flakyixr" failed
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
+    Then the health check "indexer:flakyixr" has severity "warn"
+    And the health check "indexer:flakyixr" message contains "4 of its last 10"
+    And the health check "indexer:flakyixr" has a remediation
+    And the health check "indexers" has severity "warn"
+    And the health check "indexers" remediation contains "Indexers"
+
   # ---- worker failures (SKADI-T-0681) ---------------------------------------
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a domain worker that keeps dying is an error check
     Given the "movies" domain is enabled
     And the supervisor has recorded 3 failures of the "movies" domain worker

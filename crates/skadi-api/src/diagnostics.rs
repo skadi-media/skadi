@@ -360,6 +360,16 @@ pub(crate) async fn library_root_path(store: &Store) -> Result<String, ApiError>
         .unwrap_or_else(|| "/data".to_string()))
 }
 
+/// `library.root` as the operator set it (the `config` table, which the
+/// `SKADI_LIBRARY_ROOT` environment variable seeds on boot), or `None` when it
+/// is not set. Unlike [`library_root_path`], no registry default fills the gap:
+/// the health check must tell "set to /data" from "not set" (SKADI-T-0681).
+pub(crate) async fn library_root_setting(store: &Store) -> Result<Option<String>, ApiError> {
+    use skadi_store::ConfigRepo;
+    let entry = store.get_config("library.root").await.map_err(ApiError)?;
+    Ok(entry.map(|e| e.value).filter(|v| !v.trim().is_empty()))
+}
+
 /// `(free_bytes, total_bytes)` for the filesystem backing `path`, via `statvfs`.
 /// `None` if the path is missing or the platform has no `statvfs`.
 #[cfg(unix)]

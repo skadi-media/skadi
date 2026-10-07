@@ -345,7 +345,12 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
         refresh();
         spawn_local(async move {
             if let Ok(checks) = api::health_checks().await {
-                health.set(checks.into_iter().map(|c| (c.name, c.status)).collect());
+                health.set(
+                    checks
+                        .into_iter()
+                        .map(|c| (c.name.clone(), c.level().to_string()))
+                        .collect(),
+                );
             }
         });
     });
@@ -849,7 +854,7 @@ fn row_view(
     // Persistent health dot (from the daemon's health checks), with the raw status
     // as a tooltip. Absent when there's no matching check (e.g. a notifier).
     let health_dot = health_status.map(|status| {
-        let cls = crate::dashboard::check_class(&status);
+        let cls = crate::dashboard::severity_class(&status);
         view! { <span class=format!("health-dot {cls}") title=status></span> }
     });
 

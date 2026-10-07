@@ -24,7 +24,7 @@ use skadi_web::audiobooks::{
     group_books_by_series, has_series_position, looks_like_asin, merge_owned_missing,
     name_sort_key, series_label, split_related_tiles,
 };
-use skadi_web::dashboard::{book_counts, check_class, movie_counts};
+use skadi_web::dashboard::{book_counts, health_strip_parts, movie_counts, severity_class};
 use skadi_web::movies::{
     active_profile_name, profile_is_active, size_human, status_class, tmdb_img,
 };
@@ -131,11 +131,60 @@ fn status_class_maps_labels() {
 }
 
 #[wasm_bindgen_test]
-fn check_class_maps_health_status() {
-    assert_eq!(check_class("ok"), "ok");
-    assert_eq!(check_class("warn"), "pending");
-    assert_eq!(check_class("fail"), "bad");
-    assert_eq!(check_class("anything-else"), "bad");
+fn severity_class_gives_warn_its_own_state() {
+    assert_eq!(severity_class("ok"), "ok");
+    assert_eq!(severity_class("warn"), "warn");
+    assert_eq!(severity_class("pending"), "pending");
+    assert_eq!(severity_class("error"), "bad");
+    assert_eq!(severity_class("anything-else"), "bad");
+}
+
+fn check(name: &str, status: &str, severity: Option<&str>) -> skadi_web::api::HealthCheck {
+    skadi_web::api::HealthCheck {
+        name: name.into(),
+        status: status.into(),
+        detail: String::new(),
+        severity: severity.map(str::to_string),
+    }
+}
+
+#[wasm_bindgen_test]
+fn a_check_level_is_the_server_severity_else_the_legacy_status() {
+    assert_eq!(check("x", "warn", Some("pending")).level(), "pending");
+    assert_eq!(check("x", "fail", Some("error")).level(), "error");
+    // An older daemon sends no severity.
+    assert_eq!(check("x", "ok", None).level(), "ok");
+    assert_eq!(check("x", "warn", None).level(), "warn");
+    assert_eq!(check("x", "fail", None).level(), "error");
+}
+
+#[wasm_bindgen_test]
+fn the_health_strip_uses_the_server_indexer_rollup() {
+    let (chips, rollup) = health_strip_parts(vec![
+        check("database", "ok", Some("ok")),
+        check("domain:movies", "ok", Some("ok")),
+        check("root:movies", "fail", Some("error")),
+        check("download-clients", "ok", Some("ok")),
+        check("indexers", "warn", Some("warn")),
+        // Both members are ok, but the rollup is the server's: the browser does
+        // not work the severity out again.
+        check("indexer:a", "ok", Some("ok")),
+        check("indexer:b", "ok", Some("ok")),
+        check("downloader:built-in", "ok", Some("ok")),
+    ]);
+    let names: Vec<_> = chips.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["database", "root:movies", "downloader:built-in"]
+    );
+    assert_eq!(rollup.expect("the indexers rollup").level(), "warn");
+
+    let (chips, _) = health_strip_parts(vec![check("download-clients", "fail", Some("error"))]);
+    assert_eq!(
+        chips.len(),
+        1,
+        "a download-client summary that is not ok shows"
+    );
 }
 
 #[wasm_bindgen_test]

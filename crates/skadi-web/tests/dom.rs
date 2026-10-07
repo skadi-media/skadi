@@ -106,16 +106,25 @@ fn health_checks_render_status_dots() {
             name: "daemon".into(),
             status: "ok".into(),
             detail: "skadi 0.0.1".into(),
+            severity: Some("ok".into()),
         },
         HealthCheck {
             name: "indexer:dead".into(),
             status: "fail".into(),
             detail: "connection refused".into(),
+            severity: Some("error".into()),
+        },
+        HealthCheck {
+            name: "disk-space".into(),
+            status: "warn".into(),
+            detail: "80 % used".into(),
+            severity: Some("warn".into()),
         },
         HealthCheck {
             name: "domain:movies".into(),
             status: "warn".into(),
-            detail: "disabled".into(),
+            detail: "not checked yet".into(),
+            severity: Some("pending".into()),
         },
     ];
     let host = host();
@@ -124,10 +133,11 @@ fn health_checks_render_status_dots() {
         move || view! { <HealthChecks checks=checks.clone()/> },
     );
 
-    assert_eq!(count(&host, ".metric"), 3, "one badge per check");
-    // ok → ok dot, fail → bad dot, warn → pending dot.
+    assert_eq!(count(&host, ".metric"), 4, "one badge per check");
+    // Each severity has its own dot: a warning is not shown as pending.
     assert_eq!(count(&host, ".status-dot.ok"), 1);
     assert_eq!(count(&host, ".status-dot.bad"), 1);
+    assert_eq!(count(&host, ".status-dot.warn"), 1);
     assert_eq!(count(&host, ".status-dot.pending"), 1);
     assert!(host.text_content().unwrap().contains("connection refused"));
 }

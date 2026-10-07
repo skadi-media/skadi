@@ -147,6 +147,9 @@ pub struct World {
     /// Env vars to restore when the world drops (`@serial` only). Unlike
     /// `env_touched`, the restore also runs when a step fails part-way.
     pub env_guards: Vec<EnvGuard>,
+    /// The fill level, in percent, the disk-space check reads for the library
+    /// root (`AppState::disk_probe`); `None` = the real `statvfs`.
+    pub disk_used_percent: Option<u32>,
 }
 
 /// Sets an env var and puts back the prior value on drop, so a failing
@@ -262,7 +265,16 @@ impl World {
                 .cloned()
                 .map(|l| Arc::new(l) as Arc<dyn LibraryProvider>)
                 .collect();
-            let state = AppState::new_full(config, Some(store), self.domains.clone(), libraries);
+            let mut state =
+                AppState::new_full(config, Some(store), self.domains.clone(), libraries);
+            if let Some(pct) = self.disk_used_percent {
+                // A 1 TiB filesystem at `pct` % used.
+                let total: u64 = 1 << 40;
+                let free = total / 100 * u64::from(100 - pct.min(100));
+                Arc::get_mut(&mut state)
+                    .expect("the AppState was just built")
+                    .disk_probe = Arc::new(move |_| Some((free, total)));
+            }
             self.api = Some(Api(state));
         }
         self.api.as_ref().expect("api").0.clone()

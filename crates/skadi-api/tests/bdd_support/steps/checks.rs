@@ -210,15 +210,31 @@ async fn root_not_set(w: &mut World) {
     );
 }
 
-/// SKADI-T-0681: `statvfs` reads the real disk, so the scenario needs a way to
-/// give the disk-space check a used fraction (a probe the `AppState` holds, for
-/// example).
+/// `statvfs` reads the real disk, so the world gives the disk-space check a
+/// probe with a fixed fill level (`AppState::disk_probe`, SKADI-T-0681).
 #[given(expr = "the library root's filesystem is {int} % full")]
-async fn disk_full(_w: &mut World, percent: u32) {
-    todo_seam(
-        "SKADI-T-0681",
-        &format!("give the disk-space check a library root that is {percent} % used"),
-    );
+async fn disk_full(w: &mut World, percent: u32) {
+    w.disk_used_percent = Some(percent);
+    w.reset_api();
+}
+
+/// Records `failed` failed and then `total - failed` successful searches of the
+/// indexer into the search-health registry, the way the search path does. The
+/// last search succeeded, so only the failure rate says it is degraded.
+#[given(expr = "{int} of the last {int} searches of indexer {string} failed")]
+async fn indexer_search_history(w: &mut World, failed: u32, total: u32, name: String) {
+    let id = w
+        .ids
+        .get(&name)
+        .unwrap_or_else(|| panic!("no indexer {name:?}"));
+    let iid = skadi_core::IndexerId::from(uuid::Uuid::parse_str(id).expect("indexer id"));
+    let health = skadi_indexers::indexer_health();
+    for _ in 0..failed {
+        health.record_failure(iid, "HTTP 503 from the tracker");
+    }
+    for _ in failed..total {
+        health.record_success(iid);
+    }
 }
 
 // ---- workers -------------------------------------------------------------------

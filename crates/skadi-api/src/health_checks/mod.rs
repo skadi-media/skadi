@@ -31,6 +31,7 @@ mod builtin;
 mod cache;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,8 +45,10 @@ use crate::error::ApiError;
 use crate::state::{AppState, DomainDescriptor};
 
 pub use builtin::{
-    DaemonCheck, DatabaseCheck, DomainCheck, DomainChecks, ProviderCheck, ProviderChecks,
-    RootCheck, WorkerCheck,
+    DISK_ERROR_USED_PERCENT, DISK_WARN_USED_PERCENT, DOMAIN_WORKER_FAILURES_ERROR, DaemonCheck,
+    DatabaseCheck, DiskSpaceCheck, DomainCheck, DomainChecks, DomainRootCheck, DomainRootChecks,
+    PROVIDER_DEGRADED_FAILURE_RATE, PROVIDER_SLOW_AFTER, ProviderCheck, ProviderChecks,
+    ProviderRollup, RootCheck, WorkerCheck,
 };
 pub use cache::HealthCache;
 
@@ -193,6 +196,16 @@ impl Serialize for CheckResult {
     }
 }
 
+/// Reads `(free_bytes, total_bytes)` of the filesystem that holds a path;
+/// `None` when the path is missing or cannot be measured. Blocking: the
+/// disk-space check calls it off the runtime, with a deadline.
+pub type DiskProbe = Arc<dyn Fn(&Path) -> Option<(u64, u64)> + Send + Sync>;
+
+/// The real [`DiskProbe`]: `statvfs` on the path.
+pub fn statvfs_probe() -> DiskProbe {
+    Arc::new(crate::diagnostics::disk_space)
+}
+
 /// What the checks may read. Add a field here when a new check needs a new
 /// input, and fill it in [`CheckContext::from_state`].
 #[derive(Clone)]
@@ -202,6 +215,9 @@ pub struct CheckContext {
     pub domains: Vec<DomainDescriptor>,
     /// Unasked-for exits per domain worker (`AppState::worker_failures`).
     pub worker_failures: Arc<tokio::sync::Mutex<HashMap<String, u64>>>,
+    /// How the disk-space check measures the library root
+    /// (`AppState::disk_probe`; tests give it a fixed fill level).
+    pub disk_probe: DiskProbe,
 }
 
 impl CheckContext {
@@ -215,6 +231,7 @@ impl CheckContext {
             store,
             domains: state.domains.clone(),
             worker_failures: state.worker_failures.clone(),
+            disk_probe: state.disk_probe.clone(),
         })
     }
 }
@@ -244,8 +261,64 @@ pub trait HealthCheck: Send + Sync {
         DEFAULT_CHECK_TTL
     }
     /// Probe and report. Never panics on a failed probe: a failure is an
-    /// [`Outcome::error`], not an `Err`.
+    /// [`Outcome::error`], not an `Err`. A rollup is never run.
     async fn run(&self) -> Outcome;
+    /// `Some(prefix)` makes this check a **rollup**: it probes nothing, and its
+    /// result is [`summarize`](Self::summarize) over the results of the checks
+    /// whose id starts with `prefix`, worked out each time the results are read.
+    /// So it is never stale against its members, and it is never "run".
+    fn rollup_prefix(&self) -> Option<&'static str> {
+        None
+    }
+    /// For a rollup: the outcome over its members' current results (pending
+    /// ones included). `None` = pending (no member has run yet).
+    fn summarize(&self, _members: &[&CheckResult]) -> Option<Outcome> {
+        None
+    }
+}
+
+/// The result of each check in `checks`, in that order: the stored result (or
+/// pending) of a probing check, and the summary of a rollup over the members
+/// that are in `checks`. A rollup's `checked_at` is that of its newest member,
+/// or now when it has no members (a fact of the configuration).
+pub(crate) fn resolve(
+    checks: &[Arc<dyn HealthCheck>],
+    stored: &HashMap<String, CheckResult>,
+) -> Vec<CheckResult> {
+    let probed = |c: &Arc<dyn HealthCheck>| {
+        stored
+            .get(&c.id())
+            .cloned()
+            .unwrap_or_else(|| CheckResult::pending(c.id(), c.label()))
+    };
+    let members: Vec<CheckResult> = checks
+        .iter()
+        .filter(|c| c.rollup_prefix().is_none())
+        .map(probed)
+        .collect();
+    checks
+        .iter()
+        .map(|c| match c.rollup_prefix() {
+            None => probed(c),
+            Some(prefix) => {
+                let mine: Vec<&CheckResult> = members
+                    .iter()
+                    .filter(|r| r.id.starts_with(prefix))
+                    .collect();
+                match c.summarize(&mine) {
+                    Some(outcome) => {
+                        let at = mine
+                            .iter()
+                            .filter_map(|r| r.checked_at)
+                            .max()
+                            .unwrap_or_else(Utc::now);
+                        CheckResult::new(c.id(), c.label(), outcome, at)
+                    }
+                    None => CheckResult::pending(c.id(), c.label()),
+                }
+            }
+        })
+        .collect()
 }
 
 /// Something that knows which checks exist for the current configuration.
@@ -295,8 +368,9 @@ impl HealthRegistry {
     }
 
     /// The checks skadi ships, in response order: daemon, database, each
-    /// enabled domain, library root, download worker, then every configured
-    /// indexer and download client (sorted by id).
+    /// enabled domain, library root, each enabled domain's folder, disk space,
+    /// download worker, the indexer and download-client rollups, then every
+    /// configured indexer and download client (sorted by id).
     pub fn builtin() -> Self {
         Self::new()
             .with(single(|_| Arc::new(DaemonCheck)))
@@ -305,7 +379,16 @@ impl HealthRegistry {
             }))
             .with(Arc::new(DomainChecks))
             .with(single(|ctx| Arc::new(RootCheck::new(ctx.store.clone()))))
+            .with(Arc::new(DomainRootChecks))
+            .with(single(|ctx| {
+                Arc::new(DiskSpaceCheck::new(
+                    ctx.store.clone(),
+                    ctx.disk_probe.clone(),
+                ))
+            }))
             .with(single(|ctx| Arc::new(WorkerCheck::new(ctx.store.clone()))))
+            .with(single(|_| Arc::new(ProviderRollup::INDEXERS)))
+            .with(single(|_| Arc::new(ProviderRollup::DOWNLOAD_CLIENTS)))
             .with(Arc::new(ProviderChecks))
     }
 
@@ -318,24 +401,30 @@ impl HealthRegistry {
         all
     }
 
-    /// Enumerate and run every check concurrently. The result is in
-    /// registration order whatever order the checks finish in.
+    /// Enumerate and run every check concurrently, then summarize the rollups.
+    /// The result is in registration order whatever order the checks finish in.
     pub async fn run_all(&self, ctx: &CheckContext) -> Vec<CheckResult> {
         let checks = self.enumerate(ctx).await;
         let handles: Vec<_> = checks
-            .into_iter()
-            .map(|c| tokio::spawn(async move { run_check(c.as_ref()).await }))
+            .iter()
+            .filter(|c| c.rollup_prefix().is_none())
+            .map(|c| {
+                let c = Arc::clone(c);
+                tokio::spawn(async move { run_check(c.as_ref()).await })
+            })
             .collect();
-        let mut results = Vec::with_capacity(handles.len());
+        let mut results = HashMap::with_capacity(handles.len());
         for h in handles {
             match h.await {
-                Ok(r) => results.push(r),
-                // `run_check` cannot know the id once the task is gone; a panic
-                // in a check is a bug, so log it rather than inventing a row.
+                Ok(r) => {
+                    results.insert(r.id.clone(), r);
+                }
+                // A panic in a check is a bug; log it. The check reads as
+                // pending.
                 Err(e) => tracing::error!(error = %e, "a health check panicked"),
             }
         }
-        results
+        resolve(&checks, &results)
     }
 }
 
@@ -450,6 +539,7 @@ mod tests {
             store,
             domains: vec![],
             worker_failures: Arc::default(),
+            disk_probe: statvfs_probe(),
         };
         let registry = HealthRegistry::new()
             .with(Arc::new(FixedSource(vec![Arc::new(Fixed(

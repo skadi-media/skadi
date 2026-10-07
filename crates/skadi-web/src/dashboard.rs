@@ -28,13 +28,44 @@ fn rate(bps: i64) -> String {
     }
 }
 
-/// CSS dot class for a health-check status (`ok`/`warn`/`fail`).
-pub fn check_class(status: &str) -> &'static str {
-    match status {
+/// CSS dot class for a health-check level ([`api::HealthCheck::level`]):
+/// `ok`, `warn` (amber, its own state), `pending` (not checked yet), and `bad`
+/// for an error or anything unknown.
+pub fn severity_class(level: &str) -> &'static str {
+    match level {
         "ok" => "ok",
-        "warn" => "pending",
+        "warn" => "warn",
+        "pending" => "pending",
         _ => "bad",
     }
+}
+
+/// Split the checks for the dashboard's health strip: the chips, and the
+/// server's `indexers` rollup (SKADI-T-0681). Pure.
+///
+/// The per-indexer checks are left out: the rollup summarizes them, and the
+/// reasons live on the Indexers page (SKADI-T-0348). A domain or a domain folder
+/// that is ok, and a download-client summary that is ok, earn no chip: they are
+/// the normal state (SKADI-T-0580), and each download client has its own chip.
+pub fn health_strip_parts(
+    checks: Vec<api::HealthCheck>,
+) -> (Vec<api::HealthCheck>, Option<api::HealthCheck>) {
+    let mut rollup = None;
+    let mut chips = Vec::new();
+    for c in checks {
+        if c.name == "indexers" {
+            rollup = Some(c);
+            continue;
+        }
+        let quiet_when_ok = c.name.starts_with("domain:")
+            || c.name.starts_with("root:")
+            || c.name == "download-clients";
+        if c.name.starts_with("indexer:") || (quiet_when_ok && c.level() == "ok") {
+            continue;
+        }
+        chips.push(c);
+    }
+    (chips, rollup)
 }
 
 /// Presentational health-badge grid (SKADI-T-0119): pure render of `checks`,
@@ -47,7 +78,7 @@ pub fn HealthChecks(checks: Vec<api::HealthCheck>) -> impl IntoView {
     checks
         .into_iter()
         .map(|c| {
-            let cls = check_class(&c.status);
+            let cls = severity_class(c.level());
             let metric_cls = if cls == "bad" {
                 "metric check bad"
             } else {
@@ -401,21 +432,19 @@ pub fn Dashboard() -> impl IntoView {
         if cs.is_empty() {
             return view! { <p class="muted">"No checks reported."</p> }.into_any();
         }
-        // Collapse the (many) indexer checks into ONE rollup chip instead of a
-        // wall of identical red/green tiles — "all indexers down/up" reads as a
-        // summary and the individual reasons live on the Indexers page
-        // (SKADI-T-0348). Infra checks stay as their own chips.
-        let (indexers, infra): (Vec<_>, Vec<_>) =
-            cs.into_iter().partition(|c| c.name.starts_with("indexer:"));
+        // The indexer checks show as ONE chip, the server's `indexers` rollup,
+        // instead of a wall of identical red/green tiles (SKADI-T-0348); its
+        // severity is the server's, not worked out here (SKADI-T-0681).
+        let (infra, indexers) = health_strip_parts(cs);
         let infra_chips = infra
             .into_iter()
-            // A domain that is enabled and fine is the normal state of three
-            // chips out of nine; it earns a chip only when something is wrong
-            // (SKADI-T-0580).
-            .filter(|c| !(c.name.starts_with("domain:") && c.status == "ok"))
             .map(|c| {
-                let cls = check_class(&c.status);
-                let name = c.name.strip_prefix("domain:").map(str::to_string).unwrap_or(c.name.clone());
+                let cls = severity_class(c.level());
+                let name = c
+                    .name
+                    .strip_prefix("domain:")
+                    .map(str::to_string)
+                    .unwrap_or(c.name.clone());
                 view! {
                     <div class="health-chip">
                         <span class=format!("health-dot {cls}")></span>
@@ -427,21 +456,9 @@ pub fn Dashboard() -> impl IntoView {
                 }
             })
             .collect_view();
-        let rollup = (!indexers.is_empty()).then(|| {
-            let total = indexers.len();
-            let healthy = indexers.iter().filter(|c| c.status == "ok").count();
-            let cls = if healthy == total {
-                "ok"
-            } else if healthy == 0 {
-                "bad"
-            } else {
-                "warn"
-            };
-            let detail = if healthy == total {
-                format!("{total} reachable")
-            } else {
-                format!("{healthy}/{total} reachable — check Indexers")
-            };
+        let rollup = indexers.map(|c| {
+            let cls = severity_class(c.level());
+            let detail = c.detail;
             view! {
                 <A href="/indexers" attr:class="health-chip health-rollup">
                     <span class=format!("health-dot {cls}")></span>

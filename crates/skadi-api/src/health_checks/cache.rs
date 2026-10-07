@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 
-use super::{CheckContext, CheckResult, HealthCheck, HealthRegistry, run_check};
+use super::{CheckContext, CheckResult, HealthCheck, HealthRegistry, resolve, run_check};
 
 /// A [`HealthRegistry`] with the last result of each of its checks.
 pub struct HealthCache {
@@ -41,20 +41,13 @@ impl HealthCache {
     }
 
     /// Every check of the current configuration, in registry order, answered
-    /// from its stored result. A check with no stored result is pending. Runs no
+    /// from its stored result. A check with no stored result is pending; a
+    /// rollup is summarized from the stored results of its members. Runs no
     /// check.
     pub async fn snapshot(&self, ctx: &CheckContext) -> Vec<CheckResult> {
         let checks = self.registry.enumerate(ctx).await;
         let results = lock(&self.results);
-        checks
-            .iter()
-            .map(|c| {
-                results
-                    .get(&c.id())
-                    .cloned()
-                    .unwrap_or_else(|| CheckResult::pending(c.id(), c.label()))
-            })
-            .collect()
+        resolve(&checks, &results)
     }
 
     /// Run, concurrently, each check whose result is missing or older than its
@@ -72,6 +65,8 @@ impl HealthCache {
             let mut in_flight = lock(&self.in_flight);
             checks
                 .into_iter()
+                // A rollup probes nothing: it is summarized on read.
+                .filter(|c| c.rollup_prefix().is_none())
                 .filter(|c| {
                     let fresh = results
                         .get(&c.id())
@@ -104,19 +99,27 @@ impl HealthCache {
         n
     }
 
-    /// Run every check now (or only the check `id`), store the results, and
-    /// return the whole snapshot. `None` when `id` names no current check.
+    /// Run every check now (or only the check `id`; for a rollup, its
+    /// members), store the results, and return the whole snapshot. `None` when
+    /// `id` names no current check.
     pub async fn run_now(&self, ctx: &CheckContext, id: Option<&str>) -> Option<Vec<CheckResult>> {
         let checks = self.registry.enumerate(ctx).await;
         self.forget_all_but(&checks);
         let run: Vec<_> = match id {
-            None => checks,
+            None => checks
+                .into_iter()
+                .filter(|c| c.rollup_prefix().is_none())
+                .collect(),
             Some(id) => {
-                let one: Vec<_> = checks.into_iter().filter(|c| c.id() == id).collect();
-                if one.is_empty() {
-                    return None;
+                let target = checks.iter().find(|c| c.id() == id)?;
+                match target.rollup_prefix() {
+                    None => vec![target.clone()],
+                    Some(prefix) => checks
+                        .iter()
+                        .filter(|c| c.rollup_prefix().is_none() && c.id().starts_with(prefix))
+                        .cloned()
+                        .collect(),
                 }
-                one
             }
         };
         let handles: Vec<_> = run
@@ -222,6 +225,7 @@ mod tests {
                 store,
                 domains: vec![],
                 worker_failures: Arc::default(),
+                disk_probe: super::super::statvfs_probe(),
             },
         ))
     }

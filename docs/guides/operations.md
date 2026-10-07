@@ -27,7 +27,19 @@ daemon runs the checks in the background: the local checks every 30 s, the
 indexers and download clients every 5 minutes. A check that has not run yet has
 the severity `pending` and `checked_at: null`. To run the checks now, send
 `POST /api/v1/health/checks/run` (admin only; add `?id=<check id>` for one
-check). Neither the daemon nor the worker has a compose `healthcheck`; only
+check).
+
+These checks can give a warning: `disk-space` when 75 % to 90 % of the library
+filesystem is used (more than 90 % is an error); an indexer or a download
+client that answers in more than 20 s, or whose recent searches fail (the last
+search, or one search in four); a domain worker that stopped unexpectedly one or
+two times (three times is an error); and the `indexers` and `download-clients`
+summaries when some of their members do not work. These conditions are errors:
+no indexer, no download client, `library.root` not set (the default `/data` is
+not a library that you chose), and an enabled domain with no usable folder under
+the library root (`root:<domain>`).
+
+Neither the daemon nor the worker has a compose `healthcheck`; only
 gluetun, flaresolverr and postgres do — `docker compose ps` shows those three.
 
 ## Bring-up

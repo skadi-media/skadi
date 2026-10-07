@@ -123,6 +123,15 @@ pub async fn bootstrap(config: &Config, registry: &[Arc<dyn DomainModule>]) -> R
         Err(e) => tracing::warn!("first-boot provisioning failed (non-fatal): {e}"),
     }
 
+    // The curated public trackers, as before SKADI-T-0703: added and pruned on
+    // every startup (and after each definition sync). Skipped in Testing
+    // (hermetic stub indexer instead). `SKADI_DEFAULT_INDEXERS=false` opts out.
+    if mode != skadi_config::Mode::Testing
+        && let Err(e) = sync_curated_indexers(&store).await
+    {
+        tracing::warn!("reconciling the curated indexers failed (non-fatal): {e}");
+    }
+
     tracing::info!(
         backend = if is_pg { "postgres" } else { "sqlite" },
         domains = registry.len(),
@@ -132,11 +141,6 @@ pub async fn bootstrap(config: &Config, registry: &[Arc<dyn DomainModule>]) -> R
     );
     Ok(())
 }
-
-/// Comma-separated ids of every default indexer this database has been offered
-/// (SKADI-T-0703), the same seen-set idea as [`FORMATS_SEEDED_KEY`]: a default
-/// tracker the operator removed is never registered again.
-const INDEXERS_SEEDED_KEY: &str = "bootstrap.default_indexers_seen";
 
 /// How long first boot waits for the library root to answer before it gives up
 /// on enabling domains. A hung network mount must not hang the daemon's boot.
@@ -153,8 +157,6 @@ pub struct Provisioned {
     pub profiles: usize,
     /// Domains enabled (fresh database only).
     pub domains: Vec<String>,
-    /// Default indexers registered (`default_indexers` on only).
-    pub indexers: Vec<String>,
 }
 
 impl Provisioned {
@@ -174,11 +176,9 @@ impl Provisioned {
 /// 3. `fresh` (this boot created the database) → enable each domain whose
 ///    folder under an explicitly set `library.root` exists or can be created.
 ///    An existing install never has a domain enabled by boot.
-/// 4. `default_indexers` on (`SKADI_DEFAULT_INDEXERS`, default off) → register
-///    each tracker of the checked-in default set that this database has never
-///    been offered.
 ///
-/// Each action is logged. Returns what was done.
+/// Each action is logged. Returns what was done. The curated trackers are a
+/// separate pass, [`sync_curated_indexers`].
 pub async fn provision_first_boot(
     store: &Store,
     registry: &[Arc<dyn DomainModule>],
@@ -191,10 +191,6 @@ pub async fn provision_first_boot(
     };
     if fresh {
         done.domains = enable_domains_with_a_root(store, registry).await?;
-    }
-    let view = load_config_view(store).await?;
-    if view.get_bool("default_indexers").unwrap_or(false) {
-        done.indexers = seed_default_indexers(store, &view).await?;
     }
     Ok(done)
 }
@@ -348,66 +344,121 @@ async fn enable_domains_with_a_root(
     Ok(enabled)
 }
 
-/// Register each tracker of the checked-in default set
-/// ([`DEFAULT_INDEXERS`](skadi_indexers::definitions::DEFAULT_INDEXERS)) that
-/// this database has never been offered. A tracker already registered (by
-/// definition id) is recorded as offered and left alone; a tracker the operator
-/// removed is not registered again. The definitions ship in the bundle, so this
-/// works offline.
-async fn seed_default_indexers(
-    store: &Store,
-    view: &skadi_config::ConfigView,
-) -> Result<Vec<String>> {
-    use skadi_indexers::definitions::{DEFAULT_INDEXERS, DefinitionStore};
+/// Keep the **curated public trackers** registered (the behaviour since before
+/// SKADI-T-0703, kept exactly): every public, English, no-login catalog tracker
+/// with movie/TV/book/audiobook categories (no adult, no anime) is added when
+/// missing, and an auto-seeded one (`default_seeded`) that has left that scope
+/// is pruned. Operator-added trackers are never touched. A deleted curated
+/// tracker comes back on the next run: more trackers is the operator's lever
+/// against stalled single-seeder torrents (no inbound peers on the VPN).
+///
+/// Runs on every (non-testing) boot and after every definition sync. On by
+/// default; `default_indexers = false` (`SKADI_DEFAULT_INDEXERS=false`) opts
+/// out: nothing is added and nothing is pruned. Non-fatal: a catalog or HTTP
+/// failure logs and leaves the set as it is.
+pub async fn sync_curated_indexers(store: &Store) -> Result<()> {
+    use skadi_indexers::definitions::DefinitionStore;
 
-    let dir = view
-        .get_string("cardigann_definitions_dir")
+    let enabled = load_config_view(store)
+        .await
         .ok()
+        .and_then(|v| v.get_bool("default_indexers").ok())
+        .unwrap_or(true);
+    if !enabled {
+        tracing::debug!("curated indexers: default_indexers is false, nothing to reconcile");
+        return Ok(());
+    }
+
+    // 2) Every public indexer + AudioBookBay from the catalog (defaults filled in).
+    let dir = load_config_view(store)
+        .await
+        .ok()
+        .and_then(|v| v.get_string("cardigann_definitions_dir").ok())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "./definitions".into());
-    let http = skadi_http::HttpClient::new(std::time::Duration::from_secs(30))?;
-    let defs = DefinitionStore::new(dir, http);
-    let written = defs.ensure_default_set()?;
-    if !written.is_empty() {
-        tracing::info!(?written, "default indexers: wrote the bundled definitions");
-    }
-    let catalog = defs.load()?;
-
-    let mut seen: std::collections::BTreeSet<String> = store
-        .get_config(INDEXERS_SEEDED_KEY)
-        .await?
-        .map(|e| {
-            e.value
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let present: std::collections::HashSet<String> = store
-        .list_settings("indexers")
-        .await?
+    let http = match skadi_http::HttpClient::new(std::time::Duration::from_secs(30)) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!("default-providers: http client: {e}");
+            return Ok(());
+        }
+    };
+    let catalog = match DefinitionStore::new(dir, http).load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("default-providers: catalog load: {e}");
+            return Ok(());
+        }
+    };
+    let existing_settings = store.list_settings("indexers").await?;
+    let existing: std::collections::HashSet<String> = existing_settings
         .iter()
-        .filter_map(|s| s.body.get("definition_id")?.as_str().map(String::from))
+        .filter_map(|s| {
+            s.body
+                .get("definition_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
         .collect();
 
-    let before = seen.clone();
-    let mut added = Vec::new();
-    for id in DEFAULT_INDEXERS {
-        if seen.contains(*id) {
+    // Curated scope (operator decision): **English**, **Movies / TV / Books /
+    // Audiobooks**, **public** trackers only — no porn, no anime, no foreign-language.
+    // Adult is caught two ways (all-XXX categories *and* a name/description keyword,
+    // since some adult trackers file hentai under Books); anime by keyword.
+    const ADULT_KW: &[&str] = &[
+        "xxx", "porn", "adult", "hentai", "jav", "sukebei", "sex", "nsfw", "rape", "incest",
+    ];
+    const ANIME_KW: &[&str] = &[
+        "anime",
+        "bangumi",
+        "nyaa",
+        "tokyotosho",
+        "toshokan",
+        "shana",
+        "nekobt",
+        "anisource",
+        "acg",
+    ];
+    let adult_cat = |c: &str| {
+        let c = c.to_ascii_lowercase();
+        c.starts_with("xxx") || c.contains("porn") || c.contains("adult")
+    };
+    let wanted_cat = |c: &str| {
+        let c = c.to_ascii_lowercase();
+        c.starts_with("movies")
+            || c.starts_with("tv")
+            || c.starts_with("books")
+            || c.starts_with("audio/audiobook")
+    };
+
+    // The curated definition ids that should be registered right now.
+    let wanted: std::collections::HashSet<String> = catalog
+        .list()
+        .into_iter()
+        .filter(|entry| {
+            let blob =
+                format!("{} {} {}", entry.id, entry.name, entry.description).to_ascii_lowercase();
+            let public = entry.privacy == "public" && !entry.needs_login;
+            let english = entry.language.to_ascii_lowercase().starts_with("en");
+            let has_content = entry.categories.iter().any(|c| wanted_cat(c));
+            let adult = (!entry.categories.is_empty()
+                && entry.categories.iter().all(|c| adult_cat(c)))
+                || ADULT_KW.iter().any(|k| blob.contains(k));
+            let anime = ANIME_KW.iter().any(|k| blob.contains(k));
+            public && english && has_content && !adult && !anime
+        })
+        .map(|e| e.id.clone())
+        .collect();
+
+    // Seed any missing curated tracker, marked `default_seeded` so the prune below
+    // can distinguish our auto-seeds from operator-added trackers.
+    let mut added = 0;
+    for entry in catalog.list() {
+        if !wanted.contains(&entry.id) || existing.contains(&entry.id) {
             continue;
         }
-        if present.contains(*id) {
-            seen.insert((*id).to_string());
-            continue;
-        }
-        let Some(entry) = catalog.list().into_iter().find(|e| e.id == *id) else {
-            tracing::warn!(definition = %id, "default indexers: no such definition, skipped");
-            continue;
-        };
-        // Non-secret settings take their definition defaults (e.g. TPB's
-        // `apiurl=apibay.org`); public trackers need no secret.
+        // Pre-fill non-secret settings with their definition defaults (e.g. TPB's
+        // `apiurl=apibay.org`); secrets aren't needed for public trackers.
         let mut settings = serde_json::Map::new();
         for s in &entry.settings {
             if s.kind != "password"
@@ -429,17 +480,35 @@ async fn seed_default_indexers(
                 }),
             )
             .await?;
-        tracing::info!(definition = %id, name = %entry.name, "default indexers: registered the tracker");
-        seen.insert((*id).to_string());
-        added.push((*id).to_string());
+        added += 1;
     }
-    if seen != before {
-        let ids: Vec<String> = seen.into_iter().collect();
-        store
-            .set_config(INDEXERS_SEEDED_KEY, &ids.join(","), ConfigSource::Runtime)
-            .await?;
+
+    // Prune any **auto-seeded** indexer no longer in scope (the filter narrowed, or
+    // upstream dropped it). Operator-added trackers (no `default_seeded` marker) are
+    // never touched — so a hand-added private tracker is safe.
+    let mut pruned = 0;
+    for s in &existing_settings {
+        let auto = s
+            .body
+            .get("default_seeded")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let still_wanted = s
+            .body
+            .get("definition_id")
+            .and_then(|v| v.as_str())
+            .map(|d| wanted.contains(d))
+            .unwrap_or(true);
+        if auto && !still_wanted {
+            store.delete_setting("indexers", &s.id).await?;
+            pruned += 1;
+        }
     }
-    Ok(added)
+
+    if added > 0 || pruned > 0 {
+        tracing::info!(added, pruned, "curated default indexers reconciled");
+    }
+    Ok(())
 }
 
 /// Upsert every set, non-empty Tier-1 `SKADI_*` env var into the `config` table

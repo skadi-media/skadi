@@ -41,22 +41,6 @@ static BUNDLED: &[(&str, &str)] = &[
     ),
 ];
 
-/// The default indexer set (SKADI-T-0703): the definition ids that first boot
-/// registers when the operator opts in with `SKADI_DEFAULT_INDEXERS=true`.
-///
-/// Checked in on purpose, so the set is reviewed in a diff rather than computed
-/// from whatever upstream holds today. Every id is a **public** tracker that
-/// needs no login and ships in [`BUNDLED`], so the set works offline on a first
-/// run. Nyaa (anime) and TorrentLeech (private) are bundled but not in the set.
-pub const DEFAULT_INDEXERS: &[&str] = &[
-    "thepiratebay",
-    "yts",
-    "1337x",
-    "limetorrents",
-    "eztv",
-    "audiobookbay",
-];
-
 /// The default pin — `master` tracks the daily-synced upstream; an operator can
 /// pin a specific commit/tag via config for reproducibility.
 pub const DEFAULT_REVISION: &str = "master";
@@ -116,34 +100,6 @@ impl DefinitionStore {
         }
         tracing::info!(count = catalog.len(), "loaded cardigann definition catalog");
         Ok(catalog)
-    }
-
-    /// Write the bundled definition of each [`DEFAULT_INDEXERS`] id that is
-    /// missing from the store. A file that exists is never overwritten (it may
-    /// be a newer upstream sync). Returns the ids written.
-    ///
-    /// # Errors
-    /// Filesystem errors creating the directory or writing a file.
-    pub fn ensure_default_set(&self) -> Result<Vec<&'static str>> {
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|e| AppError::Internal(format!("creating definitions dir: {e}")))?;
-        let mut written = Vec::new();
-        for id in DEFAULT_INDEXERS {
-            let name = format!("{id}.yml");
-            let path = self.dir.join(&name);
-            if path.exists() {
-                continue;
-            }
-            let Some((_, content)) = BUNDLED.iter().find(|(n, _)| *n == name) else {
-                return Err(AppError::Internal(format!(
-                    "default indexer {id} has no bundled definition"
-                )));
-            };
-            std::fs::write(&path, content)
-                .map_err(|e| AppError::Internal(format!("writing bundled def {name}: {e}")))?;
-            written.push(*id);
-        }
-        Ok(written)
     }
 
     fn seed_bundled(&self) -> Result<()> {
@@ -277,50 +233,6 @@ mod tests {
         );
         assert!(defs["dup.yml"].contains("V11"));
         assert!(defs.contains_key("minitracker.yml"));
-    }
-
-    /// The checked-in default set: every id ships in the bundle, is public and
-    /// needs no login, so a first run can register it offline (SKADI-T-0703).
-    #[test]
-    fn the_default_indexer_set_is_bundled_public_and_loginless() {
-        let tmp = skadi_core::unique_temp_path("defs-default");
-        let _ = std::fs::remove_dir_all(&tmp);
-        let http = HttpClient::new(Duration::from_secs(5)).unwrap();
-        let store = DefinitionStore::new(&tmp, http);
-        let catalog = store.load().unwrap();
-        for id in DEFAULT_INDEXERS {
-            let entry = catalog
-                .list()
-                .into_iter()
-                .find(|e| e.id == *id)
-                .unwrap_or_else(|| panic!("{id} is not in the bundle"));
-            assert_eq!(entry.privacy, "public", "{id}");
-            assert!(!entry.needs_login, "{id} needs a login");
-        }
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    /// A store that predates a default (a synced volume) gets the missing
-    /// bundled file; an existing file is left as it is.
-    #[test]
-    fn ensure_default_set_writes_only_missing_files() {
-        let tmp = skadi_core::unique_temp_path("defs-ensure");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("yts.yml"), "id: yts\nname: Upstream YTS\n").unwrap();
-        let http = HttpClient::new(Duration::from_secs(5)).unwrap();
-        let store = DefinitionStore::new(&tmp, http);
-
-        let written = store.ensure_default_set().unwrap();
-        assert!(!written.contains(&"yts"), "kept the existing file");
-        assert_eq!(written.len(), DEFAULT_INDEXERS.len() - 1);
-        assert_eq!(
-            std::fs::read_to_string(tmp.join("yts.yml")).unwrap(),
-            "id: yts\nname: Upstream YTS\n"
-        );
-        assert!(tmp.join("audiobookbay.yml").exists());
-        assert!(store.ensure_default_set().unwrap().is_empty(), "second run");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

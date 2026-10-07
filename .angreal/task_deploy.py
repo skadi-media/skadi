@@ -250,7 +250,8 @@ def _DEP_write_new(path, text, mode):
         - After it, edit the VPN and storage values in .env, then run
           `angreal deploy up`. The daemon registers the built-in downloader,
           creates the default profiles and enables the domains on its first boot.
-        - --default-indexers sets SKADI_DEFAULT_INDEXERS=true.
+        - --no-default-indexers sets SKADI_DEFAULT_INDEXERS=false: the daemon
+          then does not register the curated public trackers.
         - --deploy-dir writes into another directory (a scratch copy for tests).
         """,
         risk_level="safe",
@@ -261,14 +262,14 @@ def _DEP_write_new(path, text, mode):
     help="write the secrets to deploy/secrets/* files, not to .env",
 )
 @angreal.argument(
-    name="default_indexers", long="default-indexers", takes_value=False, is_flag=True,
-    help="set SKADI_DEFAULT_INDEXERS=true: register the checked-in public trackers on first boot",
+    name="no_default_indexers", long="no-default-indexers", takes_value=False, is_flag=True,
+    help="set SKADI_DEFAULT_INDEXERS=false: do not register the curated public trackers",
 )
 @angreal.argument(
     name="deploy_dir", long="deploy-dir", takes_value=True,
     help="the directory to write into (default: deploy/ of this checkout)",
 )
-def init(secrets=False, default_indexers=False, deploy_dir=None):
+def init(secrets=False, no_default_indexers=False, deploy_dir=None):
     import secrets as _secrets
 
     target = os.path.abspath(deploy_dir) if deploy_dir else DEP_DEPLOY_DIR
@@ -321,8 +322,8 @@ def init(secrets=False, default_indexers=False, deploy_dir=None):
             _DEP_write_new(os.path.join(secrets_dir, name), "", 0o444)
     else:
         values.update(generated)
-    if default_indexers:
-        values["SKADI_DEFAULT_INDEXERS"] = "true"
+    if no_default_indexers:
+        values["SKADI_DEFAULT_INDEXERS"] = "false"
     _DEP_write_new(env_path, _DEP_render_env(example, values), 0o600)
 
     where = secrets_dir + "/" if secrets else env_path

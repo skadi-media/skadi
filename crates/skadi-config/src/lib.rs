@@ -189,13 +189,14 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
         default: "master",
         tier: Tier::Tier1,
     },
-    // Opt-in default indexer set (SKADI-T-0703): when true, boot registers each
-    // tracker in `skadi_indexers::definitions::DEFAULT_INDEXERS` that this
-    // database has never been offered. Off by default: the operator picks.
+    // The curated public trackers (SKADI-T-0703): when true (the default), each
+    // boot and each definition sync adds every curated public tracker that is
+    // missing and prunes auto-seeded ones that left the scope. false opts out:
+    // nothing is added and nothing is pruned.
     ConfigKeySpec {
         key: "default_indexers",
         kind: ValueKind::Bool,
-        default: "false",
+        default: "true",
         tier: Tier::Tier1,
     },
     // Acquisition policy. `min_seeders`: the fewest seeders a *torrent* release
@@ -700,7 +701,7 @@ pub enum ConfigError {
 pub const HELP: &[(&str, &str)] = &[
     (
         "default_indexers",
-        "true registers a checked-in set of public trackers (The Pirate Bay, YTS, 1337x, LimeTorrents, EZTV, AudioBook Bay) at boot. Set it with SKADI_DEFAULT_INDEXERS. A tracker that you remove does not come back.",
+        "true (the default) keeps every curated public tracker (English; movies, TV, books, audiobooks; no adult, no anime) registered: each boot and each definition sync adds the missing ones, and a removed one comes back. false stops this: nothing is added or pruned. Set it with SKADI_DEFAULT_INDEXERS.",
     ),
     (
         "mode",

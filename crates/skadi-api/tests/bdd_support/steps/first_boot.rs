@@ -34,15 +34,92 @@ async fn root_missing(w: &mut World) {
         .push(EnvGuard::set("SKADI_LIBRARY_ROOT", root.to_str().unwrap()));
 }
 
-#[given("the default indexers are switched on")]
-async fn default_indexers_on(w: &mut World) {
+#[given("the cardigann definitions live in a scratch folder")]
+async fn definitions_scratch(w: &mut World) {
     let defs = w.tmp().join("definitions");
-    w.env_guards
-        .push(EnvGuard::set("SKADI_DEFAULT_INDEXERS", "true"));
     w.env_guards.push(EnvGuard::set(
         "SKADI_CARDIGANN_DEFINITIONS_DIR",
         defs.to_str().unwrap(),
     ));
+}
+
+#[given("the curated trackers are switched off")]
+async fn curated_off(w: &mut World) {
+    w.env_guards
+        .push(EnvGuard::set("SKADI_DEFAULT_INDEXERS", "false"));
+}
+
+async fn put_indexer(w: &mut World, definition: &str, auto: bool) {
+    let store = w.store().await;
+    store.run_migrations().await.expect("migrations");
+    let mut body = serde_json::json!({
+        "kind": "cardigann",
+        "name": definition,
+        "definition_id": definition,
+        "settings": {},
+    });
+    if auto {
+        body["default_seeded"] = serde_json::Value::Bool(true);
+    }
+    store
+        .put_setting("indexers", &uuid::Uuid::new_v4().to_string(), &body)
+        .await
+        .unwrap();
+}
+
+#[given(expr = "an auto-seeded indexer for {string}")]
+async fn auto_seeded(w: &mut World, definition: String) {
+    put_indexer(w, &definition, true).await;
+}
+
+#[given(expr = "an operator-added indexer for {string}")]
+async fn operator_added(w: &mut World, definition: String) {
+    put_indexer(w, &definition, false).await;
+}
+
+/// What the definition sync worker does after a refresh: new files land in the
+/// definitions folder, then it reconciles the curated trackers (the same call
+/// as `skadi_api::definitions::sync_loop`). The new file is the bundled YTS
+/// definition under another id, so it is in the curated scope.
+#[when(expr = "a definition sync brings the new public tracker {string}")]
+async fn definition_sync(w: &mut World, id: String) {
+    let defs = w.tmp().join("definitions");
+    std::fs::create_dir_all(&defs).unwrap();
+    let yts = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../skadi-indexers/bundled/yts.yml"),
+    )
+    .unwrap();
+    let def = yts.replacen("id: yts", &format!("id: {id}"), 1).replacen(
+        "name: YTS",
+        &format!("name: {id}"),
+        1,
+    );
+    std::fs::write(defs.join(format!("{id}.yml")), def).unwrap();
+    let store = w.store().await;
+    skadi_api::sync_curated_indexers(&store)
+        .await
+        .expect("curated sync");
+}
+
+#[then(expr = "no indexer for {string} is registered")]
+async fn no_indexer(w: &mut World, definition: String) {
+    let rows = w.store().await.list_settings("indexers").await.unwrap();
+    assert!(
+        !rows
+            .iter()
+            .any(|s| s.body["definition_id"] == definition.as_str()),
+        "{definition} is still registered"
+    );
+}
+
+#[then(expr = "the indexer for {string} is still registered")]
+async fn still_registered(w: &mut World, definition: String) {
+    let rows = w.store().await.list_settings("indexers").await.unwrap();
+    assert!(
+        rows.iter()
+            .any(|s| s.body["definition_id"] == definition.as_str()),
+        "{definition} was removed"
+    );
 }
 
 #[given(expr = "the operator has a profile named {string}")]
@@ -191,7 +268,7 @@ async fn downloader_under_root(w: &mut World) {
     );
 }
 
-#[then(expr = "the indexer {string} is registered from the default set")]
+#[then(expr = "the indexer {string} is registered from the curated set")]
 async fn default_indexer(w: &mut World, definition: String) {
     let rows = w.store().await.list_settings("indexers").await.unwrap();
     let row = rows

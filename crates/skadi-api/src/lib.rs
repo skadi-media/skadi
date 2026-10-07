@@ -50,7 +50,7 @@ pub use auth::{BEARER_ENV, bearer_auth};
 pub use blocklist::blocklist_router;
 pub use bootstrap::{
     Provisioned, bootstrap, ensure_cloacina_database, load_config_view, provision_first_boot,
-    seed_config_from_env, seed_mode_presets,
+    seed_config_from_env, seed_mode_presets, sync_curated_indexers,
 };
 pub use config::{BIND_ADDR_ENV, Config, DATABASE_URL_ENV};
 pub use diagnostics::{RootFolderReport, diagnostics_router};

@@ -71,7 +71,7 @@ stack out of its database. Options:
 
 - `--secrets` writes the three secrets to files under `deploy/secrets/` and
   leaves them empty in `.env` (see [Secrets from files](#secrets-from-files)).
-- `--default-indexers` sets `SKADI_DEFAULT_INDEXERS=true` (see below).
+- `--no-default-indexers` sets `SKADI_DEFAULT_INDEXERS=false` (see below).
 
 In `.env`, set the VPN values (`VPN_SERVICE_PROVIDER`, `OPENVPN_USER` and
 `OPENVPN_PASSWORD`, or the WireGuard values) and the storage values
@@ -295,17 +295,18 @@ logs each action (`first boot: …` in `angreal deploy logs`):
 | there is no download client | registers the built-in **skadi** downloader (downloads under `<SKADI_LIBRARY_ROOT>/downloads`) |
 | there is no quality profile | creates the default profiles (Any, SD, HD-720p, HD-1080p, HD-720p/1080p, Ultra-HD) |
 | the database is new | enables each domain (movies, TV, audiobooks) whose folder under `SKADI_LIBRARY_ROOT` exists or can be created |
-| `SKADI_DEFAULT_INDEXERS=true` | registers each tracker of the checked-in public set (The Pirate Bay, YTS, 1337x, LimeTorrents, EZTV, AudioBook Bay) that the database has never had |
 
-An install that already has these is not changed. A domain that you disable, or
-a default tracker that you remove, stays that way after a restart. If the
-library root was not mounted on the first boot, no domain is enabled: enable
-them on the Config page.
+An install that already has these is not changed. A domain that you disable
+stays disabled after a restart. If the library root was not mounted on the
+first boot, no domain is enabled: enable them on the Config page.
 
-The default trackers are off unless you ask for them. Without them, add trackers
-in the UI (**Indexers → "+ Add tracker"**) before a search can find anything.
-The definitions ship in the image (`crates/skadi-indexers/bundled/`), and the
-list is `DEFAULT_INDEXERS` in `crates/skadi-indexers/src/definitions.rs`.
+**Trackers.** Each boot, and each definition sync, registers every curated
+public tracker that is missing: public, English, no login, with movie, TV, book
+or audiobook categories, and no adult or anime trackers. An auto-registered
+tracker that leaves that scope is removed. A curated tracker that you remove
+comes back: more trackers help a torrent with few seeders. Trackers that you add
+in the UI (**Indexers → "+ Add tracker"**) are never touched. To stop this, set
+`SKADI_DEFAULT_INDEXERS=false`: then nothing is added or removed.
 
 Then add a movie in the UI (or `skadi add-movie --tmdb-id 603`). The search
 starts at once. The worker downloads over the VPN into

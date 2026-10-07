@@ -1,6 +1,6 @@
 //! The checks skadi ships: daemon, database, enabled domains (and their
 //! worker failures), library root, each enabled domain's folder, disk space,
-//! download worker, the reachability of each configured provider, and the
+//! download worker (the VPN check is in `vpn.rs`), the reachability of each configured provider, and the
 //! indexer and download-client rollups (SKADI-T-0679, SKADI-T-0681).
 
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ const CHECK_CACHED_FAILS: u32 = 3;
 /// How stale a worker heartbeat may be before the worker counts as silent. The
 /// worker ticks every few seconds; two minutes is well clear of a slow tick and
 /// still notices a wedged or dead worker promptly.
-const WORKER_SILENT_AFTER: chrono::Duration = chrono::Duration::minutes(2);
+pub(super) const WORKER_SILENT_AFTER: chrono::Duration = chrono::Duration::minutes(2);
 
 /// Used space of the library root's filesystem at which `disk-space` warns
 /// (Sonarr warns on low free space too). From here to

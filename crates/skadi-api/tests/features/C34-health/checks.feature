@@ -223,7 +223,7 @@ Feature: C34 health check model, cache, warnings and config sanity
 
   # ---- VPN egress (SKADI-T-0683) --------------------------------------------
 
-  @C34 @gap @serial
+  @C34 @passing @serial
   Scenario: the worker's egress differs from gluetun's exit, so the VPN check is an error
     Given a gluetun whose tunnel is "running" with the exit IP "203.0.113.7"
     And the download worker "worker-a" heartbeated just now with the egress IP "198.51.100.9"
@@ -234,7 +234,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the health check "vpn" message contains "203.0.113.7"
     And the health check "vpn" has a remediation
 
-  @C34 @gap @serial
+  @C34 @passing @serial
   Scenario: the worker's egress equals gluetun's exit, so the VPN check is ok
     Given a gluetun whose tunnel is "running" with the exit IP "203.0.113.7"
     And the download worker "worker-a" heartbeated just now with the egress IP "203.0.113.7"
@@ -242,10 +242,35 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the client requests GET "/api/v1/health/checks"
     Then the health check "vpn" has severity "ok"
 
-  @C34 @gap @serial
+  @C34 @passing @serial
   Scenario: a VPN tunnel that is down is an error
     Given a gluetun whose tunnel is "stopped" with the exit IP "203.0.113.7"
     When the health checks have run
     And the client requests GET "/api/v1/health/checks"
     Then the health check "vpn" has severity "error"
     And the health check "vpn" has a remediation
+
+  @C34 @passing @serial
+  Scenario: an unreachable gluetun is an error
+    Given a gluetun control server that does not answer
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
+    Then the health check "vpn" has severity "error"
+    And the health check "vpn" message contains "did not answer"
+    And the health check "vpn" has a remediation
+
+  @C34 @passing @serial
+  Scenario: a worker that cannot see gluetun on its loopback is a warning
+    Given a gluetun whose tunnel is "running" with the exit IP "203.0.113.7"
+    And the download worker "worker-a" heartbeated just now without an egress IP
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
+    Then the health check "vpn" has severity "warn"
+    And the health check "vpn" remediation contains "network_mode: service:gluetun"
+
+  @C34 @passing @serial
+  Scenario: a deploy without a VPN has no VPN check
+    Given no VPN is configured
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
+    Then there is no health check "vpn"

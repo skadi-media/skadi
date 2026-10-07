@@ -31,6 +31,7 @@ use skadi_store::{
 /// This worker build's version, reported in its liveness heartbeat (SKADI-T-0288).
 const WORKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod egress;
 pub mod seed_policy;
 pub use seed_policy::{SeedAction, SeedPolicy, SeedVerdict};
 
@@ -677,11 +678,19 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
     // Last-applied live settings, so we log only on an actual change (not every tick).
     let mut last_live: Option<LiveSettings> = None;
+    // The egress IP the heartbeat carries (SKADI-T-0683): asked of gluetun on
+    // loopback, at most once a minute (see `egress`).
+    let mut egress = egress::EgressProbe::from_env();
     loop {
         // Liveness heartbeat (SKADI-T-0288): upsert our last-seen every tick,
         // independent of claimed jobs, so the daemon can tell a healthy-idle worker
-        // from a dead one (the per-job lease can't — no job, no signal).
-        if let Err(e) = store.heartbeat_worker(&cfg.worker_id, WORKER_VERSION).await {
+        // from a dead one (the per-job lease can't — no job, no signal). It carries
+        // the egress IP this worker sees, for the daemon's `vpn` check.
+        let egress_ip = egress.current().await;
+        if let Err(e) = store
+            .heartbeat_worker(&cfg.worker_id, WORKER_VERSION, egress_ip.as_deref())
+            .await
+        {
             tracing::debug!("worker heartbeat failed: {e}");
         }
         // The same liveness, as a file the container healthcheck can read

@@ -6,8 +6,8 @@
 //! free space (`/root-folders`, T-0116), in-flight count (`/activity`), and one
 //! card per enabled domain (`/domains`) with counts derived client-side from
 //! that domain's library — `/movies` for movies, `/books` for audiobooks
-//! (T-0143). Sensors without a backend (download throughput, VPN egress) render
-//! as labelled placeholders — never faked numbers.
+//! (T-0143). The VPN (tunnel, exit IP, the worker's egress) is the `vpn` health
+//! check (SKADI-T-0683) and shows in the health strip with the rest.
 
 use std::collections::HashMap;
 

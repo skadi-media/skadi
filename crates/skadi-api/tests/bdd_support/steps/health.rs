@@ -42,7 +42,7 @@ async fn library_root_missing(w: &mut World, path: String) {
 async fn worker_heartbeat(w: &mut World, id: String) {
     w.store()
         .await
-        .heartbeat_worker(&id, "0.0.0-test")
+        .heartbeat_worker(&id, "0.0.0-test", None)
         .await
         .expect("heartbeat");
 }

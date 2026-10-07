@@ -1,10 +1,9 @@
 //! Health check model, cache, warning and config-sanity steps (C34,
 //! COLLIERY-I-0294) for `C34-health/checks.feature`.
 //!
-//! The fixtures that the code of today can build are real: fake providers and a
-//! fake gluetun (wiremock), a backdated worker heartbeat, recorded domain-worker
-//! failures. The fixtures that still need a seam the code does not have panic and name
-//! the task that adds it (`todo_seam`).
+//! The fixtures are real: fake providers and a fake gluetun (wiremock), a
+//! backdated worker heartbeat (with the egress IP it observed), recorded
+//! domain-worker failures.
 //!
 //! Checks are looked up by `id`, falling back to `name` (the pre-T-0679 field), in
 //! a bare array or in an object with a `checks` array.
@@ -48,12 +47,6 @@ fn checked_at(check: &serde_json::Value) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(raw)
         .unwrap_or_else(|e| panic!("checked_at {raw:?} is not RFC 3339: {e}"))
         .with_timezone(&chrono::Utc)
-}
-
-/// A fixture that needs a seam the code does not have yet. The task that turns
-/// the scenario `@passing` replaces the panic with the real fixture.
-fn todo_seam(task: &str, what: &str) -> ! {
-    panic!("fixture not built yet ({task}): {what}")
 }
 
 /// Store an indexer setting that points at `base_url`; remember its id by name.
@@ -174,6 +167,27 @@ async fn fake_gluetun(w: &mut World, status: String, exit_ip: String) {
     w.env_guards
         .push(EnvGuard::set("SKADI_GLUETUN_CONTROL_URL", &server.uri()));
     w.fakes.insert("gluetun".into(), Fake::new(server));
+}
+
+/// A deploy that names a gluetun control server where nothing listens.
+#[given("a gluetun control server that does not answer")]
+async fn silent_gluetun(w: &mut World) {
+    // Bind then drop: a loopback port with nothing on it.
+    let addr = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("addr");
+    w.env_guards.push(EnvGuard::set(
+        "SKADI_GLUETUN_CONTROL_URL",
+        &format!("http://{addr}"),
+    ));
+}
+
+/// A deploy without a VPN: `SKADI_GLUETUN_CONTROL_URL` empty (the lab).
+#[given("no VPN is configured")]
+async fn no_vpn(w: &mut World) {
+    w.env_guards
+        .push(EnvGuard::set("SKADI_GLUETUN_CONTROL_URL", ""));
 }
 
 // ---- configuration -------------------------------------------------------------
@@ -350,7 +364,7 @@ async fn worker_failures(w: &mut World, n: u64, domain: String) {
 async fn stale_heartbeat(w: &mut World, id: String, minutes: i64) {
     let store = w.store().await;
     store
-        .heartbeat_worker(&id, "0.0.0-test")
+        .heartbeat_worker(&id, "0.0.0-test", None)
         .await
         .expect("heartbeat");
     let at = chrono::Utc::now() - chrono::Duration::minutes(minutes);
@@ -391,19 +405,26 @@ async fn stale_heartbeat(w: &mut World, id: String, minutes: i64) {
     );
 }
 
-/// SKADI-T-0683: the heartbeat row has no egress field yet. The task adds it
-/// (the worker reports the IP it sees) and writes it here.
+/// A fresh heartbeat that carries the egress IP the worker observed
+/// (SKADI-T-0683).
 #[given(expr = "the download worker {string} heartbeated just now with the egress IP {string}")]
 async fn heartbeat_with_egress(w: &mut World, id: String, egress: String) {
     w.store()
         .await
-        .heartbeat_worker(&id, "0.0.0-test")
+        .heartbeat_worker(&id, "0.0.0-test", Some(&egress))
         .await
         .expect("heartbeat");
-    todo_seam(
-        "SKADI-T-0683",
-        &format!("record the egress IP {egress} on the heartbeat of {id}"),
-    );
+}
+
+/// A fresh heartbeat from a worker that could not observe its egress (no
+/// gluetun on its loopback: it is outside gluetun's network namespace).
+#[given(expr = "the download worker {string} heartbeated just now without an egress IP")]
+async fn heartbeat_without_egress(w: &mut World, id: String) {
+    w.store()
+        .await
+        .heartbeat_worker(&id, "0.0.0-test", None)
+        .await
+        .expect("heartbeat");
 }
 
 // ---- assertions ----------------------------------------------------------------
@@ -437,6 +458,16 @@ async fn every_severity_in(w: &mut World, allowed: String) {
             "severity {s:?} not in {allowed:?}: {c}"
         );
     }
+}
+
+#[then(expr = "there is no health check {string}")]
+async fn no_such_check(w: &mut World, id: String) {
+    let all = checks(w);
+    assert!(
+        !all.iter().any(|c| c["id"] == id.as_str()),
+        "unexpected health check {id:?} in {}",
+        w.reply().text
+    );
 }
 
 #[then(expr = "the health check {string} has severity {string}")]

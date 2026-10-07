@@ -188,6 +188,19 @@ fn the_health_strip_uses_the_server_indexer_rollup() {
 }
 
 #[wasm_bindgen_test]
+fn the_vpn_check_shows_in_the_health_strip_ok_or_not() {
+    // SKADI-T-0683: a leak must be visible, and an ok tunnel is worth seeing.
+    for (status, severity) in [("ok", "ok"), ("warn", "warn"), ("fail", "error")] {
+        let (chips, _) = health_strip_parts(vec![
+            check("database", "ok", Some("ok")),
+            check("vpn", status, Some(severity)),
+        ]);
+        let names: Vec<_> = chips.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["database", "vpn"], "severity {severity}");
+    }
+}
+
+#[wasm_bindgen_test]
 fn download_progress_extracts_fraction() {
     assert_eq!(
         download_progress(&json!({"Downloading": {"release": "r", "progress": 0.42}})),

@@ -33,6 +33,15 @@ torrent traffic stops. This is structural — there is no client setting that ca
 leak around it. The **daemon stays outside** the namespace, so the UI/API and
 metadata keep working during a tunnel outage.
 
+The `vpn` health check (System → Health, and the dashboard strip) watches this:
+it is an error when gluetun does not answer or the tunnel is down, and when the
+worker's egress IP differs from gluetun's exit IP. The worker reads its egress
+once a minute from gluetun's control server on its own loopback
+(`SKADI_WORKER_GLUETUN_URL`, default `http://127.0.0.1:8000`), which only answers
+inside gluetun's namespace, so this adds no outside traffic. A worker that cannot
+reach it is a warning: it is probably outside the namespace. The daemon's
+`SKADI_GLUETUN_CONTROL_URL` turns the check on; the lab leaves it empty.
+
 **The download interface is the database.** The daemon and the worker never call
 each other: the daemon enqueues a row in the `downloads` table, the worker (in
 the VPN namespace) claims it, downloads via librqbit, and writes progress back.

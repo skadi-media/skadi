@@ -54,6 +54,8 @@ services:
       # Empty = unset for skadi-config: no VPN proxy / solver in the lab.
       SKADI_CARDIGANN_PROXY_URL: ""
       SKADI_FLARESOLVERR_URL: ""
+      # No gluetun in the lab, so no `vpn` health check (SKADI-T-0683).
+      SKADI_GLUETUN_CONTROL_URL: ""
     volumes: !override
       - cardigann-defs:/data/definitions
       - ./apk:/apk:ro

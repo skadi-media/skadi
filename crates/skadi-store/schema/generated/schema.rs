@@ -147,13 +147,14 @@ diesel::table! {
 }
 
 diesel::table! {
-    use diesel::sql_types::Text;
+    use diesel::sql_types::{Nullable, Text};
     use diesel_dualdb::sql_types::Timestamp;
 
     worker_status (worker_id) {
         worker_id -> Text,
         last_seen_at -> Timestamp,
         version -> Text,
+        egress_ip -> Nullable<Text>,
     }
 }
 

@@ -29,6 +29,7 @@
 
 mod builtin;
 mod cache;
+mod vpn;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,6 +52,7 @@ pub use builtin::{
     ProviderRollup, RootCheck, WorkerCheck,
 };
 pub use cache::HealthCache;
+pub use vpn::{VpnCheck, VpnChecks};
 
 /// How bad a check result is.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -393,6 +395,7 @@ impl HealthRegistry {
                 ))
             }))
             .with(single(|ctx| Arc::new(WorkerCheck::new(ctx.store.clone()))))
+            .with(Arc::new(VpnChecks))
             .with(single(|_| Arc::new(ProviderRollup::INDEXERS)))
             .with(single(|_| Arc::new(ProviderRollup::DOWNLOAD_CLIENTS)))
             .with(Arc::new(ProviderChecks))

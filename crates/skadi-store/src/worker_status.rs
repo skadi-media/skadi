@@ -23,6 +23,11 @@ pub struct WorkerStatus {
     pub worker_id: String,
     pub last_seen_at: DateTime<Utc>,
     pub version: String,
+    /// The public IP the worker observed for its own egress at its last
+    /// heartbeat (SKADI-T-0683): what gluetun's control server answered on the
+    /// worker's loopback. `None` = it could not ask (no gluetun in its network
+    /// namespace), or an older worker.
+    pub egress_ip: Option<String>,
 }
 
 impl WorkerStatus {
@@ -37,18 +42,29 @@ impl WorkerStatus {
 /// Upsert + read worker liveness.
 #[async_trait]
 pub trait WorkerStatusRepo: Send + Sync {
-    /// Upsert this worker's heartbeat (by `worker_id`) — called every tick.
-    async fn heartbeat_worker(&self, worker_id: &str, version: &str) -> Result<()>;
+    /// Upsert this worker's heartbeat (by `worker_id`) — called every tick —
+    /// with the egress IP it last observed (`None` overwrites a previous one:
+    /// the heartbeat says what the worker sees now).
+    async fn heartbeat_worker(
+        &self,
+        worker_id: &str,
+        version: &str,
+        egress_ip: Option<&str>,
+    ) -> Result<()>;
     /// The most-recently-seen worker, if any (drives "is the worker up").
     async fn latest_worker_status(&self) -> Result<Option<WorkerStatus>>;
 }
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset)]
 #[diesel(table_name = worker_status)]
+// A beat without an egress IP must clear the last one, not keep it: the
+// default changeset skips `None` fields, which would leave a stale "match".
+#[diesel(treat_none_as_null = true)]
 struct Row {
     worker_id: String,
     last_seen_at: Timestamp,
     version: String,
+    egress_ip: Option<String>,
 }
 
 impl From<Row> for WorkerStatus {
@@ -57,17 +73,24 @@ impl From<Row> for WorkerStatus {
             worker_id: r.worker_id,
             last_seen_at: r.last_seen_at.0,
             version: r.version,
+            egress_ip: r.egress_ip,
         }
     }
 }
 
 #[async_trait]
 impl WorkerStatusRepo for Store {
-    async fn heartbeat_worker(&self, worker_id: &str, version: &str) -> Result<()> {
+    async fn heartbeat_worker(
+        &self,
+        worker_id: &str,
+        version: &str,
+        egress_ip: Option<&str>,
+    ) -> Result<()> {
         let row = Row {
             worker_id: worker_id.to_string(),
             last_seen_at: Timestamp(Utc::now()),
             version: version.to_string(),
+            egress_ip: egress_ip.map(str::to_string),
         };
         self.with_conn(move |conn| {
             conn.dispatch(
@@ -128,19 +151,29 @@ mod tests {
             "none before any beat"
         );
 
-        store.heartbeat_worker("w1", "0.0.1").await.unwrap();
+        store.heartbeat_worker("w1", "0.0.1", None).await.unwrap();
         let s = store.latest_worker_status().await.unwrap().unwrap();
         assert_eq!(s.worker_id, "w1");
         assert_eq!(s.version, "0.0.1");
+        assert_eq!(s.egress_ip, None);
         assert!(
             s.is_fresh(chrono::Duration::seconds(30)),
             "just-written beat is fresh"
         );
 
         // A second beat upserts the same row (no duplicate).
-        store.heartbeat_worker("w1", "0.0.2").await.unwrap();
+        store
+            .heartbeat_worker("w1", "0.0.2", Some("203.0.113.7"))
+            .await
+            .unwrap();
         let s = store.latest_worker_status().await.unwrap().unwrap();
         assert_eq!(s.version, "0.0.2", "upsert updates in place");
+        assert_eq!(s.egress_ip.as_deref(), Some("203.0.113.7"));
+
+        // A beat that observed nothing clears the old IP: no stale "match".
+        store.heartbeat_worker("w1", "0.0.2", None).await.unwrap();
+        let s = store.latest_worker_status().await.unwrap().unwrap();
+        assert_eq!(s.egress_ip, None, "the heartbeat says what is seen now");
     }
 
     #[test]
@@ -149,6 +182,7 @@ mod tests {
             worker_id: "w".into(),
             last_seen_at: Utc::now() - chrono::Duration::seconds(120),
             version: "0".into(),
+            egress_ip: None,
         };
         assert!(!stale.is_fresh(chrono::Duration::seconds(30)));
         assert!(stale.is_fresh(chrono::Duration::seconds(300)));

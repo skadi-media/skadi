@@ -415,6 +415,10 @@ services:
       SKADI_CARDIGANN_DEFINITIONS_DIR: /data/definitions
       SKADI_CARDIGANN_PROXY_URL: http://gluetun:8888
       SKADI_FLARESOLVERR_URL: http://gluetun:8191
+      # gluetun's control server: the VPN panel on Downloads and the `vpn` health
+      # check (SKADI-T-0683: tunnel up, exit IP, the worker egresses from it).
+      # Setting it is what says "this deploy has a VPN"; empty = no `vpn` check.
+      SKADI_GLUETUN_CONTROL_URL: http://gluetun:8000
       # The single library root (SKADI-I-0045/T-0302): skadi OWNS the layout under
       # this one writable mount — movies under movie/, TV under television/,
       # audiobooks under audiobook/, downloads under downloads/{complete,incomplete}.

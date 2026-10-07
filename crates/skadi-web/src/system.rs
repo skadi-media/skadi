@@ -17,6 +17,7 @@ use leptos::task::spawn_local;
 
 use crate::api;
 use crate::dashboard::severity_class;
+use crate::loading::{ListLoad, SkeletonKind};
 
 /// How many log lines to ask for: the daemon's whole ring (`logbuf::CAPACITY`).
 pub const LOG_PAGE: usize = 500;
@@ -162,52 +163,55 @@ pub fn SystemPage() -> impl IntoView {
 /// The four panels and their fetches. Mounted for the admin only.
 #[component]
 fn SystemPanels() -> impl IntoView {
+    // Each panel has its own load state, skeleton and Retry (SKADI-T-0698).
     let status = RwSignal::new(None::<api::SystemStatus>);
-    let status_err = RwSignal::new(None::<String>);
+    let status_load = ListLoad::new();
     let checks = RwSignal::new(Vec::<api::HealthCheck>::new());
-    let checks_err = RwSignal::new(None::<String>);
+    let checks_load = ListLoad::new();
     let running = RwSignal::new(false);
     let tasks = RwSignal::new(Vec::<api::SystemTask>::new());
-    let tasks_err = RwSignal::new(None::<String>);
+    let tasks_load = ListLoad::new();
     let logs = RwSignal::new(Vec::<api::LogLine>::new());
-    let logs_err = RwSignal::new(None::<String>);
+    let logs_load = ListLoad::new();
     let logs_loading = RwSignal::new(false);
     let log_min = RwSignal::new(String::from("TRACE"));
 
+    let load_status = move || {
+        spawn_local(async move {
+            if let Some(s) = status_load.settle(api::system_status().await.map_err(|e| e.0)) {
+                let _ = status.try_set(Some(s));
+            }
+        });
+    };
+    let load_checks = move || {
+        spawn_local(async move {
+            if let Some(c) = checks_load.settle(api::health_checks().await.map_err(|e| e.0)) {
+                let _ = checks.try_set(c);
+            }
+        });
+    };
+    let load_tasks = move || {
+        spawn_local(async move {
+            if let Some(t) = tasks_load.settle(api::system_tasks().await.map_err(|e| e.0)) {
+                let _ = tasks.try_set(t);
+            }
+        });
+    };
     let load_logs = move || {
         logs_loading.set(true);
         spawn_local(async move {
-            match api::system_log(LOG_PAGE).await {
-                Ok(l) => {
-                    logs.set(l);
-                    logs_err.set(None);
-                }
-                Err(e) => logs_err.set(Some(e.0)),
+            if let Some(l) = logs_load.settle(api::system_log(LOG_PAGE).await.map_err(|e| e.0)) {
+                let _ = logs.try_set(l);
             }
-            logs_loading.set(false);
+            let _ = logs_loading.try_set(false);
         });
     };
 
     // Each panel loads on its own: a failed one never blanks the others.
     Effect::new(move |_| {
-        spawn_local(async move {
-            match api::system_status().await {
-                Ok(s) => status.set(Some(s)),
-                Err(e) => status_err.set(Some(e.0)),
-            }
-        });
-        spawn_local(async move {
-            match api::health_checks().await {
-                Ok(c) => checks.set(c),
-                Err(e) => checks_err.set(Some(e.0)),
-            }
-        });
-        spawn_local(async move {
-            match api::system_tasks().await {
-                Ok(t) => tasks.set(t),
-                Err(e) => tasks_err.set(Some(e.0)),
-            }
-        });
+        load_status();
+        load_checks();
+        load_tasks();
         load_logs();
     });
 
@@ -217,22 +221,11 @@ fn SystemPanels() -> impl IntoView {
         }
         running.set(true);
         spawn_local(async move {
-            match api::run_health_checks().await {
-                Ok(c) => {
-                    checks.set(c);
-                    checks_err.set(None);
-                }
-                Err(e) => checks_err.set(Some(e.0)),
+            if let Some(c) = checks_load.settle(api::run_health_checks().await.map_err(|e| e.0)) {
+                let _ = checks.try_set(c);
             }
-            running.set(false);
+            let _ = running.try_set(false);
         });
-    };
-
-    let error_line = |e: RwSignal<Option<String>>| {
-        move || {
-            e.get()
-                .map(|e| view! { <p class="bad">"Load failed: " {e}</p> })
-        }
     };
 
     view! {
@@ -243,7 +236,7 @@ fn SystemPanels() -> impl IntoView {
                     <p class="muted">"The running daemon and what it is built from."</p>
                 </div>
             </div>
-            {error_line(status_err)}
+            {status_load.status_n(SkeletonKind::Rows, Some(3), Callback::new(move |()| load_status()))}
             {move || status.get().map(|s| view! { <StatusFacts status=s/> })}
         </section>
 
@@ -259,8 +252,8 @@ fn SystemPanels() -> impl IntoView {
                     {move || if running.get() { "Running…" } else { "Run now" }}
                 </button>
             </div>
-            {error_line(checks_err)}
-            {move || view! { <CheckTable checks=checks.get()/> }}
+            {checks_load.status(SkeletonKind::Rows, Callback::new(move |()| load_checks()))}
+            {move || checks_load.is_loaded().then(|| view! { <CheckTable checks=checks.get()/> })}
         </section>
 
         <section class="provider-section">
@@ -270,8 +263,8 @@ fn SystemPanels() -> impl IntoView {
                     <p class="muted">"The jobs the daemon runs on a timer."</p>
                 </div>
             </div>
-            {error_line(tasks_err)}
-            {move || view! { <TaskTable tasks=tasks.get()/> }}
+            {tasks_load.status(SkeletonKind::Rows, Callback::new(move |()| load_tasks()))}
+            {move || tasks_load.is_loaded().then(|| view! { <TaskTable tasks=tasks.get()/> })}
         </section>
 
         <section class="provider-section">
@@ -299,8 +292,8 @@ fn SystemPanels() -> impl IntoView {
                     </button>
                 </div>
             </div>
-            {error_line(logs_err)}
-            {move || view! { <LogTable lines=filter_log(&logs.get(), &log_min.get())/> }}
+            {logs_load.status(SkeletonKind::Rows, Callback::new(move |()| load_logs()))}
+            {move || logs_load.is_loaded().then(|| view! { <LogTable lines=filter_log(&logs.get(), &log_min.get())/> })}
         </section>
     }
 }

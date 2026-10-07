@@ -257,20 +257,23 @@ pub fn ListenPage() -> impl leptos::IntoView {
     use leptos::prelude::*;
     use leptos_router::components::A;
     let books = RwSignal::new(Vec::<OfflineBook>::new());
-    let loaded = RwSignal::new(false);
+    // The device index cannot fail to read (a missing one is empty), so this
+    // only drives the first-load skeleton (SKADI-T-0698).
+    let load = crate::loading::ListLoad::new();
     let reload = move || {
         leptos::task::spawn_local(async move {
             let list = read_index().await;
             let _ = books.try_set(list);
-            let _ = loaded.try_set(true);
+            load.done();
         });
     };
     Effect::new(move |_| reload());
 
     let shelf = move || {
         let list = books.get();
-        if !loaded.get() {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+        if !load.is_loaded() {
+            use crate::loading::{Skeleton, SkeletonKind};
+            return view! { <Skeleton kind=SkeletonKind::Rows count=3/> }.into_any();
         }
         if list.is_empty() {
             return view! {

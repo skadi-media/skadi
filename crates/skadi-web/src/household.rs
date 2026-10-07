@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::api::{self, MaxRating, Member, Policy};
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::loading::{ListLoad, SkeletonKind};
 
 /// The ordered US scales (skadi-core `rating`): a ceiling is one of these.
 #[must_use]
@@ -212,7 +213,10 @@ enum Editor {
 #[component]
 pub fn HouseholdPage() -> impl IntoView {
     let members = RwSignal::new(Vec::<Member>::new());
-    let load_error = RwSignal::new(None::<String>);
+    // The member list's first load, failure and Retry (SKADI-T-0698).
+    let list = ListLoad::new();
+    // A failed member action (re-issue, sign out, remove).
+    let action_error = RwSignal::new(None::<String>);
     let library = RwSignal::new(Library::default());
     // The open editor survives a refresh (SKADI-T-0596 rule).
     let editor = crate::persist::persisted("household.editor".to_string(), Editor::Closed);
@@ -234,12 +238,9 @@ pub fn HouseholdPage() -> impl IntoView {
 
     let refresh = move || {
         spawn_local(async move {
-            match api::list_members().await {
-                Ok(list) => {
-                    members.set(list);
-                    load_error.set(None);
-                }
-                Err(e) => load_error.set(Some(e.to_string())),
+            if let Some(found) = list.settle(api::list_members().await) {
+                let _ = members.try_set(found);
+                let _ = action_error.try_set(None);
             }
         });
     };
@@ -430,7 +431,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     qr_for.set(None);
                     refresh();
                 }
-                Err(e) => load_error.set(Some(e.to_string())),
+                Err(e) => action_error.set(Some(e.to_string())),
             }
         });
     };
@@ -447,7 +448,7 @@ pub fn HouseholdPage() -> impl IntoView {
             }
             match api::signout_member(&m.id).await {
                 Ok(_) => refresh(),
-                Err(e) => load_error.set(Some(e.to_string())),
+                Err(e) => action_error.set(Some(e.to_string())),
             }
         });
     };
@@ -468,7 +469,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     }
                     refresh();
                 }
-                Err(e) => load_error.set(Some(e.to_string())),
+                Err(e) => action_error.set(Some(e.to_string())),
             }
         });
     };
@@ -702,8 +703,9 @@ pub fn HouseholdPage() -> impl IntoView {
                 </div>
                 <button on:click=open_add>"+ Add member"</button>
             </div>
-            {move || load_error.get().map(|e| view! { <p class="bad">{e}</p> })}
+            {move || action_error.get().map(|e| view! { <p class="bad">{e}</p> })}
             {token_panel}
+            {list.status(SkeletonKind::Cards, Callback::new(move |()| refresh()))}
             <div class="cards">{rows}</div>
             {form_panel}
         </section>

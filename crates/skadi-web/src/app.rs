@@ -22,6 +22,7 @@ use crate::confirm::{ConfirmDialogHost, ConfirmSpec, confirm};
 use crate::dashboard::Dashboard;
 use crate::import::LibraryImportPage;
 use crate::library_toolbar::{local_get, local_set};
+use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{MovieDetailPage, MoviesConfigPage, MoviesPage};
 use crate::settings::{ProviderSection, indexer_spec};
 use crate::tv::{SeriesDetailPage, TvPage};
@@ -708,7 +709,7 @@ fn HealthBadge() -> impl IntoView {
 
 /// Indexers (system-wide) — Torznab providers.
 #[component]
-fn IndexersPage() -> impl IntoView {
+pub fn IndexersPage() -> impl IntoView {
     view! {
         <crate::subnav::SubNav/>
         <ProviderSection spec=indexer_spec()/>
@@ -721,7 +722,7 @@ fn IndexersPage() -> impl IntoView {
 /// needs no host or secret; its download paths default and are editable only
 /// via the settings API.
 #[component]
-fn DownloadersPage() -> impl IntoView {
+pub fn DownloadersPage() -> impl IntoView {
     // The skadi torrent worker is the *only* downloader — auto-registered on boot,
     // zero-config — so this page is its control surface: engine status + the live
     // torrent list (SKADI-T-0170 / I-0041). The engine status reads the worker's
@@ -941,7 +942,8 @@ fn DownloadsSection() -> impl IntoView {
     let jobs = RwSignal::new(Vec::<api::Download>::new());
     // acquirable-ref -> (title, media tag), so a job shows a name + FILM/BOOK chip.
     let titles = RwSignal::new(HashMap::<String, (String, &'static str)>::new());
-    let loaded = RwSignal::new(false);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     let alive = RwSignal::new(true);
 
     // Filter chip and sort state (SKADI-T-0686; sorting SKADI-T-0370). Held in
@@ -974,8 +976,8 @@ fn DownloadsSection() -> impl IntoView {
     // waiting for the next poll tick.
     let refetch = move || {
         spawn_local(async move {
-            if let Ok(d) = api::list_downloads().await {
-                jobs.set(d);
+            if let Some(d) = load.settle(api::list_downloads().await) {
+                let _ = jobs.try_set(d);
             }
         });
     };
@@ -1005,10 +1007,9 @@ fn DownloadsSection() -> impl IntoView {
         spawn_local(crate::live_poll::poll_while_visible(
             move || alive.try_get_untracked().unwrap_or(false),
             move || async move {
-                if let Ok(d) = api::list_downloads().await {
-                    jobs.set(d);
+                if let Some(d) = load.settle(api::list_downloads().await) {
+                    let _ = jobs.try_set(d);
                 }
-                loaded.set(true);
             },
         ));
     });
@@ -1155,7 +1156,7 @@ fn DownloadsSection() -> impl IntoView {
     // State filter chips with counts over the whole list (SKADI-T-0686).
     let chips = move || {
         let js = jobs.get();
-        if !loaded.get() || js.is_empty() {
+        if !load.is_loaded() || js.is_empty() {
             return ().into_any();
         }
         let current = filter.get();
@@ -1220,8 +1221,8 @@ fn DownloadsSection() -> impl IntoView {
         let visible = shown.get();
         let js = visible.active;
         if js.is_empty() {
-            if !loaded.get() {
-                return view! { <div class="dl-empty">"Loading…"</div> }.into_any();
+            if !load.is_loaded() {
+                return ().into_any();
             }
             if f == StateFilter::All || jobs.with(|j| j.is_empty()) {
                 return view! { <div class="dl-empty">"No active transfers."</div> }.into_any();
@@ -1494,7 +1495,7 @@ fn DownloadsSection() -> impl IntoView {
         let names = titles.get();
         let js = shown.get().seeding;
         if js.is_empty() {
-            if loaded.get()
+            if load.is_loaded()
                 && filter.get() == StateFilter::Only(RowState::Seeding)
                 && !jobs.with(|j| j.is_empty())
             {
@@ -1630,7 +1631,7 @@ fn DownloadsSection() -> impl IntoView {
     // Sticky toolbar with global controls and aggregate stats (SKADI-T-0369).
     let toolbar = move || {
         let js = jobs.get();
-        if !loaded.get() {
+        if !load.is_loaded() {
             return ().into_any();
         }
         let dl = js.iter().filter(|j| j.status == "downloading").count();
@@ -1711,6 +1712,7 @@ fn DownloadsSection() -> impl IntoView {
             {chips}
             {bulk_bar}
             {queue_msg_view}
+            {load.status(SkeletonKind::Rows, Callback::new(move |()| refetch()))}
             {active_rows}
             {seeding_rows}
             {move || (!jobs.get().is_empty()).then_some(()).map(|_| view! {

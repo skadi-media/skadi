@@ -14,6 +14,7 @@ use leptos_router::components::A;
 
 use crate::api;
 use crate::app::DomainsVersion;
+use crate::loading::{ListLoad, SkeletonKind};
 
 /// System-wide configuration (SKADI-T-0071): domains enable/disable, shared
 /// quality profiles, root folders, and notifiers. Domain-specific config (e.g.
@@ -56,7 +57,8 @@ fn domain_meta(kind: &str) -> (&'static str, &'static str, &'static str) {
 #[component]
 fn DomainsSection() -> impl IntoView {
     let domains = RwSignal::new(Vec::<api::Domain>::new());
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     let busy = RwSignal::new(false);
 
     // Shared trigger so the persistent sidebar (and Health/dashboard on next
@@ -65,12 +67,8 @@ fn DomainsSection() -> impl IntoView {
 
     let refresh = move || {
         spawn_local(async move {
-            match api::list_domains().await {
-                Ok(d) => {
-                    domains.set(d);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(d) = load.settle(api::list_domains().await) {
+                let _ = domains.try_set(d);
             }
         });
     };
@@ -133,7 +131,7 @@ fn DomainsSection() -> impl IntoView {
                     <p class="muted">"Enable or disable compiled-in media domains. Changes take effect on the next supervisor tick (~5s)."</p>
                 </div>
             </div>
-            {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+            {load.status_n(SkeletonKind::Rows, Some(3), Callback::new(move |()| refresh()))}
             <div class="cards">{rows}</div>
         </section>
     }
@@ -269,17 +267,16 @@ pub fn input_kind(kind: &str) -> &'static str {
 #[component]
 pub fn AdvancedSection() -> impl IntoView {
     let keys = RwSignal::new(Vec::<api::ConfigKey>::new());
+    // The key list's first load, failure and Retry (SKADI-T-0698); `error`
+    // is a refused save or reset.
+    let load = ListLoad::new();
     let error = RwSignal::new(None::<String>);
     let note = RwSignal::new(None::<String>);
 
     let reload = move || {
         spawn_local(async move {
-            match api::list_config().await {
-                Ok(k) => {
-                    keys.set(k);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.0)),
+            if let Some(k) = load.settle(api::list_config().await.map_err(|e| e.0)) {
+                let _ = keys.try_set(k);
             }
         });
     };
@@ -321,6 +318,7 @@ pub fn AdvancedSection() -> impl IntoView {
             </p>
             {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
             {move || note.get().map(|n| view! { <p class="muted">{n}</p> })}
+            {load.status(SkeletonKind::Rows, Callback::new(move |()| reload()))}
             <For
                 each=move || group_config(keys.get())
                 key=|(name, _)| name.clone()

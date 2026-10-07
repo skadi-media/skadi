@@ -17,6 +17,7 @@ use crate::library_toolbar::{
     LibCounts, LibraryToolbar, TV_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
 };
+use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class, tmdb_img};
 
 /// The series wall's status chips; a series with every episode is "Complete".
@@ -60,7 +61,8 @@ pub fn series_lib_status(s: &api::Series) -> &'static str {
 #[component]
 pub fn TvPage() -> impl IntoView {
     let series = RwSignal::new(Vec::<api::Series>::new());
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     let lib_filter = RwSignal::new("all");
     let lib_text = RwSignal::new(String::new());
     // Sort (SKADI-T-0695), remembered across reloads.
@@ -75,17 +77,14 @@ pub fn TvPage() -> impl IntoView {
     let role_signal = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
     let is_admin = move || role_signal.and_then(|r| r.get()).as_deref() == Some("admin");
 
-    Effect::new(move |_| {
+    let fetch = move || {
         spawn_local(async move {
-            match api::list_series().await {
-                Ok(s) => {
-                    series.set(s);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(s) = load.settle(api::list_series().await) {
+                let _ = series.try_set(s);
             }
         });
-    });
+    };
+    Effect::new(move |_| fetch());
 
     let counts =
         Signal::derive(move || series.with(|ss| LibCounts::of(ss.iter().map(series_lib_status))));
@@ -179,8 +178,8 @@ pub fn TvPage() -> impl IntoView {
                     />
                 })} }
             />
-            {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
-            {move || series.get().is_empty().then(|| view! { <p class="muted">"No series yet — add one with + Add media."</p> })}
+            {load.status(SkeletonKind::Posters, Callback::new(move |()| fetch()))}
+            {move || (load.is_loaded() && series.get().is_empty()).then(|| view! { <p class="muted">"No series yet — add one with + Add media."</p> })}
             <div class="poster-grid">{tiles}</div>
         </section>
     }

@@ -21,6 +21,7 @@ use serde_json::{Map, Value};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::loading::{ListLoad, LoadError, Skeleton, SkeletonKind};
 
 /// The NotificationKind values a webhook can subscribe to (serde snake_case in
 /// skadi-notify). Kept in sync with `NotificationKind`.
@@ -313,7 +314,8 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     let default_kind = spec.variants[0].config_kind;
 
     let items = RwSignal::new(Vec::<api::Setting>::new());
-    let load_error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     let editor = RwSignal::new(Editor::Closed);
     let form = RwSignal::new(empty_form());
     // The selected config `kind` (which variant's fields are shown). Separate
@@ -332,12 +334,8 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     // (Re)load the list for this kind.
     let refresh = move || {
         spawn_local(async move {
-            match api::list_settings(kind).await {
-                Ok(list) => {
-                    items.set(list);
-                    load_error.set(None);
-                }
-                Err(e) => load_error.set(Some(e.to_string())),
+            if let Some(list) = load.settle(api::list_settings(kind).await) {
+                let _ = items.try_set(list);
             }
         });
     };
@@ -457,8 +455,8 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
                 </div>
                 <button on:click=open_add>"+ Add"</button>
             </div>
-            {move || load_error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {catalog_panel}
+            {load.status(SkeletonKind::Cards, Callback::new(move |()| refresh()))}
             <div class="cards">{rows}</div>
             {form_panel}
         </section>
@@ -679,8 +677,15 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
                     </button>
                     <button class="btn-link" on:click=close>"Close"</button>
                 </div>
-                {move || load_err.get().map(|e| view! { <p class="bad">{e}</p> })}
-                {move || loading.get().then(|| view! { <p class="muted">"Loading catalog…"</p> })}
+                {move || load_err.get().map(|e| {
+                    let retry = Callback::new(move |()| {
+                        load_err.set(None);
+                        load();
+                    });
+                    view! { <LoadError message=e retry=retry/> }
+                })}
+                {move || (loading.get() && defs.with(Vec::is_empty))
+                    .then(|| view! { <Skeleton kind=SkeletonKind::Rows/> })}
                 <div class="catalog-list">{def_list}</div>
             </div>
         }

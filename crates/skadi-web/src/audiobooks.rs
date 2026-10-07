@@ -21,6 +21,7 @@ use crate::library_toolbar::{
     AUDIOBOOKS_SORT_STORAGE, BOOK_SORT_KEYS, LibCounts, LibraryToolbar, chip_matches, sort_items,
     stored_sort,
 };
+use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
@@ -591,7 +592,8 @@ fn author_body<F: Fn() + Copy + 'static>(
 #[component]
 pub fn AudiobooksPage() -> impl IntoView {
     let books = RwSignal::new(Vec::<api::Book>::new());
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698). Retry bumps `reload`.
+    let load = ListLoad::new();
     // Library-wall filters (SKADI-T-0253): status chip + free-text filter.
     let lib_filter = RwSignal::new("all");
     let lib_text = RwSignal::new(String::new());
@@ -617,12 +619,8 @@ pub fn AudiobooksPage() -> impl IntoView {
     Effect::new(move |_| {
         reload.track();
         spawn_local(async move {
-            match api::list_books(None, None).await {
-                Ok(b) => {
-                    books.set(b);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(b) = load.settle(api::list_books(None, None).await) {
+                let _ = books.try_set(b);
             }
         });
     });
@@ -879,8 +877,8 @@ pub fn AudiobooksPage() -> impl IntoView {
                     />
                 })} }
             />
-            {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
-            {move || books.get().is_empty().then(|| view! { <p class="muted">"No audiobooks yet — add one with + Add media."</p> })}
+            {load.status(SkeletonKind::Posters, Callback::new(move |()| reload.update(|n| *n += 1)))}
+            {move || (load.is_loaded() && books.get().is_empty()).then(|| view! { <p class="muted">"No audiobooks yet — add one with + Add media."</p> })}
             {grid}
         </section>
     }
@@ -1191,13 +1189,12 @@ fn work_row<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
 #[component]
 pub fn AudiobookDiscoverPage() -> impl IntoView {
     let works = RwSignal::new(Vec::<api::Work>::new());
-    let loaded = RwSignal::new(false);
+    let load = ListLoad::new();
     let reload = move || {
         spawn_local(async move {
-            if let Ok(w) = api::discover_audiobooks(120).await {
-                works.set(w);
+            if let Some(w) = load.settle(api::discover_audiobooks(120).await) {
+                let _ = works.try_set(w);
             }
-            loaded.set(true);
         });
     };
     Effect::new(move |_| reload());
@@ -1212,9 +1209,10 @@ pub fn AudiobookDiscoverPage() -> impl IntoView {
                 "New and unowned titles from the authors and series already in your library — "
                 "soonest releases first. Add one to grab it, or Watch its author/series to keep up."
             </p>
+            {load.status(SkeletonKind::Rows, Callback::new(move |()| reload()))}
             {move || {
-                if !loaded.get() {
-                    return view! { <p class="muted">"Loading…"</p> }.into_any();
+                if !load.is_loaded() {
+                    return ().into_any();
                 }
                 let all = works.get();
                 if all.is_empty() {
@@ -1812,12 +1810,12 @@ pub fn AuthorDetailPage() -> impl IntoView {
 
 /// The built-in audiobook quality ladder, best first (split out of
 /// [`AudiobooksConfigPage`] so a DOM test can render it with rows,
-/// SKADI-T-0697). Empty = still loading. Each cell carries a `data-label`, which
+/// SKADI-T-0697). The page shows a skeleton until the ladder loads. Each cell carries a `data-label`, which
 /// the narrow-screen card layout prints beside the value.
 #[component]
 pub fn QualityLadderTable(tiers: Vec<api::AudiobookQuality>) -> impl IntoView {
     let rows = if tiers.is_empty() {
-        view! { <tr><td colspan="4" class="muted">"Loading…"</td></tr> }.into_any()
+        view! { <tr><td colspan="4" class="muted">"No tiers."</td></tr> }.into_any()
     } else {
         let last = tiers.len().saturating_sub(1);
         tiers
@@ -1859,15 +1857,20 @@ pub fn QualityLadderTable(tiers: Vec<api::AudiobookQuality>) -> impl IntoView {
 #[component]
 pub fn AudiobooksConfigPage() -> impl IntoView {
     let ladder = RwSignal::new(Vec::<api::AudiobookQuality>::new());
+    // The ladder's first load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
+    let fetch_ladder = move || {
+        spawn_local(async move {
+            if let Some(q) = load.settle(api::audiobook_quality().await) {
+                let _ = ladder.try_set(q);
+            }
+        });
+    };
     // `None` until `/domains` loads — so we don't flash the "disabled" banner.
     let enabled = RwSignal::new(None::<bool>);
 
     Effect::new(move |_| {
-        spawn_local(async move {
-            if let Ok(q) = api::audiobook_quality().await {
-                ladder.set(q);
-            }
-        });
+        fetch_ladder();
         spawn_local(async move {
             if let Ok(ds) = api::list_domains().await {
                 enabled.set(Some(ds.iter().any(|d| d.kind == "audiobook" && d.enabled)));
@@ -1900,7 +1903,8 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
                     </p>
                 </div>
             </div>
-            {move || view! { <QualityLadderTable tiers=ladder.get()/> }}
+            {load.status_n(SkeletonKind::Rows, Some(4), Callback::new(move |()| fetch_ladder()))}
+            {move || load.is_loaded().then(|| view! { <QualityLadderTable tiers=ladder.get()/> })}
         </section>
 
         <section class="provider-section">

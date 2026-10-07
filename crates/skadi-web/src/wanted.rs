@@ -11,6 +11,7 @@ use leptos_router::components::A;
 
 use crate::api::{self, AcquirablePath, WantedEdition, WantedItem};
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{ReleasesPanel, status_class};
 
 /// Edition chips shown per item before the "+N more" toggle.
@@ -134,22 +135,19 @@ pub fn WantedPage() -> impl IntoView {
     let q = RwSignal::new(String::new());
     let expanded = RwSignal::new(None::<(String, String)>);
     let show_all = RwSignal::new(None::<String>);
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let list = ListLoad::new();
     let loading = RwSignal::new(true);
     let note = RwSignal::new(None::<Result<String, String>>);
 
     let load = move || {
         loading.set(true);
         spawn_local(async move {
-            match api::wanted().await {
-                Ok(r) => {
-                    summary.set(r.summary);
-                    all.set(r.items);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(r) = list.settle(api::wanted().await) {
+                let _ = summary.try_set(r.summary);
+                let _ = all.try_set(r.items);
             }
-            loading.set(false);
+            let _ = loading.try_set(false);
         });
     };
     Effect::new(move |_| load());
@@ -354,12 +352,12 @@ pub fn WantedPage() -> impl IntoView {
                 })
             }}
 
-            {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+            {list.status(SkeletonKind::Rows, reload)}
 
             <div class="activity-list wanted-list">
                 {move || {
                     let items = filtered();
-                    if items.is_empty() && !loading.get() {
+                    if items.is_empty() && list.is_loaded() && !loading.get() {
                         return view! { <p class="muted">"Nothing wanted matches these filters."</p> }.into_any();
                     }
                     items.into_iter().map(|item| {

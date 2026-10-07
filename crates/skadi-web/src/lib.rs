@@ -19,6 +19,7 @@ pub mod import_common;
 pub mod library_select;
 pub mod library_toolbar;
 pub mod live_poll;
+pub mod loading;
 pub mod movies;
 pub mod tv;
 pub mod tv_import;
@@ -40,7 +41,7 @@ pub mod subnav;
 pub mod system;
 pub mod upload;
 
-pub use app::{App, AppFrame, NAV_ID};
+pub use app::{App, AppFrame, DownloadersPage, IndexersPage, NAV_ID};
 
 /// Genre facet over a wall (SKADI-T-0605): each genre with how many items
 /// carry it, most common first then by name — one chip per entry. A genre

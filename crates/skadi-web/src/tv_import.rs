@@ -19,6 +19,7 @@ use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 use crate::api;
+use crate::loading::{LoadError, Skeleton, SkeletonKind};
 use crate::path_picker::PathPicker;
 
 /// How many candidates per page (also the per-page match batch size).
@@ -248,7 +249,7 @@ struct SeriesGroup {
     /// Whether a structure fetch has been kicked off (avoids re-fetching).
     structure_fetched: bool,
     /// Why the last structure fetch failed, if it did — rendered in the card body
-    /// (instead of an eternal "Loading…") and cleared on retry. A failed fetch
+    /// (a LoadError with Retry, instead of an eternal skeleton) and cleared on retry. A failed fetch
     /// resets `structure_fetched` so collapsing + re-expanding retries.
     structure_error: Option<String>,
     /// Ticked to import.
@@ -1406,12 +1407,14 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
             return view! { <p class="muted ep-empty">"Already in library."</p> }.into_any();
         }
         if let Some(err) = g.structure_error.clone() {
-            return view! {
-                <p class="bad ep-empty">
-                    {format!("Couldn't load the episode tree: {err} — collapse and re-expand to retry.")}
-                </p>
-            }
-            .into_any();
+            // Retry fetches the tree again for the id in the box (SKADI-T-0698);
+            // collapse + re-expand still retries too.
+            let retry = Callback::new(move |()| {
+                if let Ok(id) = tvdb.get_untracked().trim().parse::<u64>() {
+                    fetch_structure(id);
+                }
+            });
+            return view! { <LoadError message=err retry=retry/> }.into_any();
         }
         // A loaded structure renders regardless of match state — a raw-id edit
         // drops `proposed` but the tree is what the operator asked for.
@@ -1420,7 +1423,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                 return view! { <p class="muted ep-empty">"No match — use 🔍 Find show above to pick the right series."</p> }
                     .into_any();
             }
-            return view! { <p class="muted ep-empty">"Loading episode tree…"</p> }.into_any();
+            return view! { <Skeleton kind=SkeletonKind::Rows count=3/> }.into_any();
         };
 
         let ov = overrides.get();

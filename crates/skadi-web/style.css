@@ -2345,3 +2345,52 @@ p.genres.muted {
   .releases-table td:first-child,
   .system-table td.log-target { max-width: none; white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Skeletons (SKADI-T-0698): grey stand-ins for a list on its first load.
+   Shapes use the control surface; a soft band of the control border sweeps
+   across them. Under reduced motion they hold still (block below). */
+.skeleton { margin: 0.2rem 0 0.8rem; }
+.sk-block, .sk-line {
+  display: block;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--control) 25%, var(--border-control) 50%, var(--control) 75%);
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+.sk-line { height: 0.7rem; width: 80%; }
+.sk-line.sk-short { width: 45%; }
+.sk-line.sk-title { height: 0.9rem; width: 35%; }
+.sk-tile { display: flex; flex-direction: column; gap: 6px; }
+.sk-poster { aspect-ratio: 2 / 3; border-radius: var(--r-tile); border: 1px solid var(--border); }
+.sk-rows { display: flex; flex-direction: column; gap: 2px; }
+.sk-row {
+  display: flex; align-items: center; gap: 0.8rem;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border-fainter);
+}
+.sk-row .sk-line { flex: 1 1 auto; }
+.sk-row .sk-line.sk-short { flex: 0 0 18%; }
+.sk-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.sk-cards { display: flex; flex-direction: column; gap: 0.6rem; }
+.sk-card {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--panel);
+}
+@keyframes sk-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton .sk-block, .skeleton .sk-line { animation: none; background: var(--control); }
+}
+
+/* A failed list load and its Retry button (SKADI-T-0698). */
+.load-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.8rem;
+  margin: 0.2rem 0 0.8rem;
+  overflow-wrap: anywhere;
+}
+.load-error-retry { flex: 0 0 auto; }

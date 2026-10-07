@@ -10,6 +10,7 @@ use leptos::task::spawn_local;
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::loading::{ListLoad, SkeletonKind};
 
 /// Longest inline detail before we truncate and tuck the full text behind a
 /// disclosure. Keeps the history table to one readable line per row.
@@ -795,7 +796,10 @@ pub fn ActivityPage() -> impl IntoView {
     // acquirable ref -> item title, for the trace log's rows (live runs carry
     // their own `title` from the server, SKADI-T-0690).
     let titles = RwSignal::new(HashMap::<String, String>::new());
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
+    // The trace log loads on its own, so a failed board never blanks it.
+    let trace_load = ListLoad::new();
     let alive = RwSignal::new(true);
     // Row actions (SKADI-T-0691): admin only, read from the shell's role so an
     // unresolved role offers nothing. `busy` holds the ref being acted on; the
@@ -804,6 +808,15 @@ pub fn ActivityPage() -> impl IntoView {
     let busy = RwSignal::new(None::<String>);
     let action_msg = RwSignal::new(None::<(bool, String)>);
 
+    // One fetch of the board and the trace log; the poll and Retry share it.
+    let fetch = move || async move {
+        if let Some(a) = load.settle(api::activity().await) {
+            let _ = runs.try_set(a);
+        }
+        if let Some(t) = trace_load.settle(api::traces(160).await) {
+            let _ = traces.try_set(t);
+        }
+    };
     Effect::new(move |_| {
         // Resolve titles once (the library rarely changes mid-watch). Both domains:
         // a live run is keyed by its acquirable ref — a movie edition id or an
@@ -849,18 +862,7 @@ pub fn ActivityPage() -> impl IntoView {
         // tab is visible, nothing while it is hidden (SKADI-T-0693).
         spawn_local(crate::live_poll::poll_while_visible(
             move || alive.try_get_untracked().unwrap_or(false),
-            move || async move {
-                match api::activity().await {
-                    Ok(a) => {
-                        runs.set(a);
-                        error.set(None);
-                    }
-                    Err(e) => error.set(Some(e.to_string())),
-                }
-                if let Ok(t) = api::traces(160).await {
-                    traces.set(t);
-                }
-            },
+            fetch,
         ));
     });
     on_cleanup(move || alive.set(false));
@@ -1092,6 +1094,9 @@ pub fn ActivityPage() -> impl IntoView {
         let ts = traces.get();
         let filter = log_filter.get();
         let open = expanded.get();
+        if !trace_load.is_loaded() {
+            return ().into_any();
+        }
         if ts.is_empty() {
             return view! {
                 <p class="muted">
@@ -1197,13 +1202,15 @@ pub fn ActivityPage() -> impl IntoView {
             </div>
         </div>
 
-        {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+        {load.status(SkeletonKind::Rows, Callback::new(move |()| spawn_local(fetch())))}
         {move || action_msg.get().map(|(ok, text)| {
             let cls = if ok { "run-action-msg ok" } else { "run-action-msg bad" };
             view! { <p class=cls role="status">{text}</p> }
         })}
-        <div class="stage-bar">{stage_bar}</div>
-        <div class="stage-board">{stage_board}</div>
+        {move || load.is_loaded().then(|| view! {
+            <div class="stage-bar">{stage_bar}</div>
+            <div class="stage-board">{stage_board}</div>
+        })}
 
         <div class="event-log">
             <div class="event-log-head">
@@ -1215,6 +1222,7 @@ pub fn ActivityPage() -> impl IntoView {
                     {filter_chip("imports", "Grabs & imports")}
                 </div>
             </div>
+            {trace_load.status_n(SkeletonKind::Rows, Some(4), Callback::new(move |()| spawn_local(fetch())))}
             {trace_lines}
         </div>
     }

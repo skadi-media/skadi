@@ -1244,3 +1244,414 @@ async fn nothing_scrolls_sideways_at_768px_beside_the_sidebar() {
     drop(handle);
     frame.remove();
 }
+
+// ---------------------------------------------------------------------------
+// Loading skeletons and LoadError (SKADI-T-0698)
+// ---------------------------------------------------------------------------
+
+/// Let the browser keep a record of every request (the default buffer is
+/// small, and the suite makes many).
+fn grow_resource_buffer() {
+    let perf = js_sys::Reflect::get(&web_sys::window().unwrap(), &"performance".into()).unwrap();
+    let f: js_sys::Function = js_sys::Reflect::get(&perf, &"setResourceTimingBufferSize".into())
+        .unwrap()
+        .unchecked_into();
+    f.call1(&perf, &100_000.into()).unwrap();
+}
+
+/// How many requests the page has finished whose URL ends with `suffix`.
+fn fetches_of(suffix: &str) -> usize {
+    let perf = js_sys::Reflect::get(&web_sys::window().unwrap(), &"performance".into()).unwrap();
+    let f: js_sys::Function = js_sys::Reflect::get(&perf, &"getEntriesByType".into())
+        .unwrap()
+        .unchecked_into();
+    let list: js_sys::Array = f.call1(&perf, &"resource".into()).unwrap().unchecked_into();
+    list.iter()
+        .filter_map(|e| js_sys::Reflect::get(&e, &"name".into()).ok()?.as_string())
+        // gloo-net ends a URL that has a query with a bare `&`.
+        .filter(|n| n.trim_end_matches(['&', '?']).ends_with(suffix))
+        .count()
+}
+
+/// Every API request recorded so far (for failure messages).
+fn api_requests() -> Vec<String> {
+    let perf = js_sys::Reflect::get(&web_sys::window().unwrap(), &"performance".into()).unwrap();
+    let f: js_sys::Function = js_sys::Reflect::get(&perf, &"getEntriesByType".into())
+        .unwrap()
+        .unchecked_into();
+    let list: js_sys::Array = f.call1(&perf, &"resource".into()).unwrap().unchecked_into();
+    list.iter()
+        .filter_map(|e| js_sys::Reflect::get(&e, &"name".into()).ok()?.as_string())
+        .filter(|n| n.contains("/api/"))
+        .collect()
+}
+
+/// Wait (up to ~5 s) until `cond` holds.
+async fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
+    for _ in 0..250 {
+        if cond() {
+            return true;
+        }
+        gloo_timers::future::TimeoutFuture::new(20).await;
+    }
+    cond()
+}
+
+/// One microtask: long enough for a signal change to reach the DOM, far too
+/// short for a request to come back.
+async fn microtask() {
+    let p = js_sys::Promise::resolve(&wasm_bindgen::JsValue::NULL);
+    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+}
+
+/// Mount a list view and check the whole first-load story against the test
+/// server, which answers every API call with an error:
+/// 1. the first render shows a `kind` skeleton;
+/// 2. the failed fetch turns into a LoadError (`LOAD_FAILED` + message + Retry);
+/// 3. Retry clears that error (the skeleton comes back) and requests
+///    `endpoint` again — a refetch, not a page reload;
+/// 4. the refetch fails again into a LoadError.
+async fn check_list_view<V: IntoView + 'static>(
+    name: &str,
+    kind: &str,
+    endpoint: &str,
+    page: impl FnOnce() -> V + Send + 'static,
+) {
+    use skadi_web::loading::LOAD_FAILED;
+    grow_resource_buffer();
+    let host = host();
+    let handle = mount_to(host.clone(), move || {
+        provide_context(skadi_web::subnav::RoleCtx(RwSignal::new(Some(
+            "admin".to_string(),
+        ))));
+        view! { <Router>{page()}</Router> }
+    });
+    assert!(
+        count(&host, &format!(".skeleton.{kind}")) > 0,
+        "{name}: no .{kind} skeleton on the first render: {}",
+        host.inner_html()
+    );
+    assert!(
+        count(&host, ".load-error") == 0,
+        "{name}: an error before any answer"
+    );
+
+    assert!(
+        wait_until(|| count(&host, ".load-error") > 0).await,
+        "{name}: the failed load never showed a LoadError: {}",
+        host.inner_html()
+    );
+    let first = find(&host, ".load-error");
+    let text = first.text_content().unwrap();
+    assert!(text.contains(&format!("{LOAD_FAILED}: ")), "{name}: {text}");
+    assert_eq!(buttons_with_text(&first, "Retry"), 1, "{name}: no Retry");
+    // The failed load drew the error, not the "nothing here" text.
+    assert!(!text.contains("yet"), "{name}: {text}");
+
+    let errors = count(&host, ".load-error");
+    // The browser files a request's timing entry a little after its answer.
+    wait_until(|| fetches_of(endpoint) >= 1).await;
+    let before = fetches_of(endpoint);
+    assert!(
+        before >= 1,
+        "{name}: no request to {endpoint} recorded: {:?}",
+        api_requests()
+    );
+    find(&host, ".load-error-retry").click();
+    let mut cleared = false;
+    for _ in 0..20 {
+        microtask().await;
+        if count(&host, ".load-error") < errors {
+            cleared = true;
+            break;
+        }
+    }
+    assert!(cleared, "{name}: Retry did not clear its error");
+    assert!(
+        count(&host, ".skeleton") > 0,
+        "{name}: no skeleton while retrying"
+    );
+
+    assert!(
+        wait_until(|| fetches_of(endpoint) > before && count(&host, ".load-error") == errors).await,
+        "{name}: Retry did not fetch {endpoint} again ({before} -> {})",
+        fetches_of(endpoint)
+    );
+    drop(handle);
+    host.remove();
+}
+
+#[wasm_bindgen_test]
+async fn the_movie_wall_shows_posters_then_a_retry() {
+    use skadi_web::movies::MoviesPage;
+    check_list_view(
+        "Movies",
+        "sk-posters",
+        "/api/v1/movies",
+        || view! { <MoviesPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn the_tv_wall_shows_posters_then_a_retry() {
+    use skadi_web::tv::TvPage;
+    check_list_view(
+        "TV",
+        "sk-posters",
+        "/api/v1/series?view=summary",
+        || view! { <TvPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn the_audiobook_wall_shows_posters_then_a_retry() {
+    use skadi_web::audiobooks::AudiobooksPage;
+    check_list_view("Audiobooks", "sk-posters", "/api/v1/books", || {
+        view! { <AudiobooksPage/> }
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn audiobook_discover_shows_rows_then_a_retry() {
+    use skadi_web::audiobooks::AudiobookDiscoverPage;
+    check_list_view(
+        "Discover",
+        "sk-rows",
+        "/api/v1/audiobooks/discover?limit=120",
+        || view! { <AudiobookDiscoverPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn activity_shows_rows_then_a_retry() {
+    use skadi_web::activity::ActivityPage;
+    check_list_view(
+        "Activity",
+        "sk-rows",
+        "/api/v1/activity",
+        || view! { <ActivityPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn downloads_show_rows_then_a_retry() {
+    use skadi_web::DownloadersPage;
+    check_list_view("Downloads", "sk-rows", "/api/v1/downloads", || {
+        view! { <DownloadersPage/> }
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn wanted_shows_rows_then_a_retry() {
+    use skadi_web::wanted::WantedPage;
+    check_list_view(
+        "Wanted",
+        "sk-rows",
+        "/api/v1/wanted",
+        || view! { <WantedPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn indexers_show_cards_then_a_retry() {
+    use skadi_web::IndexersPage;
+    check_list_view("Indexers", "sk-cards", "/api/v1/settings/indexers", || {
+        view! { <IndexersPage/> }
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn config_domains_show_rows_then_a_retry() {
+    use skadi_web::config::ConfigPage;
+    check_list_view(
+        "Config",
+        "sk-rows",
+        "/api/v1/domains",
+        || view! { <ConfigPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn edition_kinds_show_cards_then_a_retry() {
+    use skadi_web::movies::MoviesConfigPage;
+    check_list_view("Edition kinds", "sk-cards", "/api/v1/edition-kinds", || {
+        view! { <MoviesConfigPage/> }
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn household_members_show_cards_then_a_retry() {
+    use skadi_web::household::HouseholdPage;
+    check_list_view("Household", "sk-cards", "/api/v1/members", || {
+        view! { <HouseholdPage/> }
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn system_panels_show_rows_then_a_retry() {
+    use skadi_web::system::SystemPage;
+    check_list_view(
+        "System",
+        "sk-rows",
+        "/api/v1/system/status",
+        || view! { <SystemPage/> },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn the_quality_ladder_shows_rows_then_a_retry() {
+    check_list_view(
+        "Quality ladder",
+        "sk-rows",
+        "/api/v1/audiobooks/quality",
+        || {
+            view! { <AudiobooksConfigPage/> }
+        },
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn item_history_shows_rows_then_a_retry() {
+    use skadi_web::movies::HistoryPanel;
+    check_list_view(
+        "Item history",
+        "sk-rows",
+        "/api/v1/history?acquirable=ed-1&limit=50",
+        || view! { <HistoryPanel acquirable="ed-1".to_string() open=true/> },
+    )
+    .await;
+}
+
+/// The device shelf reads local storage, which cannot fail: a skeleton on the
+/// first render, then the shelf.
+#[wasm_bindgen_test]
+async fn the_listen_shelf_shows_rows_first() {
+    use skadi_web::offline::ListenPage;
+    let host = host();
+    let handle = mount_to(host.clone(), || view! { <Router><ListenPage/></Router> });
+    assert!(
+        count(&host, ".skeleton.sk-rows") > 0,
+        "{}",
+        host.inner_html()
+    );
+    assert!(
+        wait_until(|| count(&host, ".skeleton") == 0).await,
+        "{}",
+        host.inner_html()
+    );
+    assert_eq!(count(&host, ".load-error"), 0);
+    drop(handle);
+    host.remove();
+}
+
+/// The Cardigann catalog loads when its panel opens: rows while it loads,
+/// then a LoadError whose Retry asks again.
+#[wasm_bindgen_test]
+async fn the_tracker_catalog_shows_rows_then_a_retry() {
+    use skadi_web::IndexersPage;
+    grow_resource_buffer();
+    let host = host();
+    let handle = mount_to(host.clone(), || view! { <Router><IndexersPage/></Router> });
+    find(&host, ".catalog-add-btn").click();
+    settle_dom().await;
+    let panel = || find(&host, ".catalog-panel");
+    assert!(
+        count(&panel(), ".skeleton.sk-rows") > 0 || count(&panel(), ".load-error") > 0,
+        "{}",
+        panel().inner_html()
+    );
+    assert!(wait_until(|| count(&panel(), ".load-error") > 0).await);
+    wait_until(|| fetches_of("/api/v1/indexers/definitions") >= 1).await;
+    let before = fetches_of("/api/v1/indexers/definitions");
+    find(&panel(), ".load-error-retry").click();
+    assert!(
+        wait_until(|| fetches_of("/api/v1/indexers/definitions") > before
+            && count(&panel(), ".load-error") == 1)
+        .await
+    );
+    drop(handle);
+    host.remove();
+}
+
+/// The primitives on their own: each skeleton kind, and LoadError's Retry.
+#[wasm_bindgen_test]
+async fn skeleton_kinds_and_load_error_retry() {
+    use skadi_web::loading::{LoadError, Skeleton, SkeletonKind};
+    let host = host();
+    let retries = RwSignal::new(0u32);
+    let _handle = mount_to(host.clone(), move || {
+        view! {
+            <Skeleton kind=SkeletonKind::Posters count=4/>
+            <Skeleton kind=SkeletonKind::Rows/>
+            <Skeleton kind=SkeletonKind::Cards count=2/>
+            <LoadError message="movies -> HTTP 500" retry=Callback::new(move |()| retries.update(|n| *n += 1))/>
+        }
+    });
+    assert_eq!(count(&host, ".sk-posters.poster-grid .sk-tile"), 4);
+    assert_eq!(
+        count(&host, ".sk-rows .sk-row"),
+        SkeletonKind::Rows.default_count() as u32
+    );
+    assert_eq!(count(&host, ".sk-cards .sk-card"), 2);
+    // Announced once, shapes hidden.
+    assert_eq!(count(&host, ".skeleton[role=status][aria-busy=true]"), 3);
+    assert_eq!(count(&host, ".sk-item:not([aria-hidden=true])"), 0);
+    let err = find(&host, ".load-error");
+    assert_eq!(attr(&err, "role").as_deref(), Some("alert"));
+    assert!(err.text_content().unwrap().contains(&format!(
+        "{}: movies -> HTTP 500",
+        skadi_web::loading::LOAD_FAILED
+    )));
+    find(&host, ".load-error-retry").click();
+    find(&host, ".load-error-retry").click();
+    assert_eq!(retries.get_untracked(), 2);
+}
+
+/// With motion allowed the shapes shimmer (the reduced-motion half is pinned
+/// on the stylesheet text in `loading.rs`, since a test cannot switch the
+/// media feature).
+#[wasm_bindgen_test]
+async fn skeleton_shapes_shimmer_with_the_real_stylesheet() {
+    use skadi_web::loading::{Skeleton, SkeletonKind};
+    let (frame, body) = narrow_frame(800).await;
+    let handle = mount_to(
+        body.clone(),
+        || view! { <Skeleton kind=SkeletonKind::Rows count=1/> },
+    );
+    let line: web_sys::Element = body.query_selector(".sk-line").unwrap().unwrap();
+    // Through Reflect: the iframe's window is another realm, and this keeps
+    // the test off extra web-sys features.
+    use js_sys::{Function, Reflect};
+    let win = Reflect::get(&frame, &"contentWindow".into()).unwrap();
+    let call = |name: &str, arg: &wasm_bindgen::JsValue| {
+        let f: Function = Reflect::get(&win, &name.into()).unwrap().unchecked_into();
+        f.call1(&win, arg).unwrap()
+    };
+    let style = call("getComputedStyle", &line);
+    let name = Reflect::get(&style, &"animationName".into())
+        .unwrap()
+        .as_string()
+        .unwrap();
+    let mq = call("matchMedia", &"(prefers-reduced-motion: reduce)".into());
+    let reduced = Reflect::get(&mq, &"matches".into()).unwrap().is_truthy();
+    if reduced {
+        assert_eq!(name, "none");
+    } else {
+        assert_eq!(name, "sk-shimmer");
+    }
+    drop(handle);
+    frame.remove();
+}

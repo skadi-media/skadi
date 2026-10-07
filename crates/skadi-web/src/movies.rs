@@ -22,6 +22,7 @@ use crate::library_toolbar::{
     LibCounts, LibraryToolbar, MOVIES_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
 };
+use crate::loading::{ListLoad, SkeletonKind};
 
 /// The movie wall's status chips (SKADI-T-0245).
 pub const MOVIE_CHIPS: &[(&str, &str)] = &[
@@ -44,7 +45,8 @@ pub fn status_class(label: &str) -> &'static str {
 #[component]
 pub fn MoviesPage() -> impl IntoView {
     let movies = RwSignal::new(Vec::<api::Movie>::new());
-    let error = RwSignal::new(None::<String>);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     // Library-wall filters (SKADI-T-0245): status chip + free-text filter.
     let lib_filter = RwSignal::new("all");
     let lib_text = RwSignal::new(String::new());
@@ -62,17 +64,14 @@ pub fn MoviesPage() -> impl IntoView {
 
     // Adding lives in the unified `/add` view (SKADI-T-0248); this page is purely
     // the library wall now.
-    Effect::new(move |_| {
+    let fetch = move || {
         spawn_local(async move {
-            match api::list_movies().await {
-                Ok(m) => {
-                    movies.set(m);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(m) = load.settle(api::list_movies().await) {
+                let _ = movies.try_set(m);
             }
         });
-    });
+    };
+    Effect::new(move |_| fetch());
 
     // Chip counts.
     let counts =
@@ -169,8 +168,8 @@ pub fn MoviesPage() -> impl IntoView {
                     />
                 })} }
             />
-            {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
-            {move || movies.get().is_empty().then(|| view! { <p class="muted">"No movies yet — add one with + Add media."</p> })}
+            {load.status(SkeletonKind::Posters, Callback::new(move |()| fetch()))}
+            {move || (load.is_loaded() && movies.get().is_empty()).then(|| view! { <p class="muted">"No movies yet — add one with + Add media."</p> })}
             <div class="poster-grid">{poster_tiles}</div>
         </section>
     }
@@ -583,7 +582,8 @@ pub fn EditionActions(
 #[component]
 pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> impl IntoView {
     let rows = RwSignal::new(Vec::<api::HistoryRow>::new());
-    let loaded = RwSignal::new(false);
+    // First load, failure and Retry (SKADI-T-0698).
+    let load = ListLoad::new();
     let note = RwSignal::new(None::<String>);
     // Collapsed by default so it doesn't dominate the detail page; `open` (TV, where the row
     // expand already gates it) starts it expanded.
@@ -606,10 +606,11 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
             // try_set: this fetch can land after the page is gone (fast
             // navigation into the player) — a plain set on a disposed signal
             // panics the whole wasm app (SKADI-T-0331 verification).
-            if admin && let Ok(h) = api::item_history(&acq.get_value(), 50).await {
+            // A non-admin never sees the panel (hidden below), so it stays
+            // unloaded rather than fetching.
+            if admin && let Some(h) = load.settle(api::item_history(&acq.get_value(), 50).await) {
                 let _ = rows.try_set(h);
             }
-            let _ = loaded.try_set(true);
         });
     };
     Effect::new(move |_| reload());
@@ -630,13 +631,11 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
 
     let body = move || {
         let rs = rows.get();
+        if !load.is_loaded() {
+            return ().into_any();
+        }
         if rs.is_empty() {
-            let msg = if loaded.get() {
-                "No history yet for this item."
-            } else {
-                "Loading…"
-            };
-            return view! { <p class="muted">{msg}</p> }.into_any();
+            return view! { <p class="muted">"No history yet for this item."</p> }.into_any();
         }
         rs.into_iter()
             .map(|r| {
@@ -695,7 +694,12 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
             </button>
             {move || {
                 (!collapsed.get())
-                    .then(move || view! { <div class="hist-rows">{body}</div> })
+                    .then(move || view! {
+                        <div class="hist-rows">
+                            {load.status_n(SkeletonKind::Rows, Some(3), Callback::new(move |()| reload()))}
+                            {body}
+                        </div>
+                    })
             }}
         </div>
     }
@@ -1532,6 +1536,9 @@ fn ProfileSection() -> impl IntoView {
 #[component]
 fn EditionKindsSection() -> impl IntoView {
     let items = RwSignal::new(Vec::<api::EditionKind>::new());
+    // The list's first load, failure and Retry (SKADI-T-0698); `error` is a
+    // refused save or delete.
+    let load = ListLoad::new();
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     // Editing target: None = closed, Some("") = adding, Some(id) = editing.
@@ -1542,12 +1549,9 @@ fn EditionKindsSection() -> impl IntoView {
 
     let refresh = move || {
         spawn_local(async move {
-            match api::list_edition_kinds().await {
-                Ok(list) => {
-                    items.set(list);
-                    error.set(None);
-                }
-                Err(e) => error.set(Some(e.to_string())),
+            if let Some(list) = load.settle(api::list_edition_kinds().await) {
+                let _ = items.try_set(list);
+                let _ = error.try_set(None);
             }
         });
     };
@@ -1686,6 +1690,7 @@ fn EditionKindsSection() -> impl IntoView {
                 <button on:click=open_add>"+ Add"</button>
             </div>
             {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+            {load.status(SkeletonKind::Cards, Callback::new(move |()| refresh()))}
             <div class="cards">{rows}</div>
             {form_panel}
         </section>

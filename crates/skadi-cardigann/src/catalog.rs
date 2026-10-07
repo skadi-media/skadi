@@ -20,6 +20,11 @@ pub struct SettingSummary {
     /// `text` / `password` / `checkbox` / `select`.
     pub kind: String,
     pub default: Option<String>,
+    /// Help text shown under the input (SKADI-T-0699): the text of the
+    /// definition's `info_<name>` row, else a standard text for a common
+    /// setting (cookie, user agent, login). `None` when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
 }
 
 /// A browsable summary of a definition for the add-tracker picker.
@@ -79,11 +84,101 @@ pub fn summarize(def: &Definition) -> CatalogEntry {
                     s.kind.clone()
                 },
                 default: s.default.as_ref().map(crate::filters_scalar),
+                help: setting_help(def, &s.name),
             })
             .collect(),
         categories,
         search_modes,
     }
+}
+
+/// Standard help for settings that many definitions share. Upstream marks some
+/// of them with a text-less `info_cookie` / `info_useragent` row and lets the
+/// client supply the words; these are skadi's.
+const COMMON_HELP: &[(&str, &str)] = &[
+    (
+        "cookie",
+        "The cookie of a browser session that is logged in to the site. Log in with your browser, open the developer tools, and copy the Cookie header of a request to the site.",
+    ),
+    (
+        "useragent",
+        "The User-Agent of the browser that the cookie comes from. The site can refuse the cookie with a different User-Agent.",
+    ),
+    ("username", "The user name of your account on the site."),
+    (
+        "password",
+        "The password of your account on the site. Skadi keeps it encrypted.",
+    ),
+    ("apikey", "The API key from your profile page on the site."),
+];
+
+/// The help text for the setting `name` of `def`: the text of an `info` row
+/// named `info_<name>` (or `info_<prefix>` for a prefix of `name`, as
+/// `info_download` explains `downloadlink` and `downloadlink2`), else
+/// [`COMMON_HELP`]. HTML in the definition text becomes plain text.
+fn setting_help(def: &Definition, name: &str) -> Option<String> {
+    let info_text = |s: &crate::model::Setting| {
+        s.default
+            .as_ref()
+            .map(crate::filters_scalar)
+            .map(|t| plain_text(&t))
+            .filter(|t| !t.is_empty())
+    };
+    let infos = || {
+        def.settings
+            .iter()
+            .filter(|s| s.kind.starts_with("info"))
+            .filter_map(|s| Some((s.name.strip_prefix("info_")?, s)))
+    };
+    infos()
+        .find(|(about, _)| *about == name)
+        .and_then(|(_, s)| info_text(s))
+        .or_else(|| {
+            infos()
+                .filter(|(about, _)| !about.is_empty() && name.starts_with(about))
+                .find_map(|(_, s)| info_text(s))
+        })
+        .or_else(|| {
+            COMMON_HELP
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, h)| (*h).to_string())
+        })
+}
+
+/// `text` without its HTML tags: a `<br>` (or `</br>`, `<li>`) becomes a
+/// space, other tags go, the common entities are decoded, and runs of white
+/// space become one space.
+fn plain_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        match rest[start..].find('>') {
+            Some(end) => {
+                let tag = rest[start + 1..start + end]
+                    .trim_start_matches('/')
+                    .to_ascii_lowercase();
+                if tag.starts_with("br") || tag.starts_with("li") || tag.starts_with('p') {
+                    out.push(' ');
+                }
+                rest = &rest[start + end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    let decoded = out
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// An in-memory index of definitions keyed by id, plus their catalog summaries.
@@ -207,5 +302,51 @@ mod tests {
         let (cat, _) = Catalog::load_dir(Path::new(dir)).unwrap();
         let tl = cat.entry("torrentleech").expect("torrentleech in catalog");
         assert!(tl.needs_login);
+    }
+
+    #[test]
+    fn a_setting_takes_its_help_from_its_info_row_as_plain_text() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+        let (cat, _) = Catalog::load_dir(Path::new(dir)).unwrap();
+        let tl = cat.entry("torrentleech").expect("torrentleech in catalog");
+        let help = |name: &str| {
+            tl.settings
+                .iter()
+                .find(|s| s.name == name)
+                .and_then(|s| s.help.clone())
+        };
+        let token = help("alt2fatoken").expect("alt2fatoken has an info row");
+        assert!(token.contains("Alt 2FA Token"), "{token}");
+        assert!(!token.contains('<'), "tags are stripped: {token}");
+        // No info row: the standard text.
+        assert!(help("username").is_some_and(|h| h.contains("user name")));
+        assert!(help("password").is_some_and(|h| h.contains("encrypted")));
+    }
+
+    #[test]
+    fn an_info_row_named_for_a_prefix_explains_each_matching_setting() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+        let (cat, _) = Catalog::load_dir(Path::new(dir)).unwrap();
+        let x = cat.entry("1337x").expect("1337x in catalog");
+        for name in ["downloadlink", "downloadlink2"] {
+            let s = x.settings.iter().find(|s| s.name == name).expect(name);
+            assert!(
+                s.help.as_deref().is_some_and(|h| h.contains("magnet")),
+                "{name}: {:?}",
+                s.help
+            );
+        }
+        let sort = x.settings.iter().find(|s| s.name == "sort").expect("sort");
+        assert_eq!(sort.help, None, "no info row, no common text");
+    }
+
+    #[test]
+    fn plain_text_drops_tags_and_decodes_entities() {
+        assert_eq!(
+            plain_text("Only <b>Other</b>.</br>Add 8000 &amp; more"),
+            "Only Other. Add 8000 & more"
+        );
+        assert_eq!(plain_text("<ol><li>One</li><li>Two</li></ol>"), "One Two");
+        assert_eq!(plain_text("a < b"), "a < b");
     }
 }

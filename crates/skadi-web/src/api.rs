@@ -275,6 +275,10 @@ pub struct CatalogSetting {
     pub kind: String,
     #[serde(default)]
     pub default: Option<String>,
+    /// Help text for the input (SKADI-T-0699): the definition's `info_<name>`
+    /// row, or skadi's text for a common setting. Absent from an older daemon.
+    #[serde(default)]
+    pub help: Option<String>,
 }
 
 /// A cardigann definition summary from the catalog (add-tracker picker).
@@ -1266,6 +1270,22 @@ pub async fn health_checks() -> Result<Vec<HealthCheck>, ApiError> {
         .noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("health checks -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<Vec<HealthCheck>>().await?)
+}
+
+/// `POST /health/checks/run?id=<id>` — run the one check `id` now and return
+/// every check, as `GET /health/checks` would (SKADI-T-0680). A provider check
+/// run this way tests the provider live (SKADI-T-0699): this is the Test
+/// button of the Indexers page. Admin only; 404 for an unknown id.
+pub async fn run_health_check(id: &str) -> Result<Vec<HealthCheck>, ApiError> {
+    let url = format!(
+        "{API_BASE}/health/checks/run?id={}",
+        js_sys::encode_uri_component(id)
+    );
+    let resp = post(&url).send().await.noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("test {id} -> HTTP {}", resp.status())));
     }
     Ok(resp.json::<Vec<HealthCheck>>().await?)
 }
@@ -3394,6 +3414,10 @@ pub struct ConfigKey {
     pub kind: String,
     /// The registry default, so the form can show what "unset" means.
     pub default: String,
+    /// What the key does, shown under its input (SKADI-T-0699). Absent for a
+    /// key with no help, and from an older daemon.
+    #[serde(default)]
+    pub help: Option<String>,
     /// The value in force. `None` for a redacted key.
     #[serde(default)]
     pub value: Option<String>,

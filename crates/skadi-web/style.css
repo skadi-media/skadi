@@ -2394,3 +2394,12 @@ p.genres.muted {
   overflow-wrap: anywhere;
 }
 .load-error-retry { flex: 0 0 auto; }
+
+/* Provider form help, required marks and field errors (SKADI-T-0699). */
+.field-req { color: var(--bad); }
+.field .field-help, .catalog-panel .field-help { font-size: 12px; margin: 0; line-height: 1.35; }
+.field .field-error { font-size: 12px; margin: 0; }
+.field input[aria-invalid="true"] { border-color: var(--bad); }
+.card-test .last-test { font-size: 12px; }
+.card-test .last-test.warn { color: var(--warn); }
+.config-row .config-help { flex: 1 1 100%; }

@@ -299,3 +299,87 @@ async fn create_without_secret_reports_has_secret_false() {
     .await;
     assert_eq!(created["has_secret"], false);
 }
+
+/// SKADI-T-0699: the web form refuses a blank required field before it
+/// saves, and the API still refuses it for any other client — on create, on a
+/// full update and on a patch — and names the field.
+#[tokio::test]
+async fn a_blank_required_provider_field_is_refused_and_named() {
+    let (state, _db) = state_with_store().await;
+    let cases = [
+        (
+            "indexers",
+            serde_json::json!({ "kind": "torznab", "name": "x", "base_url": "  ", "categories": [] }),
+            "base_url",
+        ),
+        (
+            "indexers",
+            serde_json::json!({ "kind": "torznab", "name": "", "base_url": "http://127.0.0.1:1", "categories": [] }),
+            "name",
+        ),
+        (
+            "notifiers",
+            serde_json::json!({ "kind": "webhook", "name": "hook", "url": "", "channels": [] }),
+            "url",
+        ),
+    ];
+    for (kind, body, field) in cases {
+        let (s, err) = call(
+            &state,
+            "POST",
+            &format!("/api/v1/settings/{kind}"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{kind} {body}: {err}");
+        assert_eq!(err["field"], field, "{kind} {body}: {err}");
+    }
+    let (_, list) = call(&state, "GET", "/api/v1/settings/indexers", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 0, "nothing was stored");
+
+    // An edit cannot blank it either.
+    let good = serde_json::json!({ "kind": "torznab", "name": "x", "base_url": "http://127.0.0.1:1", "categories": [] });
+    let (s, created) = call(&state, "POST", "/api/v1/settings/indexers", Some(good)).await;
+    assert_eq!(s, StatusCode::CREATED);
+    let id = created["id"].as_str().unwrap();
+    let (s, err) = call(
+        &state,
+        "PATCH",
+        &format!("/api/v1/settings/indexers/{id}"),
+        Some(serde_json::json!({ "base_url": "" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{err}");
+    assert_eq!(err["field"], "base_url");
+    let (s, err) = call(
+        &state,
+        "PUT",
+        &format!("/api/v1/settings/indexers/{id}"),
+        Some(serde_json::json!({ "kind": "torznab", "name": " ", "base_url": "http://127.0.0.1:1", "categories": [] })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{err}");
+    assert_eq!(err["field"], "name");
+}
+
+/// SKADI-T-0699: `GET /config` carries the help text of a key that has one,
+/// and leaves the field out for a key that has none.
+#[tokio::test]
+async fn config_keys_carry_their_help_text() {
+    let (state, _db) = state_with_store().await;
+    let (s, keys) = call(&state, "GET", "/api/v1/config", None).await;
+    assert_eq!(s, StatusCode::OK, "{keys}");
+    let key = |k: &str| {
+        keys.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["key"] == k)
+            .cloned()
+            .unwrap_or_else(|| panic!("no key {k}"))
+    };
+    assert_eq!(
+        key("library.root")["help"].as_str(),
+        skadi_config::help("library.root")
+    );
+    assert!(key("worker.id").get("help").is_none());
+}

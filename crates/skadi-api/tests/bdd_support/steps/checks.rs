@@ -91,6 +91,28 @@ async fn checks_have_run(w: &mut World) {
     );
 }
 
+/// `POST /health/checks/run?id=<id>`: the Test button of a provider card
+/// (SKADI-T-0699). The response (the whole list, or a 404) is the last
+/// response; the status is checked by the scenario.
+#[when(expr = "the health check {string} is run on its own")]
+async fn run_one_check(w: &mut World, id: String) {
+    let query: String = id
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    w.call(
+        "POST",
+        &format!("/api/v1/health/checks/run?id={query}"),
+        None,
+    )
+    .await;
+}
+
 /// SKADI-T-0680: run the refresh that the supervisor tick runs, against the
 /// cache of the scenario's `AppState` (`w.api()`), without an HTTP request.
 #[when("the supervisor refreshes the health checks")]
@@ -575,6 +597,17 @@ async fn checked_after(w: &mut World, id: String, name: String) {
         at > before,
         "checked_at {at} is not after {name} ({before})"
     );
+}
+
+/// The stored result was read back, not run again (SKADI-T-0699).
+#[then(expr = "the health check {string} was checked at {string}")]
+async fn checked_at_remembered(w: &mut World, id: String, name: String) {
+    let at = checked_at(&check(w, &id));
+    let then = *w
+        .times
+        .get(&name)
+        .unwrap_or_else(|| panic!("no time remembered as {name:?}"));
+    assert_eq!(at, then, "checked_at of {id} changed since {name}");
 }
 
 // ---- redaction (SKADI-T-0685) --------------------------------------------------

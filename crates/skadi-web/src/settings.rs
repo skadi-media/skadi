@@ -50,6 +50,12 @@ struct FieldSpec {
     /// Value prefilled into a fresh Add form (so e.g. the skadi path fields are
     /// non-empty and don't override their server-side defaults with `""`).
     default_value: &'static str,
+    /// Shown under the input (SKADI-T-0699). Empty = no help line.
+    help: &'static str,
+    /// The form refuses to save while this field is blank (SKADI-T-0699). The
+    /// API refuses it too (`required_provider_fields` in skadi-api settings.rs);
+    /// keep the two lists the same.
+    required: bool,
 }
 
 impl FieldSpec {
@@ -61,6 +67,8 @@ impl FieldSpec {
             kind: FieldKind::Text,
             placeholder,
             default_value: "",
+            help: "",
+            required: false,
         }
     }
 
@@ -72,7 +80,21 @@ impl FieldSpec {
             kind: FieldKind::Secret,
             placeholder,
             default_value: "",
+            help: "",
+            required: false,
         }
+    }
+
+    /// The same field with a help line under its input.
+    const fn help(mut self, help: &'static str) -> Self {
+        self.help = help;
+        self
+    }
+
+    /// The same field, required.
+    const fn required(mut self) -> Self {
+        self.required = true;
+        self
     }
 }
 
@@ -100,6 +122,13 @@ pub(crate) struct KindSpec {
     /// Whether to offer the native Cardigann "Add tracker" catalog flow
     /// (indexers only — SKADI-I-0036).
     catalog: bool,
+    /// The prefix of the daemon health check of each entry
+    /// (`indexer` → `indexer:<name>`), when the daemon checks this kind. Then
+    /// the card shows the last test from the check, and Test runs that check
+    /// (SKADI-T-0699). `None` (notifiers: a test sends a real notification, so
+    /// there is no check): Test calls the settings test, and its result lasts
+    /// until the page reloads.
+    health_prefix: Option<&'static str>,
 }
 
 impl KindSpec {
@@ -122,19 +151,29 @@ pub(crate) fn indexer_spec() -> KindSpec {
             label: "Torznab",
             summary_key: "base_url",
             fields: vec![
-                FieldSpec::text("name", "Name", "my-indexer"),
-                FieldSpec::text("base_url", "Base URL", "http://gluetun:9696/1/api"),
+                FieldSpec::text("name", "Name", "my-indexer")
+                    .required()
+                    .help("The name in lists, logs and health checks."),
+                // The client adds `/api` itself (TorznabClient), so the
+                // placeholder stops before it.
+                FieldSpec::text("base_url", "Base URL", "http://prowlarr:9696/1")
+                    .required()
+                    .help("The Torznab URL of the indexer, without /api at the end. Skadi adds /api."),
                 FieldSpec {
                     key: "categories",
                     label: "Categories",
                     kind: FieldKind::NumberList,
                     placeholder: "2000, 2040",
                     default_value: "",
+                    help: "Newznab category numbers to search, separated by commas: 2000 is movies, 5000 is TV, 3030 is audiobooks. Empty searches all categories.",
+                    required: false,
                 },
-                FieldSpec::secret("api_key", "API key", "leave blank to keep current"),
+                FieldSpec::secret("api_key", "API key", "leave blank to keep current")
+                    .help("The API key of the indexer (in Prowlarr: Settings → General). Leave it blank to keep the stored key."),
             ],
         }],
         catalog: true,
+        health_prefix: Some("indexer"),
     }
 }
 
@@ -155,23 +194,31 @@ pub(crate) fn notifier_spec() -> KindSpec {
             label: "Webhook",
             summary_key: "url",
             fields: vec![
-                FieldSpec::text("name", "Name", "my-hook"),
-                FieldSpec::text("url", "URL", "https://example.com/hook"),
+                FieldSpec::text("name", "Name", "my-hook")
+                    .required()
+                    .help("The name in lists and logs."),
+                FieldSpec::text("url", "URL", "https://example.com/hook")
+                    .required()
+                    .help("Skadi sends a JSON POST to this URL for each event that you select."),
                 FieldSpec {
                     key: "channels",
                     label: "Channels",
                     kind: FieldKind::ChannelSet,
                     placeholder: "",
                     default_value: "",
+                    help: "The events to send. With none selected, the webhook gets no events.",
+                    required: false,
                 },
                 FieldSpec::secret(
                     "secret",
                     "HMAC secret",
                     "optional; leave blank to keep current",
-                ),
+                )
+                .help("When set, each request has a signature made with this secret, so the receiver can make sure that it came from Skadi."),
             ],
         }],
         catalog: false,
+        health_prefix: None,
     }
 }
 
@@ -307,6 +354,96 @@ fn build_body(variant: &VariantSpec, form: &FormState) -> Value {
     Value::Object(obj)
 }
 
+/// Per-field errors of a form: field key → message.
+type FieldErrors = HashMap<String, String>;
+
+/// The message for a required field that is blank.
+fn required_message(label: &str) -> String {
+    format!("{label} is required.")
+}
+
+/// Check `form` before it is saved (SKADI-T-0699): every required text field
+/// has a value that is not only spaces, and each item of a number list is a
+/// number. Empty = the form can be saved. Secrets are never required here: an
+/// edit leaves a blank secret as it is. Pure.
+fn validate_form(variant: &VariantSpec, form: &FormState) -> FieldErrors {
+    let mut errors = FieldErrors::new();
+    for f in &variant.fields {
+        let raw = form.fields.get(f.key).map(String::as_str).unwrap_or("");
+        match f.kind {
+            FieldKind::Text if f.required && raw.trim().is_empty() => {
+                errors.insert(f.key.to_string(), required_message(f.label));
+            }
+            FieldKind::NumberList => {
+                let bad: Vec<&str> = raw
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && s.parse::<u64>().is_err())
+                    .collect();
+                if !bad.is_empty() {
+                    errors.insert(
+                        f.key.to_string(),
+                        format!(
+                            "Not a number: {}. Use numbers separated by commas.",
+                            bad.join(", ")
+                        ),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    errors
+}
+
+/// The health check id of a provider entry: `{prefix}:{name}`
+/// (`indexer:Knaben`), as the daemon names it.
+fn check_id(prefix: &str, name: &str) -> String {
+    format!("{prefix}:{name}")
+}
+
+/// The "last tested" line of a provider card, from its health check
+/// (SKADI-T-0699). `age_secs` is the age of `checked_at`, `None` when it does
+/// not parse. Returns the CSS class and the text; `None` when the daemon has
+/// no check for the entry (an older daemon, or the list and the checks were
+/// read at different times). Pure.
+fn last_test_line(
+    check: Option<&api::HealthCheck>,
+    age_secs: Option<f64>,
+) -> Option<(&'static str, String)> {
+    let check = check?;
+    let level = check.level();
+    if level == "pending" || check.checked_at.is_none() {
+        return Some(("pending", "Not tested yet.".into()));
+    }
+    let when = match age_secs.map(|s| crate::downloads::age_label(Some(s))) {
+        Some(a) if a == "now" => "Last tested just now".to_string(),
+        Some(a) if a != "—" => format!("Last tested {a} ago"),
+        _ => format!(
+            "Last tested {}",
+            crate::system::time_label(check.checked_at.as_deref())
+        ),
+    };
+    let verdict = match level {
+        "ok" => "ok",
+        "warn" => "warning",
+        _ => "failed",
+    };
+    let text = if check.detail.is_empty() {
+        format!("{when}: {verdict}.")
+    } else {
+        format!("{when}: {verdict} — {}", check.detail)
+    };
+    Some((crate::dashboard::severity_class(level), text))
+}
+
+/// Seconds since an RFC 3339 time, by the browser clock. `None` when it does
+/// not parse.
+fn age_secs(t: Option<&str>) -> Option<f64> {
+    let ms = js_sys::Date::parse(t?);
+    (!ms.is_nan()).then(|| (js_sys::Date::now() - ms) / 1000.0)
+}
+
 #[component]
 pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     let spec = Arc::new(spec);
@@ -322,14 +459,16 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     // from `form` so typing in a field doesn't re-render the whole field set.
     let selected = RwSignal::new(default_kind.to_string());
     let form_error = RwSignal::new(None::<String>);
+    // Errors next to their inputs (SKADI-T-0699).
+    let field_errors = RwSignal::new(FieldErrors::new());
     let busy = RwSignal::new(false);
     let tests = RwSignal::new(HashMap::<String, TestState>::new());
-    // Persistent health per provider (name -> ok/warn/fail), cross-referenced from
-    // the daemon's health checks so a failing provider shows at-a-glance here —
-    // not only after you click "Test" (SKADI-T-0164). Checks are named
-    // `{singular-kind}:{provider name}`, e.g. `indexer:Knaben (Prowlarr)`.
-    let health = RwSignal::new(HashMap::<String, String>::new());
-    let health_prefix = kind.strip_suffix('s').unwrap_or(kind);
+    // The daemon's health check per provider, by check id, so a failing
+    // provider shows at a glance (SKADI-T-0164) and each card says when it was
+    // last tested and how that went, also after a reload (SKADI-T-0699). Checks
+    // are named `{prefix}:{provider name}`, e.g. `indexer:Knaben (Prowlarr)`.
+    let checks = RwSignal::new(HashMap::<String, api::HealthCheck>::new());
+    let health_prefix = spec.health_prefix;
 
     // (Re)load the list for this kind.
     let refresh = move || {
@@ -339,19 +478,20 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
             }
         });
     };
+    // The stored checks. Reads only: `GET /health/checks` runs nothing.
+    let reload_checks = move || {
+        if health_prefix.is_some() {
+            spawn_local(async move {
+                if let Ok(list) = api::health_checks().await {
+                    set_checks(checks, list);
+                }
+            });
+        }
+    };
     // Initial load + health.
     Effect::new(move |_| {
         refresh();
-        spawn_local(async move {
-            if let Ok(checks) = api::health_checks().await {
-                health.set(
-                    checks
-                        .into_iter()
-                        .map(|c| (c.name.clone(), c.level().to_string()))
-                        .collect(),
-                );
-            }
-        });
+        reload_checks();
     });
 
     let open_add = {
@@ -360,6 +500,7 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
             selected.set(default_kind.to_string());
             form.set(form_for_variant(&spec.variants[0]));
             form_error.set(None);
+            field_errors.set(FieldErrors::new());
             editor.set(Editor::Add);
         }
     };
@@ -367,6 +508,7 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     let cancel = move |_| {
         editor.set(Editor::Closed);
         form_error.set(None);
+        field_errors.set(FieldErrors::new());
     };
 
     // Submit create or update depending on the editor mode.
@@ -375,6 +517,15 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
         move |_| {
             let spec = spec.clone();
             let variant = spec.variant(&selected.get_untracked()).clone();
+            // Refused in the form, with the message next to the field; the
+            // API still checks the same fields (SKADI-T-0699).
+            let errors = form.with_untracked(|f| validate_form(&variant, f));
+            if !errors.is_empty() {
+                field_errors.set(errors);
+                form_error.set(None);
+                return;
+            }
+            field_errors.set(FieldErrors::new());
             let body = build_body(&variant, &form.get_untracked());
             let mode = editor.get_untracked();
             busy.set(true);
@@ -389,6 +540,8 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
                     Ok(_) => {
                         editor.set(Editor::Closed);
                         refresh();
+                        // A new or renamed entry has a new check id.
+                        reload_checks();
                     }
                     Err(e) => form_error.set(Some(e.to_string())),
                 }
@@ -399,7 +552,7 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
     let spec_for_rows = spec.clone();
     let rows = move || {
         let spec = spec_for_rows.clone();
-        let checks = health.get();
+        let by_id = checks.get();
         items
             .get()
             .into_iter()
@@ -411,9 +564,21 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                let status = checks.get(&format!("{health_prefix}:{name}")).cloned();
+                let check = health_prefix.and_then(|p| by_id.get(&check_id(p, name)).cloned());
                 row_view(
-                    spec, item, status, editor, form, selected, tests, busy, refresh,
+                    spec,
+                    item,
+                    check,
+                    RowSignals {
+                        editor,
+                        form,
+                        field_errors,
+                        selected,
+                        tests,
+                        checks,
+                        busy,
+                    },
+                    refresh,
                 )
             })
             .collect_view()
@@ -434,6 +599,7 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
             selected,
             form,
             form_error,
+            field_errors,
             busy,
             submit.clone(),
             cancel,
@@ -477,6 +643,8 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
     let form = RwSignal::new(HashMap::<String, String>::new());
     let busy = RwSignal::new(false);
     let form_err = RwSignal::new(None::<String>);
+    // The Name error, next to the Name input (SKADI-T-0699).
+    let name_err = RwSignal::new(None::<String>);
     let refreshing = RwSignal::new(false);
 
     let load = move || {
@@ -517,6 +685,7 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
         }
         form.set(f);
         form_err.set(None);
+        name_err.set(None);
         selected.set(Some(d));
     };
     let back = move |_| selected.set(None);
@@ -528,9 +697,10 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
         let f = form.get_untracked();
         let name = f.get("name").cloned().unwrap_or_default();
         if name.trim().is_empty() {
-            form_err.set(Some("Name is required".into()));
+            name_err.set(Some(required_message("Name")));
             return;
         }
+        name_err.set(None);
         // Non-secret settings go in the body; secret (password) settings ride in
         // `api_key` as a JSON blob — the settings API strips + seals that field
         // into the credential store, and `build_cardigann` merges it back for login.
@@ -632,15 +802,25 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
                     {needs_login.then(|| view! { <span class="pill privacy-private">"login required"</span> })}
                 </div>
                 <div class="field">
-                    <label>"Name"</label>
+                    <label for="catalog-field-name">
+                        "Name"
+                        <span class="field-req" title="Required">" *"</span>
+                    </label>
                     <input
+                        id="catalog-field-name"
                         type="text"
+                        required=true
+                        aria-required="true"
+                        aria-invalid=move || name_err.with(Option::is_some).to_string()
                         prop:value=move || form.with(|f| f.get("name").cloned().unwrap_or_default())
                         on:input=move |ev| {
                             let v = event_target_value(&ev);
                             form.update(|f| { f.insert("name".into(), v); });
+                            name_err.set(None);
                         }
                     />
+                    <p class="field-help muted">"The name in lists, logs and health checks."</p>
+                    {move || name_err.get().map(|e| view! { <p class="field-error bad" role="alert">{e}</p> })}
                 </div>
                 {fields}
                 {move || form_err.get().map(|e| view! { <p class="bad">{e}</p> })}
@@ -703,6 +883,11 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
 /// One definition-setting input (checkbox or text) for the catalog add form.
 fn catalog_field_view(s: api::CatalogSetting, form: RwSignal<HashMap<String, String>>) -> AnyView {
     let key = s.name.clone();
+    let help = s
+        .help
+        .clone()
+        .filter(|h| !h.trim().is_empty())
+        .map(|h| view! { <p class="field-help muted">{h}</p> });
     let label = if s.label.is_empty() {
         s.name.clone()
     } else {
@@ -723,6 +908,7 @@ fn catalog_field_view(s: api::CatalogSetting, form: RwSignal<HashMap<String, Str
                 />
                 {label}
             </label>
+            {help}
         }
         .into_any()
     } else {
@@ -740,25 +926,49 @@ fn catalog_field_view(s: api::CatalogSetting, form: RwSignal<HashMap<String, Str
                         form.update(|f| { f.insert(key_in.clone(), v); });
                     }
                 />
+                {help}
             </div>
         }
         .into_any()
     }
 }
 
-/// One list card for a stored entry.
-#[allow(clippy::too_many_arguments)]
+/// Replace the stored checks with `list` (a whole `GET /health/checks` or
+/// `POST /health/checks/run` answer), keyed by check id.
+fn set_checks(checks: RwSignal<HashMap<String, api::HealthCheck>>, list: Vec<api::HealthCheck>) {
+    let _ = checks.try_set(list.into_iter().map(|c| (c.name.clone(), c)).collect());
+}
+
+/// The section's signals that a card reads or writes.
+#[derive(Clone, Copy)]
+struct RowSignals {
+    editor: RwSignal<Editor>,
+    form: RwSignal<FormState>,
+    field_errors: RwSignal<FieldErrors>,
+    selected: RwSignal<String>,
+    tests: RwSignal<HashMap<String, TestState>>,
+    checks: RwSignal<HashMap<String, api::HealthCheck>>,
+    busy: RwSignal<bool>,
+}
+
+/// One list card for a stored entry. `check` is its daemon health check, when
+/// the section has them.
 fn row_view(
     spec: Arc<KindSpec>,
     item: api::Setting,
-    health_status: Option<String>,
-    editor: RwSignal<Editor>,
-    form: RwSignal<FormState>,
-    selected: RwSignal<String>,
-    tests: RwSignal<HashMap<String, TestState>>,
-    busy: RwSignal<bool>,
+    check: Option<api::HealthCheck>,
+    sig: RowSignals,
     refresh: impl Fn() + Copy + 'static,
 ) -> AnyView {
+    let RowSignals {
+        editor,
+        form,
+        field_errors,
+        selected,
+        tests,
+        checks,
+        busy,
+    } = sig;
     let id = item.id.clone();
     // Resolve the variant from the row's stored `kind`.
     let row_kind = item
@@ -802,6 +1012,7 @@ fn row_view(
     let on_edit = move |_| {
         selected.set(edit_kind.clone());
         form.set(form_from(&edit_variant.fields, &edit_body));
+        field_errors.set(FieldErrors::new());
         editor.set(Editor::Edit(edit_id.clone()));
     };
 
@@ -822,26 +1033,46 @@ fn row_view(
         });
     };
 
+    // Test: where the daemon checks this kind, run that one check, so the card
+    // and the health check never disagree and the result outlives a reload
+    // (SKADI-T-0699). Else the settings test, whose result lasts until reload.
     let test_id = id.clone();
     let test_kind = spec.settings_kind;
+    let test_check = spec.health_prefix.map(|p| check_id(p, &name));
     let on_test = move |_| {
         let test_id = test_id.clone();
+        let test_check = test_check.clone();
         tests.update(|m| {
             m.insert(test_id.clone(), TestState::Running);
         });
         spawn_local(async move {
-            let state = match api::test_setting(test_kind, &test_id).await {
-                Ok(r) if r.ok => TestState::Ok,
-                Ok(r) => TestState::Failed(r.error.unwrap_or_else(|| "failed".into())),
-                Err(e) => TestState::Failed(e.to_string()),
+            let state = match &test_check {
+                Some(cid) => match api::run_health_check(cid).await {
+                    Ok(list) => {
+                        set_checks(checks, list);
+                        None
+                    }
+                    Err(e) => Some(TestState::Failed(e.to_string())),
+                },
+                None => Some(match api::test_setting(test_kind, &test_id).await {
+                    Ok(r) if r.ok => TestState::Ok,
+                    Ok(r) => TestState::Failed(r.error.unwrap_or_else(|| "failed".into())),
+                    Err(e) => TestState::Failed(e.to_string()),
+                }),
             };
-            tests.update(|m| {
-                m.insert(test_id.clone(), state);
+            let _ = tests.try_update(|m| match state {
+                Some(st) => {
+                    m.insert(test_id.clone(), st);
+                }
+                None => {
+                    m.remove(&test_id);
+                }
             });
         });
     };
 
     let test_id_view = id.clone();
+    let last_check = check.clone();
     let test_view = move || {
         tests.with(|m| match m.get(&test_id_view) {
             Some(TestState::Running) => {
@@ -852,15 +1083,28 @@ fn row_view(
                 let e = e.clone();
                 view! { <span class="bad">"✗ " {e}</span> }.into_any()
             }
-            None => ().into_any(),
+            None => match last_test_line(
+                last_check.as_ref(),
+                age_secs(last_check.as_ref().and_then(|c| c.checked_at.as_deref())),
+            ) {
+                Some((cls, text)) => {
+                    let at = crate::system::time_label(
+                        last_check.as_ref().and_then(|c| c.checked_at.as_deref()),
+                    );
+                    view! { <span class=format!("last-test {cls}") title=at>{text}</span> }
+                        .into_any()
+                }
+                None => ().into_any(),
+            },
         })
     };
 
     // Persistent health dot (from the daemon's health checks), with the raw status
     // as a tooltip. Absent when there's no matching check (e.g. a notifier).
-    let health_dot = health_status.map(|status| {
-        let cls = crate::dashboard::severity_class(&status);
-        view! { <span class=format!("health-dot {cls}") title=status></span> }
+    let health_dot = check.map(|c| {
+        let level = c.level().to_string();
+        let cls = crate::dashboard::severity_class(&level);
+        view! { <span class=format!("health-dot {cls}") title=level></span> }
     });
 
     view! {
@@ -898,6 +1142,7 @@ fn form_view(
     selected: RwSignal<String>,
     form: RwSignal<FormState>,
     form_error: RwSignal<Option<String>>,
+    field_errors: RwSignal<FieldErrors>,
     busy: RwSignal<bool>,
     submit: impl Fn(()) + Clone + 'static,
     cancel: impl Fn(leptos::ev::MouseEvent) + 'static,
@@ -910,6 +1155,7 @@ fn form_view(
             let k = event_target_value(&ev);
             selected.set(k.clone());
             form.set(form_for_variant(spec_for_change.variant(&k)));
+            field_errors.set(FieldErrors::new());
         };
         let options = spec
             .variants
@@ -940,7 +1186,7 @@ fn form_view(
         variant
             .fields
             .into_iter()
-            .map(|f| field_view(f, form))
+            .map(|f| field_view(f, form, field_errors))
             .collect_view()
     };
 
@@ -962,9 +1208,48 @@ fn form_view(
     .into_any()
 }
 
-/// One labelled input, dispatched on the field kind.
-fn field_view(f: FieldSpec, form: RwSignal<FormState>) -> AnyView {
+/// The label of a field, with a `*` when it is required.
+fn field_label(label: &'static str, required: bool, for_id: Option<String>) -> AnyView {
+    view! {
+        <label for=for_id>
+            {label}
+            {required.then(|| view! {
+                <span class="field-req" title="Required">" *"</span>
+            })}
+        </label>
+    }
+    .into_any()
+}
+
+/// The help line under an input, if the field has one (SKADI-T-0699).
+fn help_line(help: &str, id: String) -> Option<AnyView> {
+    (!help.is_empty()).then(|| {
+        let help = help.to_string();
+        view! { <p class="field-help muted" id=id>{help}</p> }.into_any()
+    })
+}
+
+/// The error of the field `key`, next to its input.
+fn error_line(key: &'static str, field_errors: RwSignal<FieldErrors>) -> impl IntoView {
+    move || {
+        field_errors.with(|e| e.get(key).cloned()).map(|msg| {
+            view! { <p class="field-error bad" role="alert">{msg}</p> }
+        })
+    }
+}
+
+/// One labelled input, dispatched on the field kind, with its help line and
+/// its error.
+fn field_view(
+    f: FieldSpec,
+    form: RwSignal<FormState>,
+    field_errors: RwSignal<FieldErrors>,
+) -> AnyView {
     let key = f.key;
+    let input_id = format!("provider-field-{key}");
+    let help_id = format!("{input_id}-help");
+    let help = help_line(f.help, help_id.clone());
+    let described_by = help.is_some().then_some(help_id);
     match f.kind {
         FieldKind::ChannelSet => {
             let boxes = CHANNELS
@@ -993,8 +1278,10 @@ fn field_view(f: FieldSpec, form: RwSignal<FormState>) -> AnyView {
                 .collect_view();
             view! {
                 <div class="field">
-                    <label>{f.label}</label>
-                    <div class="checks">{boxes}</div>
+                    {field_label(f.label, f.required, None)}
+                    <div class="checks" aria-describedby=described_by>{boxes}</div>
+                    {help}
+                    {error_line(key, field_errors)}
                 </div>
             }
             .into_any()
@@ -1011,19 +1298,180 @@ fn field_view(f: FieldSpec, form: RwSignal<FormState>) -> AnyView {
                 form.update(|st| {
                     st.fields.insert(key.to_string(), v);
                 });
+                // The message goes once the field is edited; Save checks again.
+                if field_errors.with_untracked(|e| e.contains_key(key)) {
+                    field_errors.update(|e| {
+                        e.remove(key);
+                    });
+                }
             };
+            let invalid = move || field_errors.with(|e| e.contains_key(key)).to_string();
             view! {
                 <div class="field">
-                    <label>{f.label}</label>
+                    {field_label(f.label, f.required, Some(input_id.clone()))}
                     <input
+                        id=input_id
                         type=input_type
                         placeholder=f.placeholder
+                        required=f.required
+                        aria-required=f.required.to_string()
+                        aria-invalid=invalid
+                        aria-describedby=described_by
                         prop:value=value
                         on:input=on_input
                     />
+                    {help}
+                    {error_line(key, field_errors)}
                 </div>
             }
             .into_any()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form(pairs: &[(&str, &str)]) -> FormState {
+        FormState {
+            fields: pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            channels: HashSet::new(),
+        }
+    }
+
+    fn torznab() -> VariantSpec {
+        indexer_spec().variants[0].clone()
+    }
+
+    #[test]
+    fn a_blank_required_field_is_refused_with_a_message_for_that_field() {
+        let errors = validate_form(&torznab(), &form(&[("name", "  "), ("base_url", "")]));
+        assert_eq!(
+            errors.get("name").map(String::as_str),
+            Some("Name is required.")
+        );
+        assert_eq!(
+            errors.get("base_url").map(String::as_str),
+            Some("Base URL is required.")
+        );
+        assert!(
+            !errors.contains_key("api_key"),
+            "a secret is never required"
+        );
+        assert!(!errors.contains_key("categories"), "optional");
+    }
+
+    #[test]
+    fn a_filled_form_has_no_errors_and_a_blank_secret_is_fine() {
+        let ok = form(&[
+            ("name", "x"),
+            ("base_url", "http://p:9696/1"),
+            ("categories", "2000, 5000"),
+        ]);
+        assert!(validate_form(&torznab(), &ok).is_empty());
+    }
+
+    #[test]
+    fn a_category_that_is_not_a_number_is_named() {
+        let f = form(&[
+            ("name", "x"),
+            ("base_url", "u"),
+            ("categories", "2000, movies, 50x0"),
+        ]);
+        let errors = validate_form(&torznab(), &f);
+        let msg = errors.get("categories").expect("categories error");
+        assert!(msg.contains("movies, 50x0"), "{msg}");
+    }
+
+    #[test]
+    fn the_required_fields_match_the_api_list() {
+        // skadi-api settings.rs `required_provider_fields`: torznab
+        // name + base_url, webhook name + url.
+        let required = |spec: KindSpec| -> Vec<&'static str> {
+            spec.variants[0]
+                .fields
+                .iter()
+                .filter(|f| f.required)
+                .map(|f| f.key)
+                .collect()
+        };
+        assert_eq!(required(indexer_spec()), ["name", "base_url"]);
+        assert_eq!(required(notifier_spec()), ["name", "url"]);
+    }
+
+    #[test]
+    fn the_fields_that_most_need_it_have_help() {
+        for spec in [indexer_spec(), notifier_spec()] {
+            for f in &spec.variants[0].fields {
+                assert!(
+                    !f.help.is_empty(),
+                    "{} {} has no help",
+                    spec.settings_kind,
+                    f.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_indexers_read_a_health_check() {
+        assert_eq!(indexer_spec().health_prefix, Some("indexer"));
+        assert_eq!(notifier_spec().health_prefix, None);
+        assert_eq!(
+            check_id("indexer", "Knaben (Prowlarr)"),
+            "indexer:Knaben (Prowlarr)"
+        );
+    }
+
+    fn check(severity: &str, detail: &str, at: Option<&str>) -> api::HealthCheck {
+        api::HealthCheck {
+            name: "indexer:x".into(),
+            status: "ok".into(),
+            detail: detail.into(),
+            severity: Some(severity.into()),
+            checked_at: at.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_card_says_when_it_was_last_tested_and_how_it_went() {
+        let at = Some("2026-10-07T12:00:00Z");
+        assert_eq!(
+            last_test_line(Some(&check("ok", "reachable", at)), Some(300.0)),
+            Some(("ok", "Last tested 5m ago: ok — reachable".into()))
+        );
+        assert_eq!(
+            last_test_line(
+                Some(&check("error", "connection refused", at)),
+                Some(7_200.0)
+            ),
+            Some((
+                "bad",
+                "Last tested 2h ago: failed — connection refused".into()
+            ))
+        );
+        assert_eq!(
+            last_test_line(Some(&check("warn", "slow", at)), Some(10.0)),
+            Some(("warn", "Last tested just now: warning — slow".into()))
+        );
+        // A time the browser cannot read: the time itself.
+        assert_eq!(
+            last_test_line(Some(&check("ok", "", at)), None),
+            Some(("ok", "Last tested 2026-10-07 12:00:00: ok.".into()))
+        );
+    }
+
+    #[test]
+    fn a_check_that_never_ran_says_so_and_no_check_shows_nothing() {
+        assert_eq!(
+            last_test_line(Some(&check("pending", "not run yet", None)), None),
+            Some(("pending", "Not tested yet.".into()))
+        );
+        assert_eq!(last_test_line(None, None), None);
     }
 }

@@ -20,7 +20,9 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 
-use super::{CheckContext, CheckResult, HealthCheck, HealthRegistry, resolve, run_check};
+use super::{
+    CheckContext, CheckResult, HealthCheck, HealthRegistry, resolve, run_check, run_check_on_demand,
+};
 
 /// A [`HealthRegistry`] with the last result of each of its checks.
 pub struct HealthCache {
@@ -105,6 +107,9 @@ impl HealthCache {
     pub async fn run_now(&self, ctx: &CheckContext, id: Option<&str>) -> Option<Vec<CheckResult>> {
         let checks = self.registry.enumerate(ctx).await;
         self.forget_all_but(&checks);
+        // One check asked for by id is an operator's explicit test of it: it
+        // probes, even where a check could answer from history.
+        let on_demand = id.is_some();
         let run: Vec<_> = match id {
             None => checks
                 .into_iter()
@@ -124,7 +129,15 @@ impl HealthCache {
         };
         let handles: Vec<_> = run
             .into_iter()
-            .map(|c| tokio::spawn(async move { run_check(c.as_ref()).await }))
+            .map(|c| {
+                tokio::spawn(async move {
+                    if on_demand {
+                        run_check_on_demand(c.as_ref()).await
+                    } else {
+                        run_check(c.as_ref()).await
+                    }
+                })
+            })
             .collect();
         self.store_all(handles).await;
         Some(self.snapshot(ctx).await)
@@ -313,5 +326,37 @@ mod tests {
         assert_eq!(runs.load(Ordering::SeqCst), 2, "forced past the TTL");
         assert!(c.run_now(&ctx, Some("nope")).await.is_none());
         assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    /// Answers from history on a plain run, probes on demand.
+    struct Remembers;
+
+    #[async_trait]
+    impl HealthCheck for Remembers {
+        fn id(&self) -> String {
+            "remembers".into()
+        }
+        fn label(&self) -> String {
+            "Remembers".into()
+        }
+        async fn run(&self) -> Outcome {
+            Outcome::error("from history", "fix it")
+        }
+        async fn run_on_demand(&self) -> Outcome {
+            Outcome::ok("probed")
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_by_id_probes_on_demand_and_a_run_of_all_does_not() {
+        let Some((_dir, ctx)) = ctx().await else {
+            return;
+        };
+        let c = HealthCache::new(HealthRegistry::new().with(single(|_| Arc::new(Remembers))));
+        let all = c.run_now(&ctx, None).await.expect("all");
+        assert_eq!(all[0].severity, Severity::Error, "run all: {:?}", all[0]);
+        let one = c.run_now(&ctx, Some("remembers")).await.expect("known id");
+        assert_eq!(one[0].severity, Severity::Ok, "run by id: {:?}", one[0]);
+        assert_eq!(one[0].message, "probed");
     }
 }

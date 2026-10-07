@@ -678,6 +678,119 @@ pub enum ConfigError {
     Invalid { key: String, message: String },
 }
 
+/// Help text for the keys an operator most often has to look up
+/// (SKADI-T-0699), shown under the input on the web Config page. Kept out of
+/// [`ConfigKeySpec`] so the registry rows stay one fact each; a key with no
+/// entry has no help. Every key here is in [`REGISTRY`] (a test checks it).
+pub const HELP: &[(&str, &str)] = &[
+    (
+        "mode",
+        "production, just-go or testing. testing uses a stub indexer and downloader; do not use it on a real library.",
+    ),
+    (
+        "library.root",
+        "The folder that holds the whole library. Each media kind writes to a subfolder of it, and downloads go to <root>/downloads.",
+    ),
+    (
+        "library.require_root_marker",
+        "When on, imports stop unless the file .skadi-root is in the library root. Create it with touch while the mount is up, then turn this on.",
+    ),
+    (
+        "min_seeders",
+        "The fewest seeders a torrent release can have and still be grabbed. 0 turns the filter off.",
+    ),
+    (
+        "flaresolverr_url",
+        "The URL of FlareSolverr, for trackers behind CloudFlare. Empty means no FlareSolverr.",
+    ),
+    (
+        "cardigann_proxy_url",
+        "The HTTP proxy for native tracker requests, for example the gluetun proxy, so that searches go through the VPN. Empty means a direct connection.",
+    ),
+    (
+        "http.proxy_url",
+        "The HTTP proxy for the other outgoing requests of the daemon (Torznab, metadata, notifiers). Empty means a direct connection.",
+    ),
+    (
+        "http.no_proxy",
+        "Hosts that do not use the proxy, separated by commas. A host matches by its end. Loopback never uses the proxy.",
+    ),
+    (
+        "import.placement",
+        "seed keeps the download and hard-links the file into the library, so the torrent continues to seed. move removes the download after the import.",
+    ),
+    (
+        "import.recycle_bin",
+        "A folder for the files that an upgrade replaces. Empty means that the old file is deleted.",
+    ),
+    (
+        "import.min_free_mb",
+        "An import that leaves less than this free space (MB) on the library disk is refused. 0 turns the reserve off.",
+    ),
+    (
+        "history.retention_days",
+        "How many days history, trace events and decisions are kept. 0 keeps them for ever.",
+    ),
+    (
+        "blocklist.auto_ttl_hours",
+        "How many hours an automatic blocklist entry lasts. 0 makes it permanent.",
+    ),
+    (
+        "sweep_interval_secs",
+        "Seconds between two searches for wanted and upgradable items.",
+    ),
+    (
+        "rss_interval_secs",
+        "Seconds between two RSS checks of the indexers. 0 turns RSS off.",
+    ),
+    (
+        "monitor.stall_timeout_secs",
+        "Seconds that a download can make no progress before the hunter stops it and tries a different release.",
+    ),
+    (
+        "worker.seed_ratio",
+        "The ratio at which a torrent stops seeding. 0 means no limit.",
+    ),
+    (
+        "worker.seed_time_mins",
+        "The minutes after which a torrent stops seeding. 0 means no limit.",
+    ),
+    (
+        "worker.seed_action",
+        "What to do at a seed limit: stop (keep the files, stop seeding) or remove.",
+    ),
+    (
+        "worker.max_active",
+        "The maximum number of downloads at the same time. 0 means no limit.",
+    ),
+    (
+        "worker.down_limit_bps",
+        "The download speed limit, in bytes per second. 0 means no limit.",
+    ),
+    (
+        "worker.up_limit_bps",
+        "The upload speed limit, in bytes per second. 0 means no limit.",
+    ),
+    (
+        "worker.extra_trackers",
+        "Tracker URLs that every torrent also announces to, separated by commas or spaces. They help a magnet with no tracker find peers.",
+    ),
+    (
+        "naming.space",
+        "The character that replaces a space in file and folder names. Use a space to keep spaces.",
+    ),
+    (
+        "uploads.allowed_extensions",
+        "File extensions that a browser upload accepts, separated by commas. Empty means the built-in list.",
+    ),
+];
+
+/// The help text for `key` ([`HELP`]), if it has one.
+#[must_use]
+pub fn help(key: &str) -> Option<&'static str> {
+    HELP.iter().find(|(k, _)| *k == key).map(|(_, h)| *h)
+}
+
 /// The [`ConfigKeySpec`] for `key`, if it exists in the registry.
 #[must_use]
 pub fn spec(key: &str) -> Option<&'static ConfigKeySpec> {
@@ -988,6 +1101,23 @@ pub fn validate_cross_key(view: &ConfigView) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_help_entry_names_a_registry_key_once() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, text) in HELP {
+            assert!(spec(key).is_some(), "help for unknown key {key}");
+            assert!(seen.insert(*key), "help for {key} twice");
+            assert!(!text.trim().is_empty(), "empty help for {key}");
+        }
+        assert_eq!(
+            help("library.root"),
+            HELP.iter()
+                .find(|(k, _)| *k == "library.root")
+                .map(|(_, h)| *h)
+        );
+        assert_eq!(help("worker.id"), None);
+    }
 
     #[test]
     fn registry_keys_are_unique_and_well_formed() {

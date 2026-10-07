@@ -572,6 +572,41 @@ fn validate_provider_body(kind: &str, body: &serde_json::Value) -> Result<(), Ap
         }
         _ => {}
     }
+    reject_blank_required(kind, body)
+}
+
+/// The text fields of a provider config that cannot be blank, by settings
+/// kind and config `kind` (SKADI-T-0699). The typed parse above accepts `""`
+/// for a `String`, so a form that sent an empty name or URL stored a provider
+/// that could never work. The web form checks the same fields before it saves;
+/// this is the check for every other client.
+fn required_provider_fields(kind: &str, config_kind: &str) -> &'static [&'static str] {
+    match (kind, config_kind) {
+        ("indexers", "torznab" | "prowlarr") => &["name", "base_url"],
+        ("indexers", "cardigann") => &["name", "definition_id"],
+        ("indexers", _) => &["name"],
+        ("notifiers", "webhook" | "discord") => &["name", "url"],
+        ("notifiers", "telegram") => &["name", "chat_id"],
+        ("notifiers", "pushover") => &["name", "user_key"],
+        ("notifiers", _) => &["name"],
+        _ => &[],
+    }
+}
+
+fn reject_blank_required(kind: &str, body: &serde_json::Value) -> Result<(), ApiError> {
+    let config_kind = body.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+    for field in required_provider_fields(kind, config_kind) {
+        let blank = body
+            .get(*field)
+            .and_then(|v| v.as_str())
+            .is_none_or(|v| v.trim().is_empty());
+        if blank {
+            return Err(ApiError(AppError::field(
+                *field,
+                format!("{kind}: {field} is required"),
+            )));
+        }
+    }
     Ok(())
 }
 

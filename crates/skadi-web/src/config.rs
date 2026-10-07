@@ -401,6 +401,9 @@ fn ConfigRow(
                     </span>
                 }
             })}
+            {k.help.clone().filter(|h| !h.trim().is_empty()).map(|h| view! {
+                <p class="muted config-help">{h}</p>
+            })}
             {env_backed.then(|| view! {
                 <p class="muted">
                     "This value comes from an environment variable and is rewritten \

@@ -46,6 +46,10 @@ pub(crate) struct ConfigKeyDto {
     kind: &'static str,
     /// The registry default, so a client can show what "unset" means.
     default: &'static str,
+    /// What the key does, for the form (SKADI-T-0699). Absent when the key
+    /// has no help text ([`skadi_config::HELP`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    help: Option<&'static str>,
     /// The value in force. `None` for a redacted key.
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<String>,
@@ -95,6 +99,7 @@ async fn dto(store: &Store, spec: &'static skadi_config::ConfigKeySpec) -> Confi
         key: spec.key,
         kind: kind_str(spec.kind),
         default: spec.default,
+        help: skadi_config::help(spec.key),
         value: if redacted {
             None
         } else {

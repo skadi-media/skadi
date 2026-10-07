@@ -273,6 +273,14 @@ pub trait HealthCheck: Send + Sync {
     /// Probe and report. Never panics on a failed probe: a failure is an
     /// [`Outcome::error`], not an `Err`. A rollup is never run.
     async fn run(&self) -> Outcome;
+    /// Probe because an operator asked for this one check
+    /// (`POST /health/checks/run?id=`, the Test button of a provider). The
+    /// default is [`run`](Self::run). A check that can answer from history
+    /// instead of probing overrides this to probe anyway: after the operator
+    /// fixes a provider, its Test must try it again, not repeat the old error.
+    async fn run_on_demand(&self) -> Outcome {
+        self.run().await
+    }
     /// `Some(prefix)` makes this check a **rollup**: it probes nothing, and its
     /// result is [`summarize`](Self::summarize) over the results of the checks
     /// whose id starts with `prefix`, worked out each time the results are read.
@@ -444,8 +452,21 @@ impl HealthRegistry {
 
 /// Run one check within its budget and stamp the result.
 pub async fn run_check(check: &dyn HealthCheck) -> CheckResult {
+    stamp(check, check.run()).await
+}
+
+/// [`run_check`] through [`HealthCheck::run_on_demand`]: the operator asked
+/// for this check by id.
+pub async fn run_check_on_demand(check: &dyn HealthCheck) -> CheckResult {
+    stamp(check, check.run_on_demand()).await
+}
+
+async fn stamp(
+    check: &dyn HealthCheck,
+    probe: impl std::future::Future<Output = Outcome>,
+) -> CheckResult {
     let budget = check.timeout();
-    let outcome = match tokio::time::timeout(budget, check.run()).await {
+    let outcome = match tokio::time::timeout(budget, probe).await {
         Ok(o) => o,
         Err(_) => Outcome::error(
             format!("timed out after {}s", budget.as_secs()),

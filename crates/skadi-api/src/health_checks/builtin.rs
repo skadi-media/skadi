@@ -635,6 +635,19 @@ impl HealthCheck for ProviderCheck {
         PROVIDER_CHECK_TTL
     }
     async fn run(&self) -> Outcome {
+        self.probe(true).await
+    }
+    /// The Test button of the provider (SKADI-T-0699): a live test even when
+    /// the circuit is open, so a fixed provider stops reading as down.
+    async fn run_on_demand(&self) -> Outcome {
+        self.probe(false).await
+    }
+}
+
+impl ProviderCheck {
+    /// Test the provider. With `trust_open_circuit`, a known-down indexer is
+    /// answered from its history instead of a live test.
+    async fn probe(&self, trust_open_circuit: bool) -> Outcome {
         // The search history of an indexer, read before the test: the test
         // itself records an outcome into it.
         let history = (self.kind == "indexers")
@@ -648,7 +661,8 @@ impl HealthCheck for ProviderCheck {
         // Known-down indexer → answer from the cached health registry instead of
         // a live test (SKADI-T-0308). Avoids serializing dead CloudFlare trackers
         // behind FlareSolverr, which was making this endpoint take ~10s.
-        if let Some(h) = &history
+        if trust_open_circuit
+            && let Some(h) = &history
             && h.consecutive_failures >= CHECK_CACHED_FAILS
         {
             let reason = h

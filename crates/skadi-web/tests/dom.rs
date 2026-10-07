@@ -1655,3 +1655,78 @@ async fn skeleton_shapes_shimmer_with_the_real_stylesheet() {
     drop(handle);
     frame.remove();
 }
+
+// ---------------------------------------------------------------------------
+// Provider forms: help, required marks, validation before save (SKADI-T-0699)
+// ---------------------------------------------------------------------------
+
+/// Type `value` into the input `el` as a user would: set it, fire `input`.
+fn type_into(el: &HtmlElement, value: &str) {
+    let input: web_sys::HtmlInputElement = el.clone().unchecked_into();
+    input.set_value(value);
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    let ev = web_sys::Event::new_with_event_init_dict("input", &init).unwrap();
+    el.dispatch_event(&ev).unwrap();
+}
+
+/// Save with a required field empty is refused in the form: the message is
+/// next to the field, and no write request goes to the API.
+#[wasm_bindgen_test]
+async fn a_provider_form_refuses_a_blank_required_field_before_it_saves() {
+    use skadi_web::IndexersPage;
+    grow_resource_buffer();
+    let host = host();
+    let handle = mount_to(host.clone(), || view! { <Router><IndexersPage/></Router> });
+    find(&host, ".provider-section .section-head button").click();
+    settle_dom().await;
+    let form = || find(&host, ".provider-section .form");
+
+    // Required marks and help lines from the spec.
+    assert_eq!(count(&form(), ".field-req"), 2, "{}", form().inner_html());
+    assert!(
+        count(&form(), ".field-help") >= 4,
+        "{}",
+        form().inner_html()
+    );
+    let name = find(&form(), "#provider-field-name");
+    assert_eq!(attr(&name, "aria-required").as_deref(), Some("true"));
+    assert_eq!(
+        attr(&name, "aria-describedby").as_deref(),
+        Some("provider-field-name-help")
+    );
+
+    let writes_before = fetches_of("/api/v1/settings/indexers");
+    find(&form(), ".form-actions button").click();
+    settle_dom().await;
+    let errors: Vec<String> = {
+        let list = form().query_selector_all(".field-error").unwrap();
+        (0..list.length())
+            .filter_map(|i| list.item(i)?.text_content())
+            .collect()
+    };
+    assert_eq!(errors, ["Name is required.", "Base URL is required."]);
+    // Each message sits in the same .field as its input.
+    let name_field: HtmlElement = name.parent_element().unwrap().unchecked_into();
+    assert_eq!(
+        find(&name_field, ".field-error").text_content().as_deref(),
+        Some("Name is required.")
+    );
+    assert_eq!(attr(&name, "aria-invalid").as_deref(), Some("true"));
+    // Nothing was sent: wait long enough for a request to finish.
+    gloo_timers::future::TimeoutFuture::new(300).await;
+    assert_eq!(
+        fetches_of("/api/v1/settings/indexers"),
+        writes_before,
+        "{:?}",
+        api_requests()
+    );
+    // The form stays open, and editing the field clears its message.
+    type_into(&name, "my-indexer");
+    settle_dom().await;
+    assert_eq!(count(&form(), ".field-error"), 1);
+    assert_eq!(attr(&name, "aria-invalid").as_deref(), Some("false"));
+
+    drop(handle);
+    host.remove();
+}

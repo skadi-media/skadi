@@ -185,6 +185,7 @@ fn download_row(w: &mut World, acquirable: String, done: i64, total: i64, eta: i
         target_ref: Some(acquirable),
         import_state: None,
         import_error: None,
+        priority: 0,
     });
 }
 

@@ -22,6 +22,8 @@ pub struct World {
     pub names: HashMap<String, String>,
     /// The last `claim_next` answer.
     pub claimed: Option<Option<DownloadJob>>,
+    /// The names the last budgeted claim tick (`claim_within_cap`) claimed.
+    pub tick_claims: Option<Vec<String>>,
     pub reclaimed: Option<usize>,
     pub policy: Option<SeedPolicy>,
     pub verdict: Option<SeedVerdict>,

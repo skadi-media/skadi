@@ -8,11 +8,12 @@ use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use skadi_downloader_worker::seed_policy::{SeedAction, SeedPolicy, SeedVerdict};
 use skadi_downloader_worker::{
-    Config, bps_limit, claim_budget, effective_seed_policy, file_abs_path, is_stalled,
-    map_to_complete,
+    Config, bps_limit, claim_budget, claim_within_cap, effective_seed_policy, file_abs_path,
+    is_stalled, map_to_complete,
 };
 use skadi_store::{
     DownloadCategory, DownloadJobRepo, DownloadJobStatus, DownloadProgress, NewDownloadJob,
+    QueueMove,
 };
 
 use crate::bdd_support::{World, temp_store};
@@ -507,4 +508,45 @@ async fn is_queued_again(w: &mut World, name: String) {
         job.worker_id.is_none(),
         "{name} should no longer be claimed by a worker"
     );
+}
+
+// --- priority (SKADI-T-0692) ---------------------------------------------------------
+
+/// One claim tick of the worker loop: `claim_within_cap`, the function `run`
+/// calls, bounded by `max_active`.
+#[when(regex = r#"^worker "([^"]+)" runs a claim tick with a max_active of (\d+)$"#)]
+async fn claim_tick(w: &mut World, worker: String, max: usize) {
+    let jobs = claim_within_cap(w.store(), &worker, Some(max)).await;
+    let names = jobs
+        .iter()
+        .map(|j| w.names.get(&j.id).cloned().unwrap_or_else(|| j.id.clone()))
+        .collect();
+    w.tick_claims = Some(names);
+}
+
+#[then(regex = r#"^the tick claims nothing$"#)]
+fn tick_claims_nothing(w: &mut World) {
+    assert_eq!(w.tick_claims.as_deref(), Some(&[][..]));
+}
+
+#[then(regex = r#"^the tick claims "(.+)"$"#)]
+fn tick_claims(w: &mut World, names: String) {
+    let want: Vec<String> = names.split("\", \"").map(str::to_string).collect();
+    assert_eq!(w.tick_claims.as_ref(), Some(&want));
+}
+
+#[when(regex = r#"^the operator moves "([^"]+)" (up|down|to the top) in the queue$"#)]
+async fn move_in_queue(w: &mut World, name: String, how: String) {
+    let mv = match how.as_str() {
+        "up" => QueueMove::Up,
+        "down" => QueueMove::Down,
+        _ => QueueMove::Top,
+    };
+    let id = w.id(&name).to_string();
+    let moved = w
+        .store()
+        .move_queued_download(&id, mv)
+        .await
+        .expect("move_queued_download");
+    assert!(moved.is_some(), "{name} is queued, so it moves");
 }

@@ -47,6 +47,7 @@ pub use decision_history::{DecisionEntry, DecisionHistoryRepo};
 pub use diesel_dualdb::DualConnection;
 pub use downloads::{
     DownloadJob, DownloadJobRepo, DownloadJobStatus, DownloadProgress, ImportState, NewDownloadJob,
+    QueueMove,
 };
 pub use history::{HistoryCounts, HistoryEntry, HistoryQuery, HistoryRepo};
 pub use import_lists::{ImportList, ImportListExclusion, ImportListRepo};

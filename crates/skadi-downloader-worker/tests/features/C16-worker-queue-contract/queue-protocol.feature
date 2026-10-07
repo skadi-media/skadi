@@ -174,3 +174,28 @@ Feature: The worker's side of the downloads-queue contract — claim, lease, pro
     And the worker enforces a max_active of 1
     Then "a" is downloading
     And "b" is queued again
+
+  @C16 @passing @SKADI-T-0692
+  Scenario: with every slot taken, the queued row the operator moves to the top is the next one claimed
+    Given the daemon enqueued "a" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000001"
+    And the daemon enqueued "b" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000002"
+    And the daemon enqueued "c" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000003"
+    And the daemon enqueued "d" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000004"
+    When worker "w1" runs a claim tick with a max_active of 1
+    Then the tick claims "a"
+    When the operator moves "d" to the top in the queue
+    And worker "w1" runs a claim tick with a max_active of 1
+    Then the tick claims nothing
+    When the worker marks "a" complete with files "/data/complete/a/a.mkv"
+    And worker "w1" runs a claim tick with a max_active of 1
+    Then the tick claims "d"
+
+  @C16 @passing @SKADI-T-0692
+  Scenario: up and down move a queued row one place in the claim order
+    Given the daemon enqueued "a" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000001"
+    And the daemon enqueued "b" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000002"
+    And the daemon enqueued "c" from "magnet:?xt=urn:btih:0000000000000000000000000000000000000003"
+    When the operator moves "c" up in the queue
+    And the operator moves "a" down in the queue
+    And worker "w1" runs a claim tick with a max_active of 3
+    Then the tick claims "c", "a", "b"

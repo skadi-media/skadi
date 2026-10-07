@@ -353,6 +353,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/downloads/{id}/priority",
+        "downloads",
+        "Set a download's priority, or move a queued one up, down or to the top",
+    ),
+    (
+        "POST",
         "/downloads/pause-all",
         "downloads",
         "Pause every download",

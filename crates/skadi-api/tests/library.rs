@@ -1057,3 +1057,103 @@ async fn retry_from_activity_flags_the_run_and_removes_its_transfer() {
     assert!(!t.retry_requested(searching));
     t.finish(searching);
 }
+
+/// `POST /downloads/{id}/priority` (SKADI-T-0692): a move reorders the queued
+/// rows, `/downloads` lists them in claim order with their place, and the row
+/// moved to the top is the one the worker claims next. A move of a row that is
+/// not queued is a 409, a bad body a 400, an unknown id a 404.
+#[tokio::test]
+async fn a_queued_download_moves_to_the_top_and_is_claimed_next() {
+    use skadi_store::{DownloadJobRepo, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let mut ids = Vec::new();
+    for n in ["a", "b", "c"] {
+        let j = db
+            .store
+            .enqueue(&NewDownloadJob {
+                acquirable_ref: format!("ref-0692-{n}"),
+                source: format!("magnet:?xt=urn:btih:0692{n}"),
+                category: None,
+                incomplete_dir: None,
+                complete_dir: None,
+            })
+            .await
+            .unwrap();
+        ids.push(j.id);
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let queue = |body: &serde_json::Value| -> Vec<(String, i64)> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["status"] == "queued")
+            .map(|r| {
+                (
+                    r["acquirable_ref"].as_str().unwrap().to_string(),
+                    r["queue_position"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let (_, body) = call(&state, "/api/v1/downloads").await;
+    assert_eq!(
+        queue(&body),
+        [
+            ("ref-0692-a".to_string(), 1),
+            ("ref-0692-b".to_string(), 2),
+            ("ref-0692-c".to_string(), 3)
+        ]
+    );
+
+    let uri = format!("/api/v1/downloads/{}/priority", ids[2]);
+    let (s, got) = call_json(&state, "POST", &uri, serde_json::json!({"move": "top"})).await;
+    assert_eq!(s, StatusCode::OK, "{got}");
+    assert_eq!(got["id"], ids[2].as_str());
+    assert_eq!(got["status"], "queued");
+    let (_, body) = call(&state, "/api/v1/downloads").await;
+    let order: Vec<String> = queue(&body).into_iter().map(|(r, _)| r).collect();
+    assert_eq!(order, ["ref-0692-c", "ref-0692-a", "ref-0692-b"]);
+    let up = format!("/api/v1/downloads/{}/priority", ids[1]);
+    let (s, _) = call_json(&state, "POST", &up, serde_json::json!({"move": "up"})).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, body) = call(&state, "/api/v1/downloads").await;
+    let order: Vec<String> = queue(&body).into_iter().map(|(r, _)| r).collect();
+    assert_eq!(order, ["ref-0692-c", "ref-0692-b", "ref-0692-a"]);
+
+    // The worker's claim follows the same order.
+    let next = db.store.claim_next("w").await.unwrap().unwrap();
+    assert_eq!(next.id, ids[2]);
+
+    // c is downloading now: it cannot be moved, but its priority can be set.
+    let (s, got) = call_json(&state, "POST", &uri, serde_json::json!({"move": "down"})).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{got}");
+    assert_eq!(got["error"], "not_queued");
+    let (s, got) = call_json(&state, "POST", &uri, serde_json::json!({"priority": 7})).await;
+    assert_eq!(s, StatusCode::OK, "{got}");
+    assert_eq!(got["priority"], 7);
+
+    for bad in [
+        serde_json::json!({}),
+        serde_json::json!({"priority": 1, "move": "top"}),
+        serde_json::json!({"move": "sideways"}),
+    ] {
+        let (s, got) = call_json(&state, "POST", &up, bad.clone()).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {got}");
+    }
+    let (s, _) = call_json(
+        &state,
+        "POST",
+        "/api/v1/downloads/nope/priority",
+        serde_json::json!({"move": "top"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = call_json(
+        &state,
+        "POST",
+        "/api/v1/downloads/nope/priority",
+        serde_json::json!({"priority": 1}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

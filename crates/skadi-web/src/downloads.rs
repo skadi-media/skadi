@@ -780,6 +780,87 @@ pub fn age_label(secs: Option<f64>) -> String {
     }
 }
 
+/// A move of a queued row within the claim order (SKADI-T-0692), what
+/// `POST /downloads/{id}/priority` takes as `move`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueMove {
+    Top,
+    Up,
+    Down,
+}
+
+/// The queue controls, in the order the row shows them.
+pub const QUEUE_MOVES: [QueueMove; 3] = [QueueMove::Top, QueueMove::Up, QueueMove::Down];
+
+impl QueueMove {
+    /// The `move` value on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueueMove::Top => "top",
+            QueueMove::Up => "up",
+            QueueMove::Down => "down",
+        }
+    }
+
+    /// The button glyph.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            QueueMove::Top => "⤒",
+            QueueMove::Up => "↑",
+            QueueMove::Down => "↓",
+        }
+    }
+
+    /// The button tooltip / accessible name.
+    pub fn title(self) -> &'static str {
+        match self {
+            QueueMove::Top => "Move to the top of the queue (claimed next)",
+            QueueMove::Up => "Move up the queue",
+            QueueMove::Down => "Move down the queue",
+        }
+    }
+}
+
+/// The queue controls `d` offers to this `role` (SKADI-T-0692), each with
+/// whether it is enabled. Only the admin (the priority route is admin-only),
+/// and only on a `queued` row with a known place: the other rows are not
+/// waiting for a claim. The first row cannot go up or to the top, the last
+/// (`queue_len`) cannot go down.
+pub fn queue_moves(d: &Download, role: Option<&str>, queue_len: usize) -> Vec<(QueueMove, bool)> {
+    if role != Some("admin") || d.status != "queued" {
+        return Vec::new();
+    }
+    let Some(pos) = d.queue_position else {
+        return Vec::new();
+    };
+    QUEUE_MOVES
+        .into_iter()
+        .map(|m| {
+            let enabled = match m {
+                QueueMove::Top | QueueMove::Up => pos > 1,
+                QueueMove::Down => pos < queue_len,
+            };
+            (m, enabled)
+        })
+        .collect()
+}
+
+/// How many rows are waiting in the queue: the highest `queue_position`.
+pub fn queue_len(rows: &[Download]) -> usize {
+    rows.iter()
+        .filter_map(|d| d.queue_position)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The place label on a queued row (`#1` is claimed next), SKADI-T-0692.
+pub fn queue_label(d: &Download) -> Option<String> {
+    (d.status == "queued")
+        .then_some(d.queue_position)
+        .flatten()
+        .map(|p| format!("#{p}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1316,5 +1397,66 @@ mod tests {
             &title,
         );
         assert_eq!(ids(&sorted), ["2", "1"]);
+    }
+
+    fn queued(id: &str, pos: usize) -> Download {
+        Download {
+            queue_position: Some(pos),
+            ..row(id, "queued")
+        }
+    }
+
+    #[test]
+    fn queue_moves_are_for_the_admin_on_queued_rows_only() {
+        let q = queued("a", 2);
+        assert!(queue_moves(&q, None, 3).is_empty());
+        assert!(queue_moves(&q, Some("member"), 3).is_empty());
+        assert!(queue_moves(&q, Some("contributor"), 3).is_empty());
+        assert_eq!(
+            queue_moves(&q, Some("admin"), 3),
+            [
+                (QueueMove::Top, true),
+                (QueueMove::Up, true),
+                (QueueMove::Down, true)
+            ]
+        );
+        for status in ["downloading", "paused", "stalled", "error", "seeding"] {
+            let d = Download {
+                queue_position: Some(1),
+                ..row("x", status)
+            };
+            assert!(queue_moves(&d, Some("admin"), 3).is_empty(), "{status}");
+        }
+        // A queued row from an older daemon (no place) offers nothing.
+        assert!(queue_moves(&row("old", "queued"), Some("admin"), 3).is_empty());
+    }
+
+    #[test]
+    fn the_ends_of_the_queue_disable_the_moves_past_them() {
+        let first = queue_moves(&queued("a", 1), Some("admin"), 3);
+        assert_eq!(
+            first,
+            [
+                (QueueMove::Top, false),
+                (QueueMove::Up, false),
+                (QueueMove::Down, true)
+            ]
+        );
+        let last = queue_moves(&queued("c", 3), Some("admin"), 3);
+        assert_eq!(last[2], (QueueMove::Down, false));
+        let only = queue_moves(&queued("o", 1), Some("admin"), 1);
+        assert!(only.iter().all(|(_, on)| !on));
+    }
+
+    #[test]
+    fn the_queue_label_and_length_come_from_the_positions() {
+        let rows = [queued("a", 1), queued("b", 2), row("c", "downloading")];
+        assert_eq!(queue_len(&rows), 2);
+        assert_eq!(queue_len(&[]), 0);
+        assert_eq!(queue_label(&rows[1]).as_deref(), Some("#2"));
+        assert_eq!(queue_label(&rows[2]), None);
+        assert_eq!(QueueMove::Top.as_str(), "top");
+        assert_eq!(QueueMove::Up.as_str(), "up");
+        assert_eq!(QueueMove::Down.as_str(), "down");
     }
 }

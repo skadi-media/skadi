@@ -854,6 +854,7 @@ async fn only_the_admin_can_act_on_an_activity_row() {
         ("POST", "/api/v1/activity/ed-0691/retry"),
         ("POST", "/api/v1/downloads/dl-0691/pause"),
         ("POST", "/api/v1/downloads/dl-0691/resume"),
+        ("POST", "/api/v1/downloads/dl-0691/priority"),
         ("DELETE", "/api/v1/downloads/dl-0691?delete_data=true"),
         ("GET", "/api/v1/decisions?acquirable=ed-0691"),
         ("POST", "/api/v1/blocklist"),

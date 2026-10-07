@@ -2176,6 +2176,14 @@ pub struct Download {
     /// (SKADI-T-0689). `None` unless it finished and its grab target is known.
     #[serde(default)]
     pub import: Option<DownloadImport>,
+    /// Claim priority (SKADI-T-0692): queued rows are claimed highest first,
+    /// then oldest first. 0 from a daemon older than that.
+    #[serde(default)]
+    pub priority: i32,
+    /// 1-based place in the claim order, on `queued` rows only (1 = the next
+    /// claimed). `None` on other rows, and from an older daemon.
+    #[serde(default)]
+    pub queue_position: Option<usize>,
 }
 
 /// The manual-import facts of one finished transfer (mirror of the api
@@ -2380,6 +2388,19 @@ pub async fn resume_download(id: &str) -> Result<(), ApiError> {
         .send()
         .await?;
     write_ok("resume download", resp).await
+}
+
+/// `POST /downloads/{id}/priority` with `{"move": "up" | "down" | "top"}`
+/// (SKADI-T-0692): move a queued download within the claim order. The error
+/// carries the server's message (e.g. the row is no longer queued).
+pub async fn move_download(id: &str, how: &str) -> Result<(), ApiError> {
+    let _: serde_json::Value = post_json(
+        "move download",
+        &format!("{API_BASE}/downloads/{id}/priority"),
+        &serde_json::json!({ "move": how }),
+    )
+    .await?;
+    Ok(())
 }
 
 /// `POST /downloads/pause-all` — pause every in-flight transfer (SKADI-T-0290).

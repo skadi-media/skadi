@@ -2817,3 +2817,34 @@ fn a_failed_import_row_parses_and_offers_the_admin_a_retry() {
     assert_eq!(old.import, None);
     assert_eq!(import_action(&old, Some("admin"), &none), None);
 }
+
+// ---- Downloads queue order (SKADI-T-0692) ----
+
+#[wasm_bindgen_test]
+fn a_queued_download_parses_its_place_and_offers_the_admin_its_moves() {
+    use skadi_web::downloads::{QueueMove, queue_label, queue_len, queue_moves};
+    let rows: Vec<skadi_web::api::Download> = serde_json::from_value(json!([
+        {"id": "a", "acquirable_ref": "ra", "status": "queued", "progress_bytes": 0,
+         "total_bytes": 0, "percent": 0.0, "priority": 2, "queue_position": 1},
+        {"id": "b", "acquirable_ref": "rb", "status": "queued", "progress_bytes": 0,
+         "total_bytes": 0, "percent": 0.0, "priority": 1, "queue_position": 2},
+        {"id": "c", "acquirable_ref": "rc", "status": "downloading", "progress_bytes": 0,
+         "total_bytes": 0, "percent": 0.0}
+    ]))
+    .unwrap();
+    assert_eq!(rows[0].priority, 2);
+    assert_eq!(rows[2].priority, 0);
+    assert_eq!(rows[2].queue_position, None);
+    assert_eq!(queue_len(&rows), 2);
+    assert_eq!(queue_label(&rows[0]).as_deref(), Some("#1"));
+    assert_eq!(
+        queue_moves(&rows[1], Some("admin"), 2),
+        [
+            (QueueMove::Top, true),
+            (QueueMove::Up, true),
+            (QueueMove::Down, false)
+        ]
+    );
+    assert!(queue_moves(&rows[1], Some("member"), 2).is_empty());
+    assert!(queue_moves(&rows[2], Some("admin"), 2).is_empty());
+}

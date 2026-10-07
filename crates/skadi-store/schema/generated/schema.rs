@@ -87,6 +87,7 @@ diesel::table! {
         target_ref -> Nullable<Text>,
         import_state -> Nullable<Text>,
         import_error -> Nullable<Text>,
+        priority -> Integer,
     }
 }
 

@@ -2146,3 +2146,7 @@ p.genres.muted {
 .run-action-msg { margin: 0 0 0.5rem; font-size: 0.8rem; overflow-wrap: anywhere; }
 .run-action-msg.ok { color: var(--ok); }
 .run-action-msg.bad { color: var(--bad); }
+
+/* Queue order (SKADI-T-0692): the place of a queued row and its moves. */
+.dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
+.dl-row-compact .dl-actions button.dl-qmove:disabled { opacity: 0.35; cursor: default; }

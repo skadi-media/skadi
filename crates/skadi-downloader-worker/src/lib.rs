@@ -738,38 +738,55 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             Err(e) => tracing::warn!("reclaim_expired_downloads failed: {e}"),
         }
 
-        // Drain the queue, bounded by `max_active` (SKADI-T-0212): claim at most
-        // `budget = max_active - active` queued rows this tick. Each claim flips its
-        // row to `downloading`, so decrementing the budget per claim keeps the bound
-        // exact within the tick; the next tick re-reads the active count.
-        let active = store.count_active_downloads().await.unwrap_or(0).max(0) as usize;
-        let mut budget = claim_budget(active, live.max_active);
-        while budget > 0 {
-            match store.claim_next(&cfg.worker_id).await {
-                Ok(Some(job)) => {
-                    tracing::info!(job = %job.id, source = %job.source, "claimed download");
-                    tokio::spawn(run_job(
-                        api.clone(),
-                        store.clone(),
-                        job,
-                        cfg.tick_interval,
-                        live.seed_policy,
-                        live.stall_timeout_secs,
-                        live.metadata_timeout_secs,
-                        cfg.lease_secs,
-                    ));
-                    budget -= 1;
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    tracing::warn!("claim_next failed: {e}");
-                    break;
-                }
-            }
+        // Drain the queue, bounded by `max_active` (SKADI-T-0212), in the
+        // store's claim order (priority, then age; SKADI-T-0692).
+        for job in claim_within_cap(&store, &cfg.worker_id, live.max_active).await {
+            tracing::info!(job = %job.id, source = %job.source, "claimed download");
+            tokio::spawn(run_job(
+                api.clone(),
+                store.clone(),
+                job,
+                cfg.tick_interval,
+                live.seed_policy,
+                live.stall_timeout_secs,
+                live.metadata_timeout_secs,
+                cfg.lease_secs,
+            ));
         }
 
         tokio::time::sleep(cfg.poll_interval).await;
     }
+}
+
+/// Claim the queued rows this tick may start (SKADI-T-0212, SKADI-T-0692): at
+/// most `budget = max_active - active` of them, each through
+/// [`claim_next`](DownloadJobRepo::claim_next), so in the store's claim order —
+/// highest priority first, then the oldest. Each claim flips its row to
+/// `downloading`, so decrementing the budget per claim keeps the bound exact
+/// within the tick; the next tick re-reads the active count. A claim error ends
+/// the tick's claims (logged), as does an empty queue.
+pub async fn claim_within_cap(
+    store: &Store,
+    worker_id: &str,
+    max_active: Option<usize>,
+) -> Vec<DownloadJob> {
+    let active = store.count_active_downloads().await.unwrap_or(0).max(0) as usize;
+    let mut budget = claim_budget(active, max_active);
+    let mut claimed = Vec::new();
+    while budget > 0 {
+        match store.claim_next(worker_id).await {
+            Ok(Some(job)) => {
+                claimed.push(job);
+                budget -= 1;
+            }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!("claim_next failed: {e}");
+                break;
+            }
+        }
+    }
+    claimed
 }
 
 /// Action every `remove_requested` row: tell librqbit to forget (keep data) or
@@ -2216,6 +2233,7 @@ mod tests {
             target_ref: None,
             import_state: None,
             import_error: None,
+            priority: 0,
         };
         let jobs = vec![
             job("1", Some("AAAA"), DownloadJobStatus::Downloading),

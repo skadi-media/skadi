@@ -192,6 +192,44 @@ pub struct DownloadJob {
     /// an import step ends.
     pub import_state: Option<ImportState>,
     pub import_error: Option<String>,
+    /// Claim priority (SKADI-T-0692): the worker claims `queued` rows by
+    /// `priority` descending, then oldest first. 0 on every new row, so the
+    /// queue is FIFO until the operator moves a row
+    /// ([`move_queued_download`](DownloadJobRepo::move_queued_download)) or sets
+    /// it ([`set_download_priority`](DownloadJobRepo::set_download_priority)).
+    pub priority: i32,
+}
+
+/// A move of one queued row within the claim order (SKADI-T-0692).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueMove {
+    /// One place earlier in the claim order.
+    Up,
+    /// One place later.
+    Down,
+    /// First in the claim order: the next row the worker claims.
+    Top,
+}
+
+impl QueueMove {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueueMove::Up => "up",
+            QueueMove::Down => "down",
+            QueueMove::Top => "top",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "up" => Some(QueueMove::Up),
+            "down" => Some(QueueMove::Down),
+            "top" => Some(QueueMove::Top),
+            _ => None,
+        }
+    }
 }
 
 /// The outcome of the import of a finished transfer (SKADI-T-0689).
@@ -230,7 +268,8 @@ pub trait DownloadJobRepo: Send + Sync {
     async fn enqueue(&self, req: &NewDownloadJob) -> Result<DownloadJob>;
     /// Fetch one job by id.
     async fn get_download(&self, id: &str) -> Result<Option<DownloadJob>>;
-    /// Atomically claim the oldest `queued` job for `worker_id`, flipping it to
+    /// Atomically claim the next `queued` job for `worker_id` — highest
+    /// `priority` first, then the oldest (SKADI-T-0692) — flipping it to
     /// `downloading`. Returns `None` when nothing is queued. (Guarded by a
     /// status check so a concurrent claim can't double-grab.)
     async fn claim_next(&self, worker_id: &str) -> Result<Option<DownloadJob>>;
@@ -291,10 +330,27 @@ pub trait DownloadJobRepo: Send + Sync {
     /// the cap, so the worker can come up running far more transfers than it is
     /// configured for.
     ///
-    /// Keeps the **oldest** active rows — the same FIFO order `claim_next` uses —
-    /// so the queue's discipline is unchanged and the jobs released are the ones
-    /// that would have been claimed last anyway.
+    /// Keeps the active rows that come first in the order `claim_next` uses
+    /// (highest `priority`, then oldest; SKADI-T-0692), so the queue's
+    /// discipline is unchanged and the jobs released are the ones that would
+    /// have been claimed last anyway.
     async fn release_active_beyond(&self, keep: usize) -> Result<Vec<DownloadJob>>;
+    /// Set a job's claim `priority` outright (SKADI-T-0692), whatever its
+    /// status: a paused row keeps it for when it is resumed. Returns the updated
+    /// row, `None` when there is no such row. Leaves `updated_at` alone.
+    async fn set_download_priority(&self, id: &str, priority: i32) -> Result<Option<DownloadJob>>;
+    /// Move a `queued` job within the claim order (SKADI-T-0692): one place up
+    /// or down, or to the top. Returns the updated row, or `None` when there is
+    /// no such row or it is not `queued` (only queued rows are waiting for a
+    /// claim). Moving the first row up / to the top, or the last row down, is a
+    /// no-op that still returns the row.
+    ///
+    /// `Top` gives the row one more than the highest queued priority (unless it
+    /// is already strictly ahead). `Up` / `Down` renumber the queued rows
+    /// (`n-1 … 0` in their new order), because two rows with the same priority
+    /// are ordered by age and no single value could put a row between them.
+    /// Other statuses keep their priority. One transaction.
+    async fn move_queued_download(&self, id: &str, mv: QueueMove) -> Result<Option<DownloadJob>>;
     /// Jobs awaiting worker teardown (`status = remove_requested`).
     async fn list_remove_requested(&self) -> Result<Vec<DownloadJob>>;
     /// All jobs, newest first (for a queue/activity view and tests).
@@ -387,6 +443,7 @@ struct Row {
     target_ref: Option<String>,
     import_state: Option<String>,
     import_error: Option<String>,
+    priority: i32,
 }
 
 impl TryFrom<Row> for DownloadJob {
@@ -422,8 +479,24 @@ impl TryFrom<Row> for DownloadJob {
             target_ref: r.target_ref,
             import_state: r.import_state.as_deref().and_then(ImportState::parse),
             import_error: r.import_error,
+            priority: r.priority,
         })
     }
+}
+
+/// The order the worker claims queued rows in (SKADI-T-0692): highest priority
+/// first, then the oldest, then id so equal timestamps are still deterministic.
+#[allow(clippy::type_complexity)]
+fn claim_order() -> (
+    diesel::dsl::Desc<downloads::priority>,
+    diesel::dsl::Asc<downloads::created_at>,
+    diesel::dsl::Asc<downloads::id>,
+) {
+    (
+        downloads::priority.desc(),
+        downloads::created_at.asc(),
+        downloads::id.asc(),
+    )
 }
 
 /// Synchronous single-row load, shared by the methods that re-read after a write.
@@ -471,6 +544,7 @@ impl DownloadJobRepo for Store {
             target_ref: None,
             import_state: None,
             import_error: None,
+            priority: 0,
         };
         let id = row.id.clone();
         let acquirable_ref = req.acquirable_ref.clone();
@@ -515,12 +589,13 @@ impl DownloadJobRepo for Store {
     async fn claim_next(&self, worker_id: &str) -> Result<Option<DownloadJob>> {
         let worker_id = worker_id.to_string();
         self.with_conn(move |conn| {
-            // Oldest queued id, then a status-guarded flip — portable + safe
-            // enough for the single-worker v1 (the guard prevents a double-grab
-            // if raced). All on one connection.
+            // Next queued id in claim order (highest priority, then oldest,
+            // SKADI-T-0692), then a status-guarded flip — portable + safe enough
+            // for the single-worker v1 (the guard prevents a double-grab if
+            // raced). All on one connection.
             let next: Option<String> = downloads::table
                 .filter(downloads::status.eq(DownloadJobStatus::Queued.as_str()))
-                .order(downloads::created_at.asc())
+                .order(claim_order())
                 .select(downloads::id)
                 .first(conn)
                 .optional()
@@ -884,7 +959,7 @@ impl DownloadJobRepo for Store {
                 )
                 // Same ordering as `claim_next`, so "beyond the cap" means the same
                 // thing here as it does there.
-                .order((downloads::created_at.asc(), downloads::id.asc()))
+                .order(claim_order())
                 .select(Row::as_select())
                 .load(conn)
                 .map_err(db_err)?;
@@ -905,6 +980,79 @@ impl DownloadJobRepo for Store {
                     .map_err(db_err)?;
             }
             Ok(jobs)
+        })
+        .await
+    }
+
+    async fn set_download_priority(&self, id: &str, priority: i32) -> Result<Option<DownloadJob>> {
+        let id = id.to_string();
+        self.with_conn(move |conn| {
+            diesel::update(downloads::table.find(&id))
+                .set(downloads::priority.eq(priority))
+                .execute(conn)
+                .map_err(db_err)?;
+            load_one(conn, &id)
+        })
+        .await
+    }
+
+    async fn move_queued_download(&self, id: &str, mv: QueueMove) -> Result<Option<DownloadJob>> {
+        let id = id.to_string();
+        self.with_conn(move |conn| {
+            let moved = conn
+                .transaction(|conn| {
+                    let queue: Vec<(String, i32)> = downloads::table
+                        .filter(downloads::status.eq(DownloadJobStatus::Queued.as_str()))
+                        .order(claim_order())
+                        .select((downloads::id, downloads::priority))
+                        .load(conn)?;
+                    let Some(at) = queue.iter().position(|(qid, _)| *qid == id) else {
+                        return diesel::result::QueryResult::Ok(false);
+                    };
+                    match mv {
+                        QueueMove::Top => {
+                            let best_other = queue
+                                .iter()
+                                .filter(|(qid, _)| *qid != id)
+                                .map(|(_, p)| *p)
+                                .max();
+                            if let Some(best) = best_other
+                                && queue[at].1 <= best
+                            {
+                                diesel::update(downloads::table.find(&id))
+                                    .set(downloads::priority.eq(best.saturating_add(1)))
+                                    .execute(conn)?;
+                            }
+                        }
+                        QueueMove::Up | QueueMove::Down => {
+                            let to = match mv {
+                                QueueMove::Up => at.checked_sub(1),
+                                _ => (at + 1 < queue.len()).then_some(at + 1),
+                            };
+                            if let Some(to) = to {
+                                let mut order: Vec<&str> =
+                                    queue.iter().map(|(qid, _)| qid.as_str()).collect();
+                                order.swap(at, to);
+                                let n = order.len();
+                                for (i, (qid, (old_id, old_p))) in
+                                    order.iter().zip(queue.iter()).enumerate()
+                                {
+                                    let p = i32::try_from(n - 1 - i).unwrap_or(i32::MAX);
+                                    // Skip the rows whose priority already holds.
+                                    if *qid == old_id.as_str() && *old_p == p {
+                                        continue;
+                                    }
+                                    diesel::update(downloads::table.find(*qid))
+                                        .set(downloads::priority.eq(p))
+                                        .execute(conn)?;
+                                }
+                            }
+                        }
+                    }
+                    Ok(true)
+                })
+                .map_err(db_err)?;
+            if moved { load_one(conn, &id) } else { Ok(None) }
         })
         .await
     }
@@ -1470,5 +1618,164 @@ mod tests {
             "both duplicate rows are removed, not just one"
         );
         assert!(ids.contains(&a.id) && ids.contains(&b.id));
+    }
+
+    /// Enqueue `names` in order, a few ms apart so `created_at` orders them.
+    async fn enqueue_all(store: &Store, names: &[&str]) -> Vec<DownloadJob> {
+        let mut out = Vec::new();
+        for n in names {
+            out.push(store.enqueue(&req(n, "magnet:?q")).await.unwrap());
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        out
+    }
+
+    /// The queued rows in claim order, by `acquirable_ref` (SKADI-T-0692): what
+    /// `claim_next` would hand out one after the other.
+    async fn claim_sequence(store: &Store) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(j) = store.claim_next("w").await.unwrap() {
+            out.push(j.acquirable_ref);
+        }
+        out
+    }
+
+    /// Queued rows are claimed by priority first, then oldest first
+    /// (SKADI-T-0692); new rows start at 0, so the queue stays FIFO by default.
+    #[tokio::test]
+    async fn claims_go_by_priority_then_age() {
+        let store = temp_store().await;
+        let jobs = enqueue_all(&store, &["a", "b", "c", "d"]).await;
+        assert!(jobs.iter().all(|j| j.priority == 0));
+        let c = store
+            .set_download_priority(&jobs[2].id, 5)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.priority, 5);
+        assert_eq!(
+            c.updated_at, jobs[2].updated_at,
+            "priority leaves updated_at"
+        );
+        store.set_download_priority(&jobs[3].id, -1).await.unwrap();
+        assert!(
+            store
+                .set_download_priority("nope", 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(claim_sequence(&store).await, ["c", "a", "b", "d"]);
+    }
+
+    /// Up / down swap a row with its neighbour in claim order, top puts it
+    /// first; only `queued` rows move (SKADI-T-0692).
+    #[tokio::test]
+    async fn queued_rows_move_up_down_and_to_the_top() {
+        let store = temp_store().await;
+        let jobs = enqueue_all(&store, &["a", "b", "c", "d", "e"]).await;
+        let id = |i: usize| jobs[i].id.clone();
+        let order = |store: &Store| {
+            let store = store.clone();
+            async move {
+                let mut q = store
+                    .list_downloads_with_status(&[DownloadJobStatus::Queued])
+                    .await
+                    .unwrap();
+                q.sort_by(|a, b| {
+                    b.priority
+                        .cmp(&a.priority)
+                        .then(a.created_at.cmp(&b.created_at))
+                        .then(a.id.cmp(&b.id))
+                });
+                q.into_iter().map(|j| j.acquirable_ref).collect::<Vec<_>>()
+            }
+        };
+        // Equal priorities: "up" still moves one place (needs a renumber).
+        store
+            .move_queued_download(&id(2), QueueMove::Up)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(order(&store).await, ["a", "c", "b", "d", "e"]);
+        store
+            .move_queued_download(&id(2), QueueMove::Down)
+            .await
+            .unwrap();
+        assert_eq!(order(&store).await, ["a", "b", "c", "d", "e"]);
+        let top = store
+            .move_queued_download(&id(4), QueueMove::Top)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(top.status, DownloadJobStatus::Queued);
+        assert_eq!(order(&store).await, ["e", "a", "b", "c", "d"]);
+        // Already first: top and up are no-ops that still return the row.
+        let before = order(&store).await;
+        assert!(
+            store
+                .move_queued_download(&id(4), QueueMove::Top)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .move_queued_download(&id(4), QueueMove::Up)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .move_queued_download(&id(3), QueueMove::Down)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(order(&store).await, before);
+        // A row that is not queued does not move, and leaves the queue alone.
+        store.request_pause(&id(0)).await.unwrap();
+        assert!(
+            store
+                .move_queued_download(&id(0), QueueMove::Top)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .move_queued_download("nope", QueueMove::Top)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(order(&store).await, ["e", "b", "c", "d"]);
+        // The claim order is the same order.
+        assert_eq!(claim_sequence(&store).await, ["e", "b", "c", "d"]);
+    }
+
+    /// With the slots full, the row moved to the top is the next one claimed
+    /// once a slot frees (SKADI-T-0692), and the cap enforcement keeps the
+    /// rows that come first in claim order.
+    #[tokio::test]
+    async fn a_row_moved_to_the_top_is_claimed_next_when_a_slot_frees() {
+        let store = temp_store().await;
+        let jobs = enqueue_all(&store, &["a", "b", "c", "d"]).await;
+        let running = store.claim_next("w").await.unwrap().unwrap();
+        assert_eq!(running.acquirable_ref, "a");
+        store
+            .move_queued_download(&jobs[3].id, QueueMove::Top)
+            .await
+            .unwrap();
+        store.mark_complete(&running.id, &[]).await.unwrap();
+        let next = store.claim_next("w").await.unwrap().unwrap();
+        assert_eq!(next.acquirable_ref, "d");
+        // b and c running too: enforcing a cap of 2 keeps d (priority) and b.
+        store.claim_next("w").await.unwrap();
+        store.claim_next("w").await.unwrap();
+        let released = store.release_active_beyond(2).await.unwrap();
+        let names: Vec<_> = released.iter().map(|j| j.acquirable_ref.as_str()).collect();
+        assert_eq!(names, ["c"]);
     }
 }

@@ -974,6 +974,7 @@ mod tests {
             target_ref: target.map(str::to_string),
             import_state: None,
             import_error: None,
+            priority: 0,
         }
     }
 

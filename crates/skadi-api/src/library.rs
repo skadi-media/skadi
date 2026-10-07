@@ -327,6 +327,7 @@ pub fn library_router() -> Router<Arc<AppState>> {
         .route("/downloads/{id}", delete(remove_download))
         .route("/downloads/{id}/pause", post(pause_download))
         .route("/downloads/{id}/resume", post(resume_download))
+        .route("/downloads/{id}/priority", post(set_download_priority))
         .route("/downloads/categories", get(list_categories))
         .route(
             "/downloads/categories/{name}",
@@ -1183,6 +1184,12 @@ struct DownloadDto {
     /// When the job was enqueued: RFC 3339, UTC, always millisecond precision, so
     /// the string sorts in time order (the web "Added" column, SKADI-T-0686).
     created_at: String,
+    /// Claim priority (SKADI-T-0692): queued rows are claimed highest first,
+    /// then oldest first. 0 unless the operator moved or set it.
+    priority: i32,
+    /// 1-based place in the claim order, on `queued` rows only: 1 is the next
+    /// row the worker claims when a slot frees.
+    queue_position: Option<usize>,
     /// The manual import this row offers (SKADI-T-0689): set only on a finished
     /// (`seeding`) transfer whose grab target is known and whose files make one
     /// path to scan. Its fields are what `POST /downloads/import[/preview]` takes.
@@ -1381,14 +1388,36 @@ async fn downloads(
         DownloadJobStatus::Error => 4,
         _ => 5,
     };
+    // Queued rows go in claim order (priority, then age; SKADI-T-0692): it
+    // changes only when the operator moves a row, so it does not reshuffle.
     jobs.sort_by(|a, b| {
-        rank(a.status).cmp(&rank(b.status)).then_with(|| {
-            a.info_hash
-                .as_deref()
-                .unwrap_or(&a.id)
-                .cmp(b.info_hash.as_deref().unwrap_or(&b.id))
-        })
+        rank(a.status)
+            .cmp(&rank(b.status))
+            .then_with(|| {
+                if a.status == DownloadJobStatus::Queued && b.status == DownloadJobStatus::Queued {
+                    b.priority
+                        .cmp(&a.priority)
+                        .then(a.created_at.cmp(&b.created_at))
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then_with(|| {
+                a.info_hash
+                    .as_deref()
+                    .unwrap_or(&a.id)
+                    .cmp(b.info_hash.as_deref().unwrap_or(&b.id))
+            })
     });
+    // Positions over the whole queue, before paging.
+    let mut positions: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, j) in jobs
+        .iter()
+        .filter(|j| j.status == DownloadJobStatus::Queued)
+        .enumerate()
+    {
+        positions.insert(j.id.clone(), i + 1);
+    }
     let total = jobs.len();
     let jobs: Vec<skadi_store::DownloadJob> = jobs
         .into_iter()
@@ -1416,6 +1445,8 @@ async fn downloads(
             let import = download_import(&j);
             DownloadDto {
                 import,
+                priority: j.priority,
+                queue_position: positions.get(&j.id).copied(),
                 id: j.id,
                 acquirable_ref: j.acquirable_ref,
                 info_hash: j.info_hash,
@@ -1491,6 +1522,89 @@ async fn resume_download(
         .ok_or_else(|| ApiError(skadi_core::AppError::Internal("no store configured".into())))?;
     store.resume(&id).await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// The body of `POST /downloads/{id}/priority` (SKADI-T-0692): exactly one of
+/// `priority` (set it outright) or `move` (`up` / `down` / `top`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PriorityRequest {
+    priority: Option<i32>,
+    #[serde(rename = "move")]
+    mv: Option<String>,
+}
+
+/// `POST /downloads/{id}/priority` — change where a download sits in the claim
+/// order (SKADI-T-0692). `{"priority": n}` sets the value (any status: a paused
+/// row keeps it for its resume); `{"move": "up" | "down" | "top"}` moves a
+/// `queued` row one place, or to the front, so it is the next claimed when a
+/// `worker.max_active` slot frees. `200 {id, status, priority}`; `400` for a
+/// body with neither or both, or an unknown move; `404` no such row; `409
+/// {error: "not_queued"}` for a move of a row that is not waiting in the queue.
+/// Admin only, like the rest of `/downloads` (`household::path_allowed`).
+async fn set_download_priority(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    crate::error::ApiJson(body): crate::error::ApiJson<PriorityRequest>,
+) -> std::result::Result<axum::response::Response, ApiError> {
+    use skadi_store::{DownloadJobRepo, DownloadJobStatus, QueueMove};
+    let store = state
+        .store
+        .as_ref()
+        .ok_or_else(|| ApiError(skadi_core::AppError::Internal("no store configured".into())))?;
+    let not_found = || ApiError(skadi_core::AppError::NotFound(format!("no download {id}")));
+    let job = match (body.priority, body.mv.as_deref()) {
+        (Some(p), None) => store
+            .set_download_priority(&id, p)
+            .await?
+            .ok_or_else(not_found)?,
+        (None, Some(m)) => {
+            let mv = QueueMove::parse(m).ok_or_else(|| {
+                ApiError(skadi_core::AppError::Validation(format!(
+                    "move must be up, down or top, not {m:?}"
+                )))
+            })?;
+            let current = store.get_download(&id).await?.ok_or_else(not_found)?;
+            let moved = if current.status == DownloadJobStatus::Queued {
+                store.move_queued_download(&id, mv).await?
+            } else {
+                None
+            };
+            match moved {
+                Some(job) => job,
+                None => {
+                    // Gone or claimed between the read and the move counts as
+                    // not queued too: there is nothing left to reorder.
+                    let status = store
+                        .get_download(&id)
+                        .await?
+                        .map_or(current.status, |j| j.status);
+                    return Ok((
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({
+                            "error": "not_queued",
+                            "message": format!(
+                                "the download is {} and not waiting in the queue; only a queued download can be moved",
+                                status.as_str()
+                            ),
+                        })),
+                    )
+                        .into_response());
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError(skadi_core::AppError::Validation(
+                "give exactly one of priority or move".into(),
+            )));
+        }
+    };
+    Ok(Json(serde_json::json!({
+        "id": job.id,
+        "status": job.status.as_str(),
+        "priority": job.priority,
+    }))
+    .into_response())
 }
 
 /// `POST /downloads/pause-all` — pause every in-flight transfer (back-pressure

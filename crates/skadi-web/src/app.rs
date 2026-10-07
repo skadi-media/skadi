@@ -1049,6 +1049,32 @@ fn DownloadsSection() -> impl IntoView {
         view! { <div class="filter-chips dl-filters">{chips}</div> }.into_any()
     };
 
+    // Queue order controls (SKADI-T-0692): top / up / down on a queued row, for
+    // the admin only (the priority route is admin-only). The outcome of a
+    // refused move shows above the table until the next move.
+    let queue_role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let queue_msg = RwSignal::new(None::<String>);
+    let queue_busy = RwSignal::new(false);
+    let run_move = move |id: String, how: dlm::QueueMove| {
+        if queue_busy.get_untracked() {
+            return;
+        }
+        queue_busy.set(true);
+        queue_msg.set(None);
+        spawn_local(async move {
+            if let Err(e) = api::move_download(&id, how.as_str()).await {
+                queue_msg.set(Some(format!("Could not move the download: {}", e.0)));
+            }
+            queue_busy.set(false);
+            refetch();
+        });
+    };
+    let queue_msg_view = move || {
+        queue_msg
+            .get()
+            .map(|m| view! { <div class="run-action-msg bad" role="status">{m}</div> })
+    };
+
     // Active transfers (downloading / paused / stalled): compact table-style rows
     // (SKADI-I-0053). One line per torrent:
     // Name | Size | Progress | ↓Speed | ↑Speed | Peers | ETA | Added
@@ -1073,6 +1099,8 @@ fn DownloadsSection() -> impl IntoView {
             return view! { <div class="dl-empty">"No transfers in this state."</div> }.into_any();
         }
         let now_ms = js_sys::Date::now();
+        let q_len = jobs.with(|all| dlm::queue_len(all));
+        let q_role = queue_role.and_then(|r| r.get());
         let rows = js
             .into_iter()
             .map(|j| {
@@ -1169,13 +1197,30 @@ fn DownloadsSection() -> impl IntoView {
                 // Stalled / errored: a badge before the name, and an errored
                 // row shows its message in full on its own line (SKADI-T-0687).
                 let badge = row_badge_view(&j);
+                // Place in the claim order and the queue moves (SKADI-T-0692).
+                let q_pos = dlm::queue_label(&j).map(|l| {
+                    view! { <span class="dl-qpos mono tnum" title="Place in the queue (#1 is claimed next)">{l}</span> }
+                });
+                let q_buttons = dlm::queue_moves(&j, q_role.as_deref(), q_len)
+                    .into_iter()
+                    .map(|(m, enabled)| {
+                        let id = j.id.clone();
+                        view! {
+                            <button type="button" class="dl-qmove" title=m.title() aria-label=m.title()
+                                disabled=move || !enabled || queue_busy.get()
+                                on:click=move |_| run_move(id.clone(), m)>
+                                {m.glyph()}
+                            </button>
+                        }
+                    })
+                    .collect_view();
                 let error_row = dlm::error_message(&j)
                     .map(|e| view! { <div class="dl-error" title=e.clone()>{e.clone()}</div> });
 
                 view! {
                     <div class=row_cls>
                         {check}
-                        <span class="dl-name" title=full_name>{badge}{label}</span>
+                        <span class="dl-name" title=full_name>{q_pos}{badge}{label}</span>
                         <span class="dl-size mono tnum">{size_str}</span>
                         <span class="dl-progress">
                             <span class="dl-bar">
@@ -1189,6 +1234,7 @@ fn DownloadsSection() -> impl IntoView {
                         <span class="dl-eta mono tnum">{eta_str}</span>
                         <span class="dl-added mono tnum" title=added_title>{added_str}</span>
                         <div class="dl-actions">
+                            {q_buttons}
                             {(!failed).then(|| view! {
                                 <button type="button" title={if paused { "Resume" } else { "Pause" }} on:click=on_pause_resume>
                                     {if paused { "▶" } else { "⏸" }}
@@ -1524,6 +1570,7 @@ fn DownloadsSection() -> impl IntoView {
             {toolbar}
             {chips}
             {bulk_bar}
+            {queue_msg_view}
             {active_rows}
             {seeding_rows}
             {move || (!jobs.get().is_empty()).then_some(()).map(|_| view! {

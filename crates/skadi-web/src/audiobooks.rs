@@ -16,6 +16,10 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_toolbar::{
+    AUDIOBOOKS_SORT_STORAGE, BOOK_SORT_KEYS, LibCounts, LibraryToolbar, chip_matches, sort_items,
+    stored_sort,
+};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
@@ -592,6 +596,10 @@ pub fn AudiobooksPage() -> impl IntoView {
     let lib_text = RwSignal::new(String::new());
     // "Organize by" pivot (SKADI-T-0254): "none" (flat wall), "author", or "series".
     let organize = RwSignal::new("none");
+    // Sort of the flat wall (SKADI-T-0695), remembered across reloads. The
+    // author and series clusters keep their own order, so the control hides
+    // while the wall is organized.
+    let sort = stored_sort(AUDIOBOOKS_SORT_STORAGE, BOOK_SORT_KEYS);
     // Cluster keys (`<mode>:<name>`) currently expanded — clusters are collapsed by
     // default so an organized wall scrolls fast. Keyed by mode so expansion persists
     // per pivot and survives filter/search re-renders.
@@ -665,19 +673,8 @@ pub fn AudiobooksPage() -> impl IntoView {
         });
     });
 
-    // (total, owned, wanted, downloading) for the header + chip counts.
-    let counts = move || {
-        let (mut owned, mut wanted, mut dl) = (0usize, 0usize, 0usize);
-        let bs = books.get();
-        for b in &bs {
-            match audiobook_lib_status(b) {
-                "owned" => owned += 1,
-                "downloading" => dl += 1,
-                _ => wanted += 1,
-            }
-        }
-        (bs.len(), owned, wanted, dl)
-    };
+    let counts =
+        Signal::derive(move || books.with(|bs| LibCounts::of(bs.iter().map(audiobook_lib_status))));
     // Filtered books, shared by every organize mode.
     let filtered = move || {
         let f = lib_filter.get();
@@ -685,7 +682,7 @@ pub fn AudiobooksPage() -> impl IntoView {
         books
             .get()
             .into_iter()
-            .filter(|b| f == "all" || audiobook_lib_status(b) == f)
+            .filter(|b| chip_matches(f, audiobook_lib_status(b)))
             .filter(|b| {
                 q.is_empty()
                     || b.title.to_lowercase().contains(&q)
@@ -778,32 +775,14 @@ pub fn AudiobooksPage() -> impl IntoView {
                     .collect();
                 view! { <div class="lib-clusters">{clusters}</div> }.into_any()
             }
-            _ => view! {
-                <div class="poster-grid">{bs.into_iter().map(cover_tile).collect_view()}</div>
-            }
-            .into_any(),
-        }
-    };
-    let chip = move |key: &'static str, label: &'static str| {
-        let count = move || {
-            let (t, o, w, d) = counts();
-            match key {
-                "owned" => o,
-                "wanted" => w,
-                "downloading" => d,
-                _ => t,
-            }
-        };
-        view! {
-            <button
-                class=move || {
-                    if lib_filter.get() == key { "filter-chip active" } else { "filter-chip" }
+            _ => {
+                let mut bs = bs;
+                sort_items(&mut bs, sort.get());
+                view! {
+                    <div class="poster-grid">{bs.into_iter().map(cover_tile).collect_view()}</div>
                 }
-                on:click=move |_| lib_filter.set(key)
-            >
-                {label}
-                <span class="chip-count mono">{count}</span>
-            </button>
+                .into_any()
+            }
         }
     };
     // "Organize by" pivot chip — switches the wall between flat / author / series.
@@ -847,30 +826,38 @@ pub fn AudiobooksPage() -> impl IntoView {
                     })}
                 </div>
             </div>
-            <div class="filter-bar">
-                <div class="filter-chips">
-                    {chip("all", "All")} {chip("owned", "Owned")} {chip("wanted", "Wanted")}
-                    {chip("downloading", "Downloading")}
-                </div>
-                <div class="filter-chips org-chips">
-                    <span class="org-label mono">"Organize"</span>
-                    {org_chip("none", "Default")} {org_chip("author", "Author")}
-                    {org_chip("series", "Series")}
-                </div>
-                <input
-                    class="lib-filter-input"
-                    r#type="text"
-                    placeholder="⌕ Filter library…"
-                    prop:value=move || lib_text.get()
-                    on:input=move |ev| lib_text.set(event_target_value(&ev))
-                />
-            </div>
+            <LibraryToolbar
+                chips=BOOK_CHIPS
+                filter=lib_filter
+                counts=counts
+                text=lib_text
+                placeholder="⌕ Filter library…"
+                sort=sort
+                sort_keys=BOOK_SORT_KEYS
+                storage_key=AUDIOBOOKS_SORT_STORAGE
+                sort_hidden=Signal::derive(move || organize.get() != "none")
+                facets=move || view! {
+                    <div class="filter-chips org-chips">
+                        <span class="org-label mono">"Organize"</span>
+                        {org_chip("none", "Default")} {org_chip("author", "Author")}
+                        {org_chip("series", "Series")}
+                    </div>
+                }
+            />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || books.get().is_empty().then(|| view! { <p class="muted">"No audiobooks yet — add one with + Add media."</p> })}
             {grid}
         </section>
     }
 }
+
+/// The audiobook wall's status chips (SKADI-T-0253).
+pub const BOOK_CHIPS: &[(&str, &str)] = &[
+    ("all", "All"),
+    ("owned", "Owned"),
+    ("wanted", "Wanted"),
+    ("downloading", "Downloading"),
+];
 
 /// Library-wall status category for a book (SKADI-T-0253): owned / downloading / wanted.
 pub fn audiobook_lib_status(b: &api::Book) -> &'static str {

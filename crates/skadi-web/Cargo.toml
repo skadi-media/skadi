@@ -48,6 +48,8 @@ web-sys = { version = "0.3", features = [
     "HtmlInputElement", "FileList",
     # Live poll (SKADI-T-0693): stop polling while the tab is hidden.
     "AddEventListenerOptions",
+    # Library toolbar DOM test (SKADI-T-0695): drive the sort <select>.
+    "HtmlSelectElement",
     # In-app confirm dialog (SKADI-T-0694): Esc and the Tab trap; the DOM
     # test builds the key events.
     "KeyboardEvent", "KeyboardEventInit",

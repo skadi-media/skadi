@@ -12,7 +12,19 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_toolbar::{
+    LibCounts, LibraryToolbar, TV_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
+    stored_sort,
+};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class, tmdb_img};
+
+/// The series wall's status chips; a series with every episode is "Complete".
+pub const TV_CHIPS: &[(&str, &str)] = &[
+    ("all", "All"),
+    ("owned", "Complete"),
+    ("wanted", "Wanted"),
+    ("downloading", "Downloading"),
+];
 
 /// Library-wall status for a series: `downloading` (any episode mid-acquisition),
 /// `owned` (episodes present + all imported/cutoff), else `wanted`.
@@ -50,6 +62,8 @@ pub fn TvPage() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let lib_filter = RwSignal::new("all");
     let lib_text = RwSignal::new(String::new());
+    // Sort (SKADI-T-0695), remembered across reloads.
+    let sort = stored_sort(TV_SORT_STORAGE, VIDEO_SORT_KEYS);
     // Genre facet (SKADI-T-0605): one chip per genre the loaded items carry,
     // most common first; empty until the server has refreshed metadata.
     let genre_filter = RwSignal::new(None::<String>);
@@ -72,33 +86,24 @@ pub fn TvPage() -> impl IntoView {
         });
     });
 
-    let counts = move || {
-        let (mut owned, mut wanted, mut dl) = (0usize, 0usize, 0usize);
-        let ss = series.get();
-        for s in &ss {
-            match series_lib_status(s) {
-                "owned" => owned += 1,
-                "downloading" => dl += 1,
-                _ => wanted += 1,
-            }
-        }
-        (ss.len(), owned, wanted, dl)
-    };
+    let counts =
+        Signal::derive(move || series.with(|ss| LibCounts::of(ss.iter().map(series_lib_status))));
     let tiles = move || {
         let f = lib_filter.get();
         let q = lib_text.get().to_lowercase();
-        series
+        let mut shown: Vec<api::Series> = series
             .get()
             .into_iter()
-            .filter(|s| f == "all" || series_lib_status(s) == f)
+            .filter(|s| chip_matches(f, series_lib_status(s)))
             .filter(|s| q.is_empty() || s.title.to_lowercase().contains(&q))
             .filter(|s| {
                 genre_filter
                     .get()
                     .is_none_or(|g| s.genres.iter().any(|x| x == &g))
             })
-            .map(series_tile)
-            .collect_view()
+            .collect();
+        sort_items(&mut shown, sort.get());
+        shown.into_iter().map(series_tile).collect_view()
     };
     let genre_chips = move || {
         let counts = crate::genre_counts(series.get().iter().map(|s| s.genres.as_slice()));
@@ -122,28 +127,6 @@ pub fn TvPage() -> impl IntoView {
             })
             .collect_view()
     };
-    let chip = move |key: &'static str, label: &'static str| {
-        let count = move || {
-            let (t, o, w, d) = counts();
-            match key {
-                "owned" => o,
-                "wanted" => w,
-                "downloading" => d,
-                _ => t,
-            }
-        };
-        view! {
-            <button
-                class=move || {
-                    if lib_filter.get() == key { "filter-chip active" } else { "filter-chip" }
-                }
-                on:click=move |_| lib_filter.set(key)
-            >
-                {label}
-                <span class="chip-count mono">{count}</span>
-            </button>
-        }
-    };
 
     view! {
         <section class="library">
@@ -158,20 +141,17 @@ pub fn TvPage() -> impl IntoView {
                     })}
                 </div>
             </div>
-            <div class="filter-bar">
-                <div class="filter-chips">
-                    {chip("all", "All")} {chip("owned", "Complete")} {chip("wanted", "Wanted")}
-                    {chip("downloading", "Downloading")}
-                </div>
-                <div class="filter-chips genre-chips">{genre_chips}</div>
-                <input
-                    class="lib-filter-input"
-                    r#type="text"
-                    placeholder="⌕ Filter series…"
-                    prop:value=move || lib_text.get()
-                    on:input=move |ev| lib_text.set(event_target_value(&ev))
-                />
-            </div>
+            <LibraryToolbar
+                chips=TV_CHIPS
+                filter=lib_filter
+                counts=counts
+                text=lib_text
+                placeholder="⌕ Filter series…"
+                sort=sort
+                sort_keys=VIDEO_SORT_KEYS
+                storage_key=TV_SORT_STORAGE
+                facets=move || view! { <div class="filter-chips genre-chips">{genre_chips}</div> }
+            />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || series.get().is_empty().then(|| view! { <p class="muted">"No series yet — add one with + Add media."</p> })}
             <div class="poster-grid">{tiles}</div>

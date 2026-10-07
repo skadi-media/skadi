@@ -19,6 +19,7 @@ use crate::config::ConfigPage;
 use crate::confirm::{ConfirmDialogHost, ConfirmSpec, confirm};
 use crate::dashboard::Dashboard;
 use crate::import::LibraryImportPage;
+use crate::library_toolbar::{local_get, local_set};
 use crate::movies::{MovieDetailPage, MoviesConfigPage, MoviesPage};
 use crate::settings::{ProviderSection, indexer_spec};
 use crate::tv::{SeriesDetailPage, TvPage};
@@ -766,13 +767,6 @@ fn added_label(created_at: Option<&str>, now_ms: f64) -> String {
     crate::downloads::age_label(secs)
 }
 
-/// One value from localStorage (`None` when storage is unavailable).
-fn local_get(key: &str) -> Option<String> {
-    web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-        .and_then(|s| s.get_item(key).ok().flatten())
-}
-
 /// The "Stalled" / "Error" badge of a download row (SKADI-T-0687), from
 /// [`crate::downloads::row_badge`]; nothing for a healthy row.
 fn row_badge_view(d: &api::Download) -> Option<AnyView> {
@@ -780,13 +774,6 @@ fn row_badge_view(d: &api::Download) -> Option<AnyView> {
         let cls = format!("badge {} dl-badge", b.level);
         view! { <span class=cls title=b.title>{b.label}</span> }.into_any()
     })
-}
-
-/// Best-effort localStorage write (private mode / quota: ignored).
-fn local_set(key: &str, value: &str) {
-    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = storage.set_item(key, value);
-    }
 }
 
 /// `" · 1.2 TB free of 4.0 TB"` free-space suffix for the engine card; empty when

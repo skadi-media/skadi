@@ -17,6 +17,18 @@ use serde_json::{Value, json};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_toolbar::{
+    LibCounts, LibraryToolbar, MOVIES_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
+    stored_sort,
+};
+
+/// The movie wall's status chips (SKADI-T-0245).
+pub const MOVIE_CHIPS: &[(&str, &str)] = &[
+    ("all", "All"),
+    ("owned", "Owned"),
+    ("wanted", "Wanted"),
+    ("downloading", "Downloading"),
+];
 
 /// CSS class for a coarse status label.
 pub fn status_class(label: &str) -> &'static str {
@@ -35,6 +47,8 @@ pub fn MoviesPage() -> impl IntoView {
     // Library-wall filters (SKADI-T-0245): status chip + free-text filter.
     let lib_filter = RwSignal::new("all");
     let lib_text = RwSignal::new(String::new());
+    // Sort (SKADI-T-0695), remembered across reloads.
+    let sort = stored_sort(MOVIES_SORT_STORAGE, VIDEO_SORT_KEYS);
     // Genre facet (SKADI-T-0605): one chip per genre the loaded items carry,
     // most common first; empty until the server has refreshed metadata.
     let genre_filter = RwSignal::new(None::<String>);
@@ -59,34 +73,25 @@ pub fn MoviesPage() -> impl IntoView {
         });
     });
 
-    // (total, owned, wanted, downloading) for the header + chip counts.
-    let counts = move || {
-        let (mut owned, mut wanted, mut dl) = (0usize, 0usize, 0usize);
-        let ms = movies.get();
-        for m in &ms {
-            match movie_lib_status(m) {
-                "owned" => owned += 1,
-                "downloading" => dl += 1,
-                _ => wanted += 1,
-            }
-        }
-        (ms.len(), owned, wanted, dl)
-    };
+    // Chip counts.
+    let counts =
+        Signal::derive(move || movies.with(|ms| LibCounts::of(ms.iter().map(movie_lib_status))));
     let poster_tiles = move || {
         let f = lib_filter.get();
         let q = lib_text.get().to_lowercase();
-        movies
+        let mut shown: Vec<api::Movie> = movies
             .get()
             .into_iter()
-            .filter(|m| f == "all" || movie_lib_status(m) == f)
+            .filter(|m| chip_matches(f, movie_lib_status(m)))
             .filter(|m| q.is_empty() || m.title.to_lowercase().contains(&q))
             .filter(|m| {
                 genre_filter
                     .get()
                     .is_none_or(|g| m.genres.iter().any(|x| x == &g))
             })
-            .map(poster_tile)
-            .collect_view()
+            .collect();
+        sort_items(&mut shown, sort.get());
+        shown.into_iter().map(poster_tile).collect_view()
     };
     let genre_chips = move || {
         let counts = crate::genre_counts(movies.get().iter().map(|m| m.genres.as_slice()));
@@ -110,29 +115,6 @@ pub fn MoviesPage() -> impl IntoView {
             })
             .collect_view()
     };
-    // A filter chip: label + live count, active style when selected.
-    let chip = move |key: &'static str, label: &'static str| {
-        let count = move || {
-            let (t, o, w, d) = counts();
-            match key {
-                "owned" => o,
-                "wanted" => w,
-                "downloading" => d,
-                _ => t,
-            }
-        };
-        view! {
-            <button
-                class=move || {
-                    if lib_filter.get() == key { "filter-chip active" } else { "filter-chip" }
-                }
-                on:click=move |_| lib_filter.set(key)
-            >
-                {label}
-                <span class="chip-count mono">{count}</span>
-            </button>
-        }
-    };
 
     view! {
         <section class="library">
@@ -148,20 +130,17 @@ pub fn MoviesPage() -> impl IntoView {
                     })}
                 </div>
             </div>
-            <div class="filter-bar">
-                <div class="filter-chips">
-                    {chip("all", "All")} {chip("owned", "Owned")} {chip("wanted", "Wanted")}
-                    {chip("downloading", "Downloading")}
-                </div>
-                <div class="filter-chips genre-chips">{genre_chips}</div>
-                <input
-                    class="lib-filter-input"
-                    r#type="text"
-                    placeholder="⌕ Filter library…"
-                    prop:value=move || lib_text.get()
-                    on:input=move |ev| lib_text.set(event_target_value(&ev))
-                />
-            </div>
+            <LibraryToolbar
+                chips=MOVIE_CHIPS
+                filter=lib_filter
+                counts=counts
+                text=lib_text
+                placeholder="⌕ Filter library…"
+                sort=sort
+                sort_keys=VIDEO_SORT_KEYS
+                storage_key=MOVIES_SORT_STORAGE
+                facets=move || view! { <div class="filter-chips genre-chips">{genre_chips}</div> }
+            />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || movies.get().is_empty().then(|| view! { <p class="muted">"No movies yet — add one with + Add media."</p> })}
             <div class="poster-grid">{poster_tiles}</div>

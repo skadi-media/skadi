@@ -271,6 +271,7 @@ fn movie_counts_rolls_up_editions() {
         content_rating: None,
         genres: Vec::new(),
         id: "m".into(),
+        added_at: None,
         title: "t".into(),
         year: None,
         overview: None,
@@ -313,6 +314,7 @@ fn movie_counts_rolls_up_editions() {
 fn book_with(statuses: &[serde_json::Value]) -> Book {
     Book {
         id: "b".into(),
+        added_at: None,
         external_ids: Default::default(),
         title: "t".into(),
         subtitle: None,
@@ -784,6 +786,7 @@ fn series_lib_status_ignores_missing_specials() {
         content_rating: None,
         genres: Vec::new(),
         id: "s".into(),
+        added_at: None,
         external_ids: Default::default(),
         title: "t".into(),
         year: None,
@@ -2894,4 +2897,76 @@ fn confirm_spec_defaults_put_destructive_on_cancel_first() {
     let n = ConfirmSpec::new("Grab?", "One pack.").confirm_label("Grab pack");
     assert!(!n.destructive);
     assert_eq!(n.confirm_label, "Grab pack");
+}
+
+/// The three library records sort through one comparison (SKADI-T-0695):
+/// `added_at` comes off the server JSON, titles drop a leading article, and
+/// books order by the author's surname.
+#[wasm_bindgen_test]
+fn library_walls_sort_by_each_key() {
+    use skadi_web::api::{Book, Movie, Series};
+    use skadi_web::library_toolbar::{SortKey, SortState, sort_items};
+    let sort = |key, asc| SortState { key, asc };
+
+    let movies: Vec<Movie> = serde_json::from_value(json!([
+        {"id": "m1", "title": "The Thing", "year": 1982, "monitored": true,
+         "added_at": "2026-01-02T00:00:00Z"},
+        {"id": "m2", "title": "Alien", "year": 1979, "monitored": true,
+         "added_at": "2026-03-01T00:00:00.25Z"},
+        {"id": "m3", "title": "Heat", "monitored": true, "added_at": "2026-02-01T00:00:00Z",
+         "editions": [{"id": "e", "kind": "k", "status": {"Imported": {}}}]}
+    ]))
+    .unwrap();
+    let order = |mut v: Vec<Movie>, s| {
+        sort_items(&mut v, s);
+        v.into_iter().map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        order(movies.clone(), sort(SortKey::Title, true)),
+        ["m2", "m3", "m1"]
+    );
+    assert_eq!(
+        order(movies.clone(), sort(SortKey::Added, false)),
+        ["m2", "m3", "m1"]
+    );
+    assert_eq!(
+        order(movies.clone(), sort(SortKey::Year, true)),
+        ["m2", "m1", "m3"]
+    );
+    // Owned first, then the wanted ones by title.
+    assert_eq!(
+        order(movies, sort(SortKey::Status, true)),
+        ["m3", "m2", "m1"]
+    );
+
+    let series: Vec<Series> = serde_json::from_value(json!([
+        {"id": "s1", "title": "The Wire", "year": 2002, "monitored": true},
+        {"id": "s2", "title": "Andor", "year": 2022, "monitored": true}
+    ]))
+    .unwrap();
+    let mut s = series.clone();
+    sort_items(&mut s, sort(SortKey::Title, true));
+    assert_eq!(s[0].id, "s2");
+    let mut s = series;
+    sort_items(&mut s, sort(SortKey::Year, false));
+    assert_eq!(s[0].id, "s2");
+
+    let books: Vec<Book> = serde_json::from_value(json!([
+        {"id": "b1", "title": "It", "authors": ["Stephen King"], "monitored": true},
+        {"id": "b2", "title": "The Dispossessed", "authors": ["Ursula K. Le Guin"], "monitored": true},
+        {"id": "b3", "title": "Foundation", "authors": ["Isaac Asimov"], "monitored": true}
+    ]))
+    .unwrap();
+    let mut b = books.clone();
+    sort_items(&mut b, sort(SortKey::Author, true));
+    assert_eq!(
+        b.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        ["b3", "b1", "b2"]
+    );
+    let mut b = books;
+    sort_items(&mut b, sort(SortKey::Title, true));
+    assert_eq!(
+        b.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        ["b2", "b3", "b1"]
+    );
 }

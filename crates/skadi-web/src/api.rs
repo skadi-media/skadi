@@ -577,7 +577,7 @@ impl MediaInfo {
 }
 
 /// A movie library record (subset of the server `Movie`; extra fields ignored).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Movie {
     pub id: String,
     pub title: String,
@@ -590,6 +590,10 @@ pub struct Movie {
     #[serde(default)]
     pub backdrop_url: Option<String>,
     pub monitored: bool,
+    /// When the item joined the library (server RFC 3339, UTC); the
+    /// "Date added" sort reads it (SKADI-T-0695).
+    #[serde(default)]
+    pub added_at: Option<String>,
     #[serde(default)]
     pub genres: Vec<String>,
     #[serde(default)]
@@ -787,7 +791,7 @@ pub struct Episode {
 }
 
 /// A series library record (subset of the server `Series`; extra fields ignored).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Series {
     pub id: String,
     #[serde(default)]
@@ -804,6 +808,10 @@ pub struct Series {
     #[serde(default)]
     pub series_type: Option<String>,
     pub monitored: bool,
+    /// When the item joined the library (server RFC 3339, UTC); the
+    /// "Date added" sort reads it (SKADI-T-0695).
+    #[serde(default)]
+    pub added_at: Option<String>,
     #[serde(default)]
     pub genres: Vec<String>,
     #[serde(default)]
@@ -2576,7 +2584,7 @@ pub struct BookFile {
 
 /// A book library record (subset of the server `Book`; extra fields ignored).
 /// `external_ids.asin` is the audiobook key.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Book {
     pub id: String,
     #[serde(default)]
@@ -2600,6 +2608,10 @@ pub struct Book {
     #[serde(default)]
     pub cover_url: Option<String>,
     pub monitored: bool,
+    /// When the item joined the library (server RFC 3339, UTC); the
+    /// "Date added" sort reads it (SKADI-T-0695).
+    #[serde(default)]
+    pub added_at: Option<String>,
     #[serde(default)]
     pub files: Vec<BookFile>,
 }

@@ -2190,3 +2190,29 @@ p.genres.muted {
   border-color: rgba(240, 100, 100, 0.5);
 }
 .confirm-dialog button.confirm-ok.danger:hover { background: #4a2222; }
+
+/* Library toolbar (SKADI-T-0695): one component over the movie, TV and
+   audiobook walls. The controls row keeps the old filter-bar layout; the
+   bulk row (SKADI-T-0696) sits under it, full width. */
+.filter-bar.lib-toolbar { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+.lib-toolbar-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  flex-wrap: wrap;
+}
+.lib-sort { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
+.lib-sort-key {
+  background: var(--panel); border: 1px solid var(--border); color: var(--fg);
+  border-radius: 9px; padding: 0.4rem 0.55rem; font-size: 13px; font-family: var(--sans);
+}
+.lib-sort-key:focus { outline: none; border-color: var(--ice); }
+.lib-sort-dir {
+  background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
+  border-radius: 9px; padding: 0.35rem 0.6rem; font-size: 13px; cursor: pointer;
+}
+.lib-sort-dir:hover { border-color: var(--border-control); }
+.lib-toolbar-bulk { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.lib-toolbar-bulk:empty { display: none; }
+@media (max-width: 720px) {
+  .lib-toolbar-row { flex-direction: column; align-items: stretch; }
+  .lib-sort { margin-left: 0; }
+}

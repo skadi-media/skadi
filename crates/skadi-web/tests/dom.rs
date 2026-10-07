@@ -628,3 +628,127 @@ async fn confirm_dialog_traps_tab_and_a_backdrop_click_cancels() {
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
 }
+
+// --- Library toolbar (SKADI-T-0695) ---
+
+fn mount_toolbar(
+    storage_key: &'static str,
+    sort_hidden: RwSignal<bool>,
+) -> (
+    HtmlElement,
+    RwSignal<skadi_web::library_toolbar::SortState>,
+    RwSignal<&'static str>,
+) {
+    use skadi_web::library_toolbar::{LibCounts, LibraryToolbar, VIDEO_SORT_KEYS, stored_sort};
+    let host = host();
+    let sort = stored_sort(storage_key, VIDEO_SORT_KEYS);
+    let filter = RwSignal::new("all");
+    let text = RwSignal::new(String::new());
+    let counts = Signal::stored(LibCounts {
+        total: 3,
+        owned: 1,
+        wanted: 1,
+        downloading: 1,
+    });
+    let handle = mount_to(host.clone(), move || {
+        view! {
+            <LibraryToolbar
+                chips=skadi_web::movies::MOVIE_CHIPS
+                filter=filter
+                counts=counts
+                text=text
+                placeholder="Filter"
+                sort=sort
+                sort_keys=VIDEO_SORT_KEYS
+                storage_key=storage_key
+                sort_hidden=Signal::derive(move || sort_hidden.get())
+                bulk=|| view! { <span class="test-bulk">"2 selected"</span> }
+            />
+        }
+    });
+    std::mem::forget(handle);
+    (host, sort, filter)
+}
+
+fn local_storage() -> web_sys::Storage {
+    web_sys::window().unwrap().local_storage().unwrap().unwrap()
+}
+
+/// Picking a key and flipping the direction writes the sort to localStorage,
+/// and a fresh mount (a reload) starts from it.
+#[wasm_bindgen_test]
+async fn library_sort_choice_persists_across_a_remount() {
+    let key = "test_library_sort";
+    local_storage().remove_item(key).unwrap();
+    let (host, sort, _) = mount_toolbar(key, RwSignal::new(false));
+    let select = host
+        .query_selector(".lib-sort-key")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::HtmlSelectElement>()
+        .unwrap();
+    assert_eq!(select.value(), "title");
+    assert_eq!(select.length(), 4); // title, added, year, status
+    select.set_value("year");
+    select
+        .dispatch_event(&web_sys::Event::new("change").unwrap())
+        .unwrap();
+    settle_dom().await;
+    assert_eq!(
+        local_storage().get_item(key).unwrap().as_deref(),
+        Some("year:desc")
+    );
+    host.query_selector(".lib-sort-dir")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<HtmlButtonElement>()
+        .unwrap()
+        .click();
+    settle_dom().await;
+    assert_eq!(
+        local_storage().get_item(key).unwrap().as_deref(),
+        Some("year:asc")
+    );
+    assert!(sort.get_untracked().asc);
+
+    // "Reload": a new toolbar on the same key starts from the stored sort.
+    let (host2, sort2, _) = mount_toolbar(key, RwSignal::new(false));
+    settle_dom().await;
+    assert_eq!(
+        sort2.get_untracked().encode(),
+        "year:asc",
+        "the remount restores the stored sort"
+    );
+    let select2 = host2
+        .query_selector(".lib-sort-key")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::HtmlSelectElement>()
+        .unwrap();
+    assert_eq!(select2.value(), "year");
+    local_storage().remove_item(key).unwrap();
+}
+
+/// The chips show live counts and set the filter; the bulk slot renders in
+/// the toolbar; `sort_hidden` hides the sort control.
+#[wasm_bindgen_test]
+async fn library_toolbar_chips_bulk_slot_and_hidden_sort() {
+    let hidden = RwSignal::new(false);
+    let (host, _, filter) = mount_toolbar("test_library_sort_2", hidden);
+    assert_eq!(count(&host, ".filter-chip"), 4);
+    assert_eq!(count(&host, ".lib-toolbar-bulk .test-bulk"), 1);
+    let chips = host.query_selector_all(".filter-chip").unwrap();
+    let owned = chips.item(1).unwrap().dyn_into::<HtmlElement>().unwrap();
+    assert_eq!(owned.text_content().as_deref(), Some("Owned1"));
+    owned.click();
+    settle_dom().await;
+    assert_eq!(filter.get_untracked(), "owned");
+    assert!(owned.class_name().contains("active"));
+
+    let sort_box = find(&host, ".lib-sort");
+    let display = |el: &HtmlElement| el.get_attribute("style").unwrap_or_default();
+    assert!(!display(&sort_box).contains("none"));
+    hidden.set(true);
+    settle_dom().await;
+    assert!(display(&sort_box).contains("display: none"));
+}

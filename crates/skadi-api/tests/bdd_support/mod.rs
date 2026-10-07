@@ -137,6 +137,58 @@ pub struct World {
     pub sweep_rx: Option<tokio::sync::watch::Receiver<u64>>,
     /// Env vars this scenario set, restored afterwards (`@serial` only).
     pub env_touched: Vec<(String, Option<String>)>,
+    // ---- health checks (C34, COLLIERY-I-0294) ----
+    /// How long the last [`World::call`] took, end to end through the router.
+    pub elapsed: Option<std::time::Duration>,
+    /// Fake upstream servers (an indexer, gluetun) by the name the scenario gave.
+    pub fakes: HashMap<String, Fake>,
+    /// `checked_at` times a scenario remembered by name.
+    pub times: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Env vars to restore when the world drops (`@serial` only). Unlike
+    /// `env_touched`, the restore also runs when a step fails part-way.
+    pub env_guards: Vec<EnvGuard>,
+}
+
+/// Sets an env var and puts back the prior value on drop, so a failing
+/// `@gap` scenario cannot leak its setting into the scenarios after it.
+#[derive(Debug)]
+pub struct EnvGuard {
+    key: String,
+    prior: Option<String>,
+}
+
+impl EnvGuard {
+    pub fn set(key: &str, value: &str) -> Self {
+        let prior = std::env::var(key).ok();
+        // SAFETY: scenarios that touch the environment are tagged `@serial`, so no
+        // other scenario reads env concurrently.
+        unsafe { std::env::set_var(key, value) };
+        EnvGuard {
+            key: key.to_string(),
+            prior,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: see `EnvGuard::set`.
+        unsafe {
+            match &self.prior {
+                Some(v) => std::env::set_var(&self.key, v),
+                None => std::env::remove_var(&self.key),
+            }
+        }
+    }
+}
+
+/// A `wiremock::MockServer` that stands in for a provider or for gluetun. The
+/// world keeps it alive for the scenario.
+pub struct Fake(pub wiremock::MockServer);
+impl std::fmt::Debug for Fake {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Fake({})", self.0.uri())
+    }
 }
 
 /// `Store` has no `Debug`.
@@ -218,6 +270,7 @@ impl World {
                 .unwrap(),
             None => builder.body(Body::empty()).unwrap(),
         };
+        let started = std::time::Instant::now();
         let res = skadi_api::router(state)
             .oneshot(request)
             .await
@@ -234,6 +287,7 @@ impl World {
             })
             .collect();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        self.elapsed = Some(started.elapsed());
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         let reply = Reply {

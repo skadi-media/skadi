@@ -558,3 +558,41 @@ async fn a_limit_actually_limits() {
         assert!(n <= 1, "{uri} returned {n} rows for limit=1");
     }
 }
+
+/// Each `/downloads` row says when it was enqueued, in a fixed-width UTC form
+/// that sorts as a string — the web "Added" sort compares it lexically
+/// (SKADI-T-0686).
+#[tokio::test]
+async fn each_download_row_carries_a_sortable_created_at() {
+    use skadi_store::{DownloadJobRepo, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let job = db
+        .store
+        .enqueue(&NewDownloadJob {
+            acquirable_ref: "ref-added-0686".into(),
+            source: "magnet:?xt=urn:btih:0686".into(),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = call(&state, "/api/v1/downloads").await;
+    assert_eq!(status, StatusCode::OK);
+    let row = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == job.id.as_str())
+        .expect("the enqueued job is listed");
+    let created = row["created_at"].as_str().expect("created_at is a string");
+    assert_eq!(
+        created,
+        job.created_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    );
+    // `YYYY-MM-DDTHH:MM:SS.mmmZ`: always 24 characters, always UTC.
+    assert_eq!(created.len(), 24, "{created}");
+    assert!(created.ends_with('Z'), "{created}");
+}

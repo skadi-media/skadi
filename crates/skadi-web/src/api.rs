@@ -207,6 +207,10 @@ pub struct TestResult {
     pub ok: bool,
     #[serde(default)]
     pub error: Option<String>,
+    /// When the job was enqueued (RFC 3339, UTC, fixed width, so it sorts as a
+    /// string). `None` from a daemon older than SKADI-T-0686.
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 /// `GET /settings/{kind}` — list stored documents for a kind.
@@ -2075,9 +2079,8 @@ pub async fn blocklist_and_search(history_id: &str) -> Result<(), ApiError> {
 
 /// One active download job with live torrent metrics (mirror of the api
 /// `DownloadDto`, SKADI-T-0166). Speeds are bytes/sec; `percent`/`ratio` computed.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Download {
-    #[allow(dead_code)]
     pub id: String,
     pub acquirable_ref: String,
     pub status: String,
@@ -2098,6 +2101,10 @@ pub struct Download {
     pub eta_seconds: Option<i64>,
     #[serde(default)]
     pub error: Option<String>,
+    /// When the job was enqueued (RFC 3339, UTC, fixed width, so it sorts as a
+    /// string). `None` from a daemon older than SKADI-T-0686.
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 /// `GET /downloads` — the active download queue (queued + downloading) with live

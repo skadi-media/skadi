@@ -2086,3 +2086,14 @@ p.genres.muted {
 .log-level.bad { color: var(--bad); }
 .log-level.warn { color: var(--warn); }
 .log-level.muted { color: var(--faint); }
+
+/* Downloads: state filter chips, "Added" column, Seeding sort bar (SKADI-T-0686). */
+.dl-filters { padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-top: none; border-bottom: none; }
+.dl-filters .filter-chip { padding: 0.15rem 0.65rem; font-size: 12px; }
+.dl-header, .dl-row-compact { grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px 50px; }
+.dl-row-compact .dl-added { text-align: right; color: var(--muted); white-space: nowrap; }
+.seed-sort { display: flex; align-items: center; gap: 0.9rem; padding: 0.35rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
+.seed-sort > span:not(.u-label) { cursor: pointer; user-select: none; }
+.seed-sort > span:not(.u-label):hover { color: var(--fg); }
+.seed-sort .sort-active { color: var(--fg-bright); }
+.seed-added { font-size: 0.75rem; min-width: 2.5rem; text-align: right; }

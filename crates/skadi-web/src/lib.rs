@@ -12,6 +12,7 @@ pub mod api;
 pub mod audiobook_import;
 pub mod audiobooks;
 pub mod dashboard;
+pub mod downloads;
 pub mod household;
 pub mod import_common;
 pub mod movies;

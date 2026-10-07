@@ -2643,3 +2643,73 @@ fn system_status_parses_with_and_without_a_commit() {
     assert_eq!(task.last_run, None);
     assert_eq!(task.next_run, None);
 }
+
+// ---- Downloads list: state chips + sort (SKADI-T-0686) ----
+
+fn dl(id: &str, status: &str, created: Option<&str>) -> skadi_web::api::Download {
+    serde_json::from_value(json!({
+        "id": id, "acquirable_ref": format!("ref-{id}"), "status": status,
+        "progress_bytes": 0, "total_bytes": 0, "percent": 0.0,
+        "created_at": created,
+    }))
+    .unwrap()
+}
+
+#[wasm_bindgen_test]
+fn a_download_row_without_created_at_still_parses() {
+    let d: skadi_web::api::Download = serde_json::from_value(json!({
+        "id": "x", "acquirable_ref": "r", "status": "queued",
+        "progress_bytes": 0, "total_bytes": 0, "percent": 0.0
+    }))
+    .unwrap();
+    assert_eq!(d.created_at, None);
+    assert_eq!(skadi_web::downloads::age_label(None), "—");
+}
+
+#[wasm_bindgen_test]
+fn download_chips_count_the_rows_they_show() {
+    use skadi_web::downloads::{SortState, state_counts, visible};
+    let mut errored = dl("5", "stalled", None);
+    errored.error = Some("stats: gone".into());
+    let rows = vec![
+        dl("1", "downloading", None),
+        dl("2", "seeding", None),
+        dl("3", "paused", None),
+        dl("4", "stalled", None),
+        errored,
+    ];
+    let name = |d: &skadi_web::api::Download| d.acquirable_ref.clone();
+    let counts = state_counts(&rows);
+    assert_eq!(
+        counts
+            .iter()
+            .map(|(f, n)| (f.key(), *n))
+            .collect::<Vec<_>>(),
+        [
+            ("all", 5),
+            ("downloading", 1),
+            ("seeding", 1),
+            ("paused", 1),
+            ("stalled", 1),
+            ("errored", 1)
+        ]
+    );
+    for (f, n) in counts {
+        let v = visible(&rows, f, SortState::default(), SortState::default(), &name);
+        assert_eq!(v.active.len() + v.seeding.len(), n, "{}", f.key());
+    }
+}
+
+#[wasm_bindgen_test]
+fn downloads_default_to_newest_first_and_the_sort_round_trips() {
+    use skadi_web::downloads::{SortKey, SortState, sort_rows};
+    let mut rows = vec![
+        dl("old", "downloading", Some("2026-10-01T00:00:00.000Z")),
+        dl("new", "downloading", Some("2026-10-07T00:00:00.000Z")),
+    ];
+    let name = |d: &skadi_web::api::Download| d.acquirable_ref.clone();
+    sort_rows(&mut rows, SortState::default(), &name);
+    assert_eq!(rows[0].id, "new");
+    let s = SortState::default().clicked(SortKey::Ratio);
+    assert_eq!(SortState::decode(Some(&s.encode())), s);
+}

@@ -1072,6 +1072,9 @@ struct DownloadDto {
     peers_seen: Option<i32>,
     eta_seconds: Option<i64>,
     error: Option<String>,
+    /// When the job was enqueued: RFC 3339, UTC, always millisecond precision, so
+    /// the string sorts in time order (the web "Added" column, SKADI-T-0686).
+    created_at: String,
 }
 
 /// `GET /downloads` — every torrent **under active management**: downloading,
@@ -1198,6 +1201,9 @@ async fn downloads(
                 peers_seen: j.peers_seen,
                 eta_seconds: j.eta_seconds,
                 error: j.error,
+                created_at: j
+                    .created_at
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             }
         })
         .collect();

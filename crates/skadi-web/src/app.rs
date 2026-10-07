@@ -754,6 +754,29 @@ fn fmt_eta(secs: Option<i64>) -> String {
     }
 }
 
+/// The "Added" cell of a Downloads row: the age of `created_at` at `now_ms`.
+fn added_label(created_at: Option<&str>, now_ms: f64) -> String {
+    let secs = created_at
+        .map(js_sys::Date::parse)
+        .filter(|t| !t.is_nan())
+        .map(|t| (now_ms - t) / 1000.0);
+    crate::downloads::age_label(secs)
+}
+
+/// One value from localStorage (`None` when storage is unavailable).
+fn local_get(key: &str) -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+}
+
+/// Best-effort localStorage write (private mode / quota: ignored).
+fn local_set(key: &str, value: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(key, value);
+    }
+}
+
 /// `" · 1.2 TB free of 4.0 TB"` free-space suffix for the engine card; empty when
 /// the download path's space is unknown. Pure.
 fn fmt_free_disk(free: Option<u64>, total: Option<u64>) -> String {
@@ -772,6 +795,7 @@ fn fmt_free_disk(free: Option<u64>, total: Option<u64>) -> String {
 /// `/downloads` and renders per-torrent progress + speed / ETA / peers / ratio.
 #[component]
 fn DownloadsSection() -> impl IntoView {
+    use crate::downloads::{self as dlm, RowState, SortKey, SortState, StateFilter};
     use crate::movies::size_human;
     use std::collections::HashMap;
 
@@ -781,10 +805,18 @@ fn DownloadsSection() -> impl IntoView {
     let loaded = RwSignal::new(false);
     let alive = RwSignal::new(true);
 
-    // Sort state for the downloads table (SKADI-T-0370).
-    // 0=Name, 1=Size, 2=Progress, 3=DownSpeed, 4=UpSpeed, 5=Peers, 6=ETA
-    let sort_col = RwSignal::new(2_u8); // Default: sort by Progress
-    let sort_asc = RwSignal::new(false); // Default: descending (active first)
+    // Filter chip and sort state (SKADI-T-0686; sorting SKADI-T-0370). Held in
+    // their own signals, apart from the polled rows, so a poll refresh keeps the
+    // selection; remembered in localStorage like the Seeding accordion.
+    let filter = RwSignal::new(StateFilter::from_key(
+        local_get(dlm::FILTER_STORAGE_KEY).as_deref(),
+    ));
+    let active_sort = RwSignal::new(SortState::decode(
+        local_get(dlm::ACTIVE_SORT_STORAGE_KEY).as_deref(),
+    ));
+    let seeding_sort = RwSignal::new(SortState::decode(
+        local_get(dlm::SEEDING_SORT_STORAGE_KEY).as_deref(),
+    ));
 
     // Re-fetch the list now (after a control action), so the UI reflects it without
     // waiting for the next poll tick.
@@ -832,59 +864,99 @@ fn DownloadsSection() -> impl IntoView {
     });
     on_cleanup(move || alive.set(false));
 
-    // Active transfers (downloading / paused): compact table-style rows (SKADI-I-0053).
-    // Single-line per torrent: Name | Size | Progress | ↓Speed | ↑Speed | Peers | ETA
+    // The rows on show: filtered by the chip, split into the active table and the
+    // Seeding list, each sorted by its own header (pure: `downloads::visible`).
+    let shown = Memo::new(move |_| {
+        let names = titles.get();
+        let name = |d: &api::Download| {
+            names
+                .get(&d.acquirable_ref)
+                .map(|(n, _)| n.clone())
+                .unwrap_or_else(|| d.acquirable_ref.clone())
+        };
+        dlm::visible(
+            &jobs.get(),
+            filter.get(),
+            active_sort.get(),
+            seeding_sort.get(),
+            &name,
+        )
+    });
+
+    // A clickable header cell for `sort` (shared by both lists).
+    let sort_header = move |sort: RwSignal<SortState>,
+                            storage_key: &'static str,
+                            key: SortKey,
+                            label: &'static str| {
+        let on_click = move |_| {
+            let next = sort.get_untracked().clicked(key);
+            sort.set(next);
+            local_set(storage_key, &next.encode());
+        };
+        view! {
+            <span
+                class=move || if sort.get().key == key { "sort-active" } else { "" }
+                on:click=on_click
+            >
+                {label}{move || sort.get().arrow(key)}
+            </span>
+        }
+    };
+
+    // State filter chips with counts over the whole list (SKADI-T-0686).
+    let chips = move || {
+        let js = jobs.get();
+        if !loaded.get() || js.is_empty() {
+            return ().into_any();
+        }
+        let current = filter.get();
+        let chips = dlm::state_counts(&js)
+            .into_iter()
+            .map(|(f, n)| {
+                let cls = if f == current {
+                    "filter-chip active"
+                } else {
+                    "filter-chip"
+                };
+                let on_click = move |_| {
+                    filter.set(f);
+                    local_set(dlm::FILTER_STORAGE_KEY, f.key());
+                };
+                view! {
+                    <button type="button" class=cls on:click=on_click>
+                        {f.label()}
+                        <span class="chip-count mono">{n.to_string()}</span>
+                    </button>
+                }
+            })
+            .collect_view();
+        view! { <div class="filter-chips dl-filters">{chips}</div> }.into_any()
+    };
+
+    // Active transfers (downloading / paused / stalled): compact table-style rows
+    // (SKADI-I-0053). One line per torrent:
+    // Name | Size | Progress | ↓Speed | ↑Speed | Peers | ETA | Added
     let active_rows = move || {
         let names = titles.get();
-        let col = sort_col.get();
-        let asc = sort_asc.get();
-        let mut js: Vec<_> = jobs
-            .get()
-            .into_iter()
-            .filter(|j| j.status != "seeding")
-            .collect();
-        // Sort by selected column
-        js.sort_by(|a, b| {
-            let name_a = names
-                .get(&a.acquirable_ref)
-                .map(|(n, _)| n.as_str())
-                .unwrap_or(&a.acquirable_ref);
-            let name_b = names
-                .get(&b.acquirable_ref)
-                .map(|(n, _)| n.as_str())
-                .unwrap_or(&b.acquirable_ref);
-            let cmp = match col {
-                0 => name_a.to_lowercase().cmp(&name_b.to_lowercase()),
-                1 => a.total_bytes.cmp(&b.total_bytes),
-                2 => a
-                    .percent
-                    .partial_cmp(&b.percent)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-                3 => a
-                    .down_speed_bps
-                    .unwrap_or(0)
-                    .cmp(&b.down_speed_bps.unwrap_or(0)),
-                4 => a
-                    .up_speed_bps
-                    .unwrap_or(0)
-                    .cmp(&b.up_speed_bps.unwrap_or(0)),
-                5 => a.peers.unwrap_or(0).cmp(&b.peers.unwrap_or(0)),
-                6 => a
-                    .eta_seconds
-                    .unwrap_or(i64::MAX)
-                    .cmp(&b.eta_seconds.unwrap_or(i64::MAX)),
-                _ => std::cmp::Ordering::Equal,
-            };
-            if asc { cmp } else { cmp.reverse() }
-        });
-        if js.is_empty() {
-            let msg = if loaded.get() {
-                "No active transfers."
-            } else {
-                "Loading…"
-            };
-            return view! { <div class="dl-empty">{msg}</div> }.into_any();
+        let f = filter.get();
+        if f == StateFilter::Only(RowState::Seeding) {
+            return ().into_any();
         }
+        let visible = shown.get();
+        let js = visible.active;
+        if js.is_empty() {
+            if !loaded.get() {
+                return view! { <div class="dl-empty">"Loading…"</div> }.into_any();
+            }
+            if f == StateFilter::All || jobs.with(|j| j.is_empty()) {
+                return view! { <div class="dl-empty">"No active transfers."</div> }.into_any();
+            }
+            if !visible.seeding.is_empty() {
+                return ().into_any();
+            }
+            return view! { <div class="dl-empty">"No transfers in this state."</div> }.into_any();
+        }
+        let now_ms = js_sys::Date::now();
         let rows = js
             .into_iter()
             .map(|j| {
@@ -894,8 +966,13 @@ fn DownloadsSection() -> impl IntoView {
                     .unwrap_or_else(|| (j.acquirable_ref.clone(), "·"));
                 let full_name = label.clone();
                 let pct = j.percent;
+                let state = dlm::row_state(&j);
                 let paused = j.status == "paused";
-                let row_cls = if paused { "dl-row-compact paused" } else { "dl-row-compact" };
+                let row_cls = format!(
+                    "dl-row-compact st-{}{}",
+                    state.key(),
+                    if paused { " paused" } else { "" }
+                );
 
                 // Format columns
                 let size_str = size_human(j.total_bytes.max(0) as u64);
@@ -913,6 +990,8 @@ fn DownloadsSection() -> impl IntoView {
                 };
                 let peers_str = j.peers.map(|p| p.to_string()).unwrap_or_else(|| "—".into());
                 let eta_str = fmt_eta(j.eta_seconds);
+                let added_str = added_label(j.created_at.as_deref(), now_ms);
+                let added_title = j.created_at.clone().unwrap_or_default();
 
                 // Action handlers
                 let id_pr = j.id.clone();
@@ -972,6 +1051,7 @@ fn DownloadsSection() -> impl IntoView {
                         <span class=up_cls>{up_str}</span>
                         <span class="dl-peers mono tnum">{peers_str}</span>
                         <span class="dl-eta mono tnum">{eta_str}</span>
+                        <span class="dl-added mono tnum" title=added_title>{added_str}</span>
                         <div class="dl-actions">
                             <button type="button" title={if paused { "Resume" } else { "Pause" }} on:click=on_pause_resume>
                                 {if paused { "▶" } else { "⏸" }}
@@ -984,38 +1064,13 @@ fn DownloadsSection() -> impl IntoView {
                 }
             })
             .collect_view();
-        // Clickable header with sort indicators
-        let col = sort_col.get();
-        let asc = sort_asc.get();
-        let arrow = |c: u8| {
-            if col == c {
-                if asc { " ▲" } else { " ▼" }
-            } else {
-                ""
-            }
-        };
-        let hdr_cls = |c: u8| if col == c { "sort-active" } else { "" };
-        let on_sort = |c: u8| {
-            move |_| {
-                if sort_col.get() == c {
-                    sort_asc.update(|v| *v = !*v);
-                } else {
-                    sort_col.set(c);
-                    sort_asc.set(true);
-                }
-            }
-        };
+        let header = dlm::ACTIVE_COLUMNS
+            .into_iter()
+            .map(|(key, label)| sort_header(active_sort, dlm::ACTIVE_SORT_STORAGE_KEY, key, label))
+            .collect_view();
         view! {
             <div class="dl-table">
-                <div class="dl-header">
-                    <span class=hdr_cls(0) on:click=on_sort(0)>"Name"{arrow(0)}</span>
-                    <span class=hdr_cls(1) on:click=on_sort(1)>"Size"{arrow(1)}</span>
-                    <span class=hdr_cls(2) on:click=on_sort(2)>"Progress"{arrow(2)}</span>
-                    <span class=hdr_cls(3) on:click=on_sort(3)>"↓ Spd"{arrow(3)}</span>
-                    <span class=hdr_cls(4) on:click=on_sort(4)>"↑ Spd"{arrow(4)}</span>
-                    <span class=hdr_cls(5) on:click=on_sort(5)>"Peers"{arrow(5)}</span>
-                    <span class=hdr_cls(6) on:click=on_sort(6)>"ETA"{arrow(6)}</span>
-                </div>
+                <div class="dl-header">{header}</div>
                 {rows}
             </div>
         }
@@ -1023,25 +1078,28 @@ fn DownloadsSection() -> impl IntoView {
     };
 
     // Seeding: collapsible accordion below active downloads (SKADI-T-0373).
-    // Collapsed by default; state persists via localStorage.
-    let seeding_open = RwSignal::new({
-        web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
-            .and_then(|s| s.get_item("seeding_open").ok().flatten())
+    // Collapsed by default; state persists via localStorage. The Seeding chip
+    // opens it, since it is then the only list on show.
+    let seeding_open = RwSignal::new(
+        local_get("seeding_open")
             .map(|v| v == "true")
-            .unwrap_or(false)
-    });
+            .unwrap_or(false),
+    );
     let seeding_rows = move || {
         let names = titles.get();
-        let js: Vec<_> = jobs
-            .get()
-            .into_iter()
-            .filter(|j| j.status == "seeding")
-            .collect();
+        let js = shown.get().seeding;
         if js.is_empty() {
+            if loaded.get()
+                && filter.get() == StateFilter::Only(RowState::Seeding)
+                && !jobs.with(|j| j.is_empty())
+            {
+                return view! { <div class="dl-empty">"No transfers in this state."</div> }
+                    .into_any();
+            }
             return ().into_any();
         }
         let count = js.len();
+        let now_ms = js_sys::Date::now();
         let rows = js
             .into_iter()
             .map(|j| {
@@ -1064,14 +1122,18 @@ fn DownloadsSection() -> impl IntoView {
                 } else {
                     "seed-ratio mono ok"
                 };
+                let added_str = added_label(j.created_at.as_deref(), now_ms);
+                let added_title = j.created_at.clone().unwrap_or_default();
+                let row_cls = format!("seed-row st-{}", dlm::row_state(&j).key());
                 view! {
-                    <div class="seed-row">
+                    <div class=row_cls>
                         <span class="health-dot ok"></span>
                         <span class="tile-tag mono">{tag}</span>
                         <span class="seed-title">{label}</span>
                         <span class="seed-size mono">{size}</span>
                         <span class="seed-up mono gold">{up}</span>
                         <span class=ratio_cls>{ratio}</span>
+                        <span class="seed-added mono faint" title=added_title>{added_str}</span>
                     </div>
                 }
             })
@@ -1080,19 +1142,25 @@ fn DownloadsSection() -> impl IntoView {
         let on_toggle = move |_| {
             let next = !seeding_open.get();
             seeding_open.set(next);
-            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten())
-            {
-                let _ = storage.set_item("seeding_open", if next { "true" } else { "false" });
-            }
+            local_set("seeding_open", if next { "true" } else { "false" });
         };
-        let chevron = move || if seeding_open.get() { "▼" } else { "▶" };
+        let is_open =
+            move || seeding_open.get() || filter.get() == StateFilter::Only(RowState::Seeding);
+        let chevron = move || if is_open() { "▼" } else { "▶" };
+        let header = dlm::SEEDING_COLUMNS
+            .into_iter()
+            .map(|(key, label)| {
+                sort_header(seeding_sort, dlm::SEEDING_SORT_STORAGE_KEY, key, label)
+            })
+            .collect_view();
         view! {
             <div class="seed-accordion">
                 <div class="seed-header" on:click=on_toggle>
                     <span class="seed-chevron">{chevron}</span>
                     <span class="u-label">{format!("Seeding ({count})")}</span>
                 </div>
-                <div class="seed-body" class:collapsed=move || !seeding_open.get()>
+                <div class="seed-body" class:collapsed=move || !is_open()>
+                    <div class="seed-sort"><span class="u-label">"Sort"</span>{header}</div>
                     {rows}
                 </div>
             </div>
@@ -1181,6 +1249,7 @@ fn DownloadsSection() -> impl IntoView {
     view! {
         <section class="provider-section dl-section">
             {toolbar}
+            {chips}
             {active_rows}
             {seeding_rows}
             {move || (!jobs.get().is_empty()).then_some(()).map(|_| view! {

@@ -305,7 +305,7 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER:-skadi}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
       PGDATABASE: ${POSTGRES_DB:-skadi}
       # Seconds between dumps (default daily) and how many to keep.
       BACKUP_INTERVAL: ${BACKUP_INTERVAL:-86400}
@@ -319,6 +319,13 @@ services:
       - -c
       - |
         set -eu
+        # Secrets-file mode (docker-compose.secrets.yml, SKADI-T-0702): libpq
+        # has no PGPASSWORD_FILE, so read the file here. Unset = PGPASSWORD
+        # from the environment, as before.
+        if [ -n "$${PGPASSWORD_FILE:-}" ]; then
+          PGPASSWORD="$$(cat "$$PGPASSWORD_FILE")"
+          export PGPASSWORD
+        fi
         mkdir -p "$$BACKUP_DIR"
         while :; do
           stamp="$$(date -u +%Y%m%dT%H%M%SZ)"
@@ -364,7 +371,7 @@ services:
     image: postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-skadi}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: ${POSTGRES_DB:-skadi}
     volumes:
       # Persistent — unlike the repo-root test compose, this data matters.
@@ -426,11 +433,11 @@ services:
         # the `gluetun` hostname for the proxy + FlareSolverr.
         condition: service_started
     environment:
-      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-skadi}
+      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-skadi}
       # Bearer auth is ON by default in this stack; set the token in .env.
-      SKADI_API_TOKEN: ${SKADI_API_TOKEN}
+      SKADI_API_TOKEN: ${SKADI_API_TOKEN:-}
       # Encrypts provider credentials (indexer API keys) at rest.
-      SKADI_SECRET_KEY: ${SKADI_SECRET_KEY}
+      SKADI_SECRET_KEY: ${SKADI_SECRET_KEY:-}
       # Optional: set to use TMDB directly instead of the Servarr metadata
       # API default (ADR SKADI-A-0001).
       SKADI_TMDB_API_KEY: ${SKADI_TMDB_API_KEY:-}
@@ -625,7 +632,7 @@ services:
       # gluetun's namespace compose service names don't resolve, and Docker
       # forbids extra_hosts together with network_mode, so the URL carries the
       # IP directly (the postgres service pins ipv4_address to ${POSTGRES_IP}).
-      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD}@${POSTGRES_IP:-172.28.0.5}:5432/${POSTGRES_DB:-skadi}
+      SKADI_DATABASE_URL: postgres://${POSTGRES_USER:-skadi}:${POSTGRES_PASSWORD:-}@${POSTGRES_IP:-172.28.0.5}:5432/${POSTGRES_DB:-skadi}
       # Downloads live under the single library root's downloads/ tree
       # (SKADI-T-0302/0305): torrents download to + seed from `complete`, which is
       # on the SAME NFS export as the library, so the importer hardlinks the finished

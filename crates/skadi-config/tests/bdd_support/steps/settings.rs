@@ -118,7 +118,13 @@ async fn env_unset(w: &mut World, key: String) {
 
 #[when("the boot seeder collects the environment")]
 async fn read_env(w: &mut World) {
-    w.seeded = skadi_config::read_env();
+    match skadi_config::read_env() {
+        Ok(seeded) => w.seeded = seeded,
+        Err(e) => w.seed_error = Some(e.to_string()),
+    }
+    if let Some(dir) = w.secret_dir.take() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
     // Restore whatever this scenario touched so later scenarios see the
     // original process environment.
     for (key, prior) in w.env_touched.drain(..) {
@@ -268,4 +274,54 @@ async fn cross_key_validation(_w: &mut World) {
         ("worker.port_hi".to_string(), "17000".to_string()),
     ]);
     assert!(skadi_config::validate_cross_key(&good).is_ok());
+}
+
+// ---- secrets from files (C37, SKADI-T-0702) ---------------------------------
+
+#[given(expr = "the secret file {string} holds the line {string}")]
+async fn secret_file(w: &mut World, name: String, value: String) {
+    let dir = w
+        .secret_dir
+        .get_or_insert_with(|| {
+            let d = std::env::temp_dir().join(format!(
+                "skadi-config-bdd-secrets-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        })
+        .clone();
+    std::fs::write(dir.join(name), format!("{value}\n")).unwrap();
+}
+
+#[given(expr = "the environment variable {string} names the secret file {string}")]
+async fn env_names_secret_file(w: &mut World, key: String, name: String) {
+    let dir = w
+        .secret_dir
+        .clone()
+        .unwrap_or_else(|| std::env::temp_dir().join("skadi-config-bdd-no-secrets"));
+    let path = dir.join(name).display().to_string();
+    env_set(w, key, path).await;
+}
+
+#[then(expr = "the boot seeder fails, naming {string}")]
+async fn seeder_fails(w: &mut World, needle: String) {
+    let err = w
+        .seed_error
+        .as_deref()
+        .expect("read_env should have failed");
+    assert!(
+        err.contains(&needle),
+        "error {err:?} does not name {needle:?}"
+    );
+}
+
+#[then(expr = "the error does not contain {string}")]
+async fn error_lacks(w: &mut World, needle: String) {
+    let err = w.seed_error.as_deref().unwrap_or_default();
+    assert!(!err.contains(&needle), "error {err:?} leaks {needle:?}");
 }

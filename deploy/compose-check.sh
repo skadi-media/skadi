@@ -4,7 +4,7 @@
 # Nothing validated the compose files before this: a broken overlay key or a
 # typo'd interpolation surfaced at deploy time, on the machine being deployed to.
 #
-# Renders base and base+lab. Runs from a scratch copy of `deploy/`
+# Renders base, base+lab, and both with the secrets overlay. Runs from a scratch copy of `deploy/`
 # because it writes a placeholder `.env`, and on a machine running the stack the
 # real `deploy/.env` holds live credentials that must not be clobbered.
 #
@@ -50,5 +50,9 @@ render() {
 
 render "base"      ".env.example"                     -f docker-compose.yml
 render "base+lab"  ".env.example .env.lab"            -f docker-compose.yml -f docker-compose.lab.yml
+# Secrets-from-files overlay (SKADI-T-0702). `config` does not need the secret
+# files to exist, so no placeholders are written.
+render "base+secrets"     ".env.example"              -f docker-compose.yml -f docker-compose.secrets.yml
+render "base+secrets+lab" ".env.example .env.lab"     -f docker-compose.yml -f docker-compose.secrets.yml -f docker-compose.lab.yml
 
 exit "$fail"

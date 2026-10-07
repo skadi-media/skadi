@@ -63,6 +63,7 @@ built-in **skadi** downloader (no host, no secret) — see the walkthrough.
 cd deploy
 cp .env.example .env
 $EDITOR .env           # fill in VPN creds, generate the three secrets
+                       # (or put them in files: see "Secrets from files")
 docker compose up -d --build
 ```
 
@@ -71,7 +72,7 @@ Generate the secrets the file asks for:
 ```sh
 openssl rand -hex 16   # POSTGRES_PASSWORD
 openssl rand -hex 24   # SKADI_API_TOKEN
-openssl rand -hex 32   # SKADI_SECRET_KEY  (changing later orphans stored creds)
+openssl rand -hex 32   # SKADI_SECRET_KEY  (to change it later, see "Rotating SKADI_SECRET_KEY")
 ```
 
 Watch it come up (gluetun must be healthy before the worker/flaresolverr start):
@@ -103,6 +104,138 @@ never `down -v`, and prune the builder cache after image builds:
 ```sh
 angreal deploy up | down | status | logs [-s svc] | build [-s svc] | redeploy [-s svc]
 ```
+
+## Secrets from files
+
+By default the stack reads its secrets from `deploy/.env` as plain environment
+variables. Docker shows those values in `docker inspect`, and every process in
+the container can read them. The opt-in overlay `docker-compose.secrets.yml`
+reads them from files instead (SKADI-T-0702). The containers then get only the
+path of each file:
+
+| File in `deploy/secrets/` | Replaces in `.env` | Read by |
+|---|---|---|
+| `postgres_password` | `POSTGRES_PASSWORD` | postgres, postgres-backup, skadi, worker |
+| `skadi_api_token` | `SKADI_API_TOKEN` | skadi |
+| `skadi_secret_key` | `SKADI_SECRET_KEY` | skadi |
+| `tailscale_authkey` | `TAILSCALE_AUTHKEY` | tailscale (only with the `tailscale` profile) |
+
+`deploy/secrets/` is in `.gitignore`. Do not commit it.
+
+**How the overlay is applied.** `angreal deploy …` applies it when the directory
+`deploy/secrets/` exists, and not otherwise. With plain compose, give both files:
+`docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d`.
+A deploy without `deploy/secrets/` does not change.
+
+**The rule in the daemon and the worker.** Every `SKADI_*` variable `X` can also
+be given as `X_FILE`, the path of a file that holds the value. One trailing
+newline is removed. If you set both `X` and `X_FILE`, the process stops with an
+error that names the variable (never the value). It also stops if the file
+cannot be read. The database password can be kept out of the URL:
+`SKADI_DATABASE_URL=postgres://skadi@postgres:5432/skadi` together with
+`SKADI_DATABASE_PASSWORD_FILE=/run/secrets/postgres_password`.
+
+### Migrating an existing `.env`
+
+Do these steps on the host that runs the stack, in `deploy/`.
+
+1. Make the directory, and write each value from `.env` to its file. Do not
+   type the values on the command line:
+
+   ```sh
+   mkdir -m 700 secrets
+   for pair in POSTGRES_PASSWORD:postgres_password SKADI_API_TOKEN:skadi_api_token \
+               SKADI_SECRET_KEY:skadi_secret_key TAILSCALE_AUTHKEY:tailscale_authkey; do
+     var=${pair%%:*}; file=secrets/${pair#*:}
+     sed -n "s/^$var=//p" .env | tail -n 1 > "$file"
+   done
+   chmod 444 secrets/*
+   ```
+
+   The files must be readable by the container users (postgres is uid 999,
+   skadi and the worker are `PUID`). The `700` directory keeps other host users
+   out. A deploy without Tailscale can leave `tailscale_authkey` empty.
+
+2. Check that each file holds one line with the value that you expect
+   (`wc -l secrets/*` shows `1` for each).
+
+3. Recreate the services that read secrets:
+
+   ```sh
+   angreal deploy up        # applies docker-compose.secrets.yml because secrets/ exists
+   ```
+
+4. Check that the values are not in the environment. This command must print
+   nothing:
+
+   ```sh
+   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $(docker compose ps -q) \
+     | grep -E '^(POSTGRES_PASSWORD|PGPASSWORD|SKADI_API_TOKEN|SKADI_SECRET_KEY|TS_AUTHKEY)=' \
+     | grep -v '^TS_AUTHKEY=file:'
+   ```
+
+   (`TS_AUTHKEY=file:…` is a path, not the key.) Then check
+   `curl -s http://127.0.0.1:${SKADI_PORT:-8080}/api/v1/health/ready`.
+
+5. Remove the four values from `.env` (leave the lines empty, or delete them).
+   Keep a copy of the values in your password manager: the files are now the
+   only copy on the host.
+
+   The ops scripts `clear-dead-downloads.py`, `cull-m2ts.py` and
+   `cull-unfixable.py` read `SKADI_API_TOKEN` from `.env` and do not read the
+   files yet. Keep the token in `.env` until they do, or do not run them after
+   step 5.
+
+**Rollback.** Put the values back in `.env`, move `secrets/` out of `deploy/`,
+and run `angreal deploy up`. The stack is then back on plain variables.
+
+### Rotating SKADI_SECRET_KEY
+
+`SKADI_SECRET_KEY` encrypts the secret field of each provider in the database
+(the `credentials` table): indexer API keys, download-client passwords, and
+notifier secrets, with the cardigann tracker logins. It does not encrypt the API
+token or any other setting. A config backup (Settings → Backup) holds these
+fields still encrypted, so a backup needs the key that was current when it was
+made.
+
+To change the key, re-encrypt the stored credentials with `skadi rekey`
+(SKADI-T-0521). You do not have to enter the provider secrets again.
+
+1. Make a database backup first (see "Database backup and restore").
+2. Stop the writers: `docker compose stop skadi skadi-downloader-worker`.
+3. Keep the old key, and put the new key in its place.
+
+   Secret files:
+
+   ```sh
+   cp secrets/skadi_secret_key secrets/skadi_secret_key.old
+   openssl rand -hex 32 > secrets/skadi_secret_key
+   ```
+
+   Plain `.env`: write the old value down, then replace `SKADI_SECRET_KEY` in
+   `.env` with the output of `openssl rand -hex 32`.
+
+4. Re-encrypt, with the old key given as a file so that it is not on the
+   command line:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.secrets.yml run --rm --no-deps \
+     -v "$PWD/secrets/skadi_secret_key.old:/run/secrets/old_key:ro" \
+     -e SKADI_OLD_SECRET_KEY_FILE=/run/secrets/old_key skadi rekey
+   ```
+
+   With a plain `.env`, leave out the second `-f` file, and write the old key
+   to a temporary file for the `-v` mount. (`--old-key <value>` also works, but
+   it puts the key in the shell history.)
+
+   The command prints `rekeyed N credential(s); M already current; K
+   unreadable`. `K` must be `0`. A row that cannot be read with either key is
+   left as it was; run the command again with the correct old key.
+
+5. Start the stack: `angreal deploy up`. The providers load, and the System page
+   shows no "credential could not be read" warnings.
+6. Keep `skadi_secret_key.old` (offline, not in `deploy/`) for as long as you
+   keep backups made before the rotation, then delete it.
 
 ## Verify the kill switch
 
@@ -625,6 +758,10 @@ blocking-pool jobs at worker start (fault injection);
 `deploy/lab/memwatch.sh <container> <secs> <csv>` samples RSS/threads/fds.
 `--from-prod` tags the running prod images as `:lab` instead of building (tag
 BOTH images first, or compose silently starts a full build for the missing one).
+`angreal lab up --secrets` writes `deploy/.lab/secrets/` from `.env.lab` and runs
+the lab with `docker-compose.secrets.yml` (see "Secrets from files"). Every lab
+command applies the overlay while that directory exists; delete it to go back
+to plain variables.
 `angreal lab reset` is destructive (lab volumes + `deploy/.lab/storage`). The
 three `STORAGE_NFS_* not set` warnings every lab command prints are harmless:
 the base file interpolates them before the overlay removes those volumes.

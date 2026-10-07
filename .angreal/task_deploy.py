@@ -21,6 +21,11 @@ deploy = angreal.command_group(
 # `angreal db` test database is safe to wipe.
 DEP_DEPLOY_DIR = os.path.join(cwd, "deploy")
 DEP_COMPOSE_FILE = os.path.join(DEP_DEPLOY_DIR, "docker-compose.yml")
+# Secrets from files (SKADI-T-0702): opt-in. The overlay is applied only when
+# deploy/secrets/ exists, so a deploy that keeps its secrets in deploy/.env runs
+# exactly the compose model it ran before.
+DEP_SECRETS_OVERLAY = os.path.join(DEP_DEPLOY_DIR, "docker-compose.secrets.yml")
+DEP_SECRETS_DIR = os.path.join(DEP_DEPLOY_DIR, "secrets")
 # The READINESS probe, not `/health` (SKADI-T-0475). Bare `/health` is served by
 # the SPA fallback, so it answers 200 the instant the listener binds — before
 # migrations have run or any provider exists — and this gate reported a healthy
@@ -155,6 +160,8 @@ def _DEP_compose_argv(args):
     if os.path.exists(env_file):
         cmd += ["--env-file", env_file]
     cmd += ["-f", DEP_COMPOSE_FILE]
+    if os.path.isdir(DEP_SECRETS_DIR):
+        cmd += ["-f", DEP_SECRETS_OVERLAY]
     return cmd + list(args)
 
 

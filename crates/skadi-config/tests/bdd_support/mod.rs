@@ -16,4 +16,8 @@ pub struct World {
     pub seeded: Vec<(&'static str, String)>,
     /// Env vars this scenario set, restored afterwards (`@serial` only).
     pub env_touched: Vec<(String, Option<String>)>,
+    /// The error `read_env` returned, rendered (C37 secret files).
+    pub seed_error: Option<String>,
+    /// Scratch directory holding this scenario's secret files (C37).
+    pub secret_dir: Option<std::path::PathBuf>,
 }

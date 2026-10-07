@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 async fn async_main() -> anyhow::Result<()> {
     // Resolve config from the shared `config` table (env-seeded), falling back
     // to env/defaults if the table isn't reachable yet (SKADI-T-0103).
-    let cfg = Config::resolve().await;
+    let cfg = Config::resolve().await?;
     tracing::info!(
         worker = %cfg.worker_id,
         download_dir = %cfg.download_dir.display(),

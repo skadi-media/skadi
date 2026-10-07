@@ -86,3 +86,7 @@ clients/skadi-android/build/shots/
 # `git add -A` swept the backup up. Every credential in it was rotated.
 deploy/.env.*
 !deploy/.env.*.example
+
+# Secret files for docker-compose.secrets.yml (SKADI-T-0702). Real credentials —
+# never committed.
+deploy/secrets/

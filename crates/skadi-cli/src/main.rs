@@ -87,7 +87,9 @@ enum Commands {
     /// plaintext rows written while no key was configured.
     ///
     /// Run with the daemon stopped — it reads the database directly. Pass the
-    /// **previous** key as `--old-key`; omit it when the rows are plaintext.
+    /// **previous** key as `--old-key`, or as `SKADI_OLD_SECRET_KEY` /
+    /// `SKADI_OLD_SECRET_KEY_FILE` to keep it off the command line
+    /// (SKADI-T-0702); omit it when the rows are plaintext.
     /// A row readable under neither key is left untouched and reported, because it
     /// may be sealed under a third key you still have.
     Rekey {
@@ -940,11 +942,20 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
 async fn rekey(old_key: Option<&str>) -> anyhow::Result<()> {
     use anyhow::Context as _;
 
+    // `--old-key` wins; else SKADI_OLD_SECRET_KEY[_FILE] (SKADI-T-0702), so a
+    // rotation in a container can mount the old key as a file.
+    let old_key = match old_key {
+        Some(k) => Some(k.to_string()),
+        None => skadi_config::env_or_file("SKADI_OLD_SECRET_KEY")?,
+    };
     let config = skadi_api::Config::from_env().context("load config")?;
     let store = skadi_store::Store::connect(&config.database_url).context("connect store")?;
     store.run_migrations().await.context("run migrations")?;
 
-    let report = store.rekey_credentials(old_key).await.context("rekey")?;
+    let report = store
+        .rekey_credentials(old_key.as_deref())
+        .await
+        .context("rekey")?;
     println!(
         "rekeyed {} credential(s); {} already current; {} unreadable",
         report.rekeyed, report.already_current, report.unreadable

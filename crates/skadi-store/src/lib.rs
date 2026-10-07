@@ -131,10 +131,13 @@ pub struct Store {
 
 impl Store {
     /// Build a [`Store`] from `SKADI_DATABASE_URL` (defaulting to
-    /// [`DEFAULT_DATABASE_URL`]).
+    /// [`DEFAULT_DATABASE_URL`]). The URL may come from `SKADI_DATABASE_URL_FILE`
+    /// and its password from `SKADI_DATABASE_PASSWORD[_FILE]` (SKADI-T-0702,
+    /// [`skadi_config::database_url`]).
     pub fn from_env() -> Result<Self> {
-        let url = std::env::var("SKADI_DATABASE_URL")
-            .unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
+        let url = skadi_config::database_url()
+            .map_err(|e| AppError::Config(e.to_string()))?
+            .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
         Self::connect(&url)
     }
 
@@ -180,7 +183,7 @@ impl Store {
         // `warn_plaintext_credentials` emits it once per process, on the first
         // credential operation that would have used the cipher — which is exactly
         // "the process that needs the key", and only once it actually does.
-        let cipher = crypto::Cipher::from_env();
+        let cipher = crypto::Cipher::from_env()?;
         Ok(Store {
             pool,
             url: Arc::from(url),

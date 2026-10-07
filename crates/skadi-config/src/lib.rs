@@ -33,6 +33,12 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+mod env_file;
+pub use env_file::{
+    DATABASE_PASSWORD_ENV, DATABASE_URL_ENV, EnvError, FILE_SUFFIX, database_url,
+    database_url_with, env_or_file, env_or_file_with, url_password,
+};
+
 /// Prefix every Skadi env var shares.
 pub const ENV_PREFIX: &str = "SKADI_";
 
@@ -825,23 +831,33 @@ pub fn key_from_env(env: &str) -> Option<&'static str> {
 /// Collect every set, non-empty **Tier-1** `SKADI_*` env var as `(key, value)`,
 /// for the boot seeder to upsert into the `config` table. Tier-0 keys are
 /// excluded (their consumers read env directly).
-#[must_use]
-pub fn read_env() -> Vec<(&'static str, String)> {
-    read_from(|name| std::env::var(name).ok())
+///
+/// Each key may come from `SKADI_X_FILE` instead of `SKADI_X` (SKADI-T-0702,
+/// see [`env_or_file`]); setting both, or naming an unreadable file, is an
+/// error rather than a silently skipped key.
+pub fn read_env() -> Result<Vec<(&'static str, String)>, EnvError> {
+    read_from(
+        |name| std::env::var(name).ok(),
+        |p| std::fs::read_to_string(p),
+    )
 }
 
-/// [`read_env`] over an injected getter — keeps the registry-walk logic pure
-/// and unit-testable without touching the process environment.
-fn read_from(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
-    REGISTRY
-        .iter()
-        .filter(|s| s.tier == Tier::Tier1)
-        .filter_map(|s| {
-            get(&env_name(s.key))
-                .filter(|v| !v.is_empty())
-                .map(|v| (s.key, v))
-        })
-        .collect()
+/// [`read_env`] over an injected getter and file reader — keeps the
+/// registry-walk logic pure and unit-testable without touching the process
+/// environment.
+fn read_from(
+    get: impl Fn(&str) -> Option<String>,
+    read: impl Fn(&std::path::Path) -> std::io::Result<String>,
+) -> Result<Vec<(&'static str, String)>, EnvError> {
+    let mut out = Vec::new();
+    for s in REGISTRY.iter().filter(|s| s.tier == Tier::Tier1) {
+        if let Some(v) = env_or_file_with(&env_name(s.key), &get, &read)?
+            && !v.is_empty()
+        {
+            out.push((s.key, v));
+        }
+    }
+    Ok(out)
 }
 
 /// The operational preset, stored under the `mode` config key. Drives the
@@ -1299,7 +1315,7 @@ mod tests {
                 _ => None,
             }
         };
-        let mut got = read_from(env);
+        let mut got = read_from(env, |_| Err(std::io::ErrorKind::NotFound.into())).unwrap();
         got.sort();
         assert_eq!(
             got,
@@ -1307,6 +1323,41 @@ mod tests {
                 ("api_token", "tok".to_string()),
                 ("mode", "testing".to_string())
             ]
+        );
+    }
+
+    /// SKADI-T-0702: a Tier-1 secret may come from `SKADI_X_FILE`, so the API
+    /// token reaches the `config` table without being in the environment.
+    #[test]
+    fn read_from_takes_a_tier1_key_from_its_file_variable() {
+        let env = |name: &str| -> Option<String> {
+            (name == "SKADI_API_TOKEN_FILE").then(|| "/run/secrets/skadi_api_token".to_string())
+        };
+        let read = |p: &std::path::Path| -> std::io::Result<String> {
+            assert_eq!(p, std::path::Path::new("/run/secrets/skadi_api_token"));
+            Ok("tok-from-file\n".into())
+        };
+        assert_eq!(
+            read_from(env, read).unwrap(),
+            vec![("api_token", "tok-from-file".to_string())]
+        );
+    }
+
+    #[test]
+    fn read_from_rejects_a_key_set_both_ways() {
+        let env = |name: &str| -> Option<String> {
+            match name {
+                "SKADI_API_TOKEN" => Some("plain".into()),
+                "SKADI_API_TOKEN_FILE" => Some("/f".into()),
+                _ => None,
+            }
+        };
+        let err = read_from(env, |_| Ok("file".into())).unwrap_err();
+        assert_eq!(
+            err,
+            EnvError::BothSet {
+                name: "SKADI_API_TOKEN".into()
+            }
         );
     }
 }

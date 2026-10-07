@@ -133,8 +133,10 @@ pub fn bps_limit(v: u64) -> Option<u32> {
 }
 
 impl Config {
-    /// Build from env with sane defaults.
-    pub fn from_env() -> Self {
+    /// Build from env with sane defaults. Fails only when the database URL
+    /// cannot be resolved (a secret set both plainly and as `_FILE`, or an
+    /// unreadable `_FILE` — SKADI-T-0702).
+    pub fn from_env() -> anyhow::Result<Self> {
         let download_dir = std::env::var("SKADI_WORKER_DOWNLOAD_DIR")
             .map(PathBuf::from)
             // Default under the single library root's downloads/complete (SKADI-T-0302).
@@ -142,8 +144,7 @@ impl Config {
         let state_dir = std::env::var("SKADI_WORKER_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| download_dir.join(".rqbit-session"));
-        let database_url = std::env::var("SKADI_DATABASE_URL")
-            .unwrap_or_else(|_| skadi_store::DEFAULT_DATABASE_URL.to_string());
+        let database_url = database_url_from_env()?;
         let worker_id =
             std::env::var("SKADI_WORKER_ID").unwrap_or_else(|_| "skadi-worker".to_string());
         let lo: u16 = std::env::var("SKADI_WORKER_PORT_LO")
@@ -189,7 +190,7 @@ impl Config {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0)
         };
-        Config {
+        Ok(Config {
             download_dir,
             state_dir,
             port_range: lo..hi,
@@ -216,7 +217,7 @@ impl Config {
                 &std::env::var("SKADI_WORKER_EXTRA_TRACKERS")
                     .unwrap_or_else(|_| skadi_config::DEFAULT_EXTRA_TRACKERS.to_string()),
             ),
-        }
+        })
     }
 
     /// Build the worker config from a resolved [`ConfigView`](skadi_config::ConfigView)
@@ -275,14 +276,17 @@ impl Config {
     /// daemon — a separate container — seeded the table from a different
     /// environment. Falls back to [`from_env`](Self::from_env) if the table
     /// isn't reachable yet (e.g. the worker started before the daemon migrated).
-    pub async fn resolve() -> Self {
-        let database_url = std::env::var("SKADI_DATABASE_URL")
-            .unwrap_or_else(|_| skadi_store::DEFAULT_DATABASE_URL.to_string());
+    ///
+    /// Fails only when the database URL itself cannot be resolved
+    /// ([`database_url_from_env`]); a bad URL must stop the worker, not fall
+    /// back to the default SQLite file.
+    pub async fn resolve() -> anyhow::Result<Self> {
+        let database_url = database_url_from_env()?;
         let migrate = std::env::var("SKADI_WORKER_MIGRATE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         match Self::resolve_io(database_url, migrate).await {
-            Ok(cfg) => cfg,
+            Ok(cfg) => Ok(cfg),
             Err(e) => {
                 tracing::warn!(error = %e, "config table unavailable; using env/defaults");
                 Self::from_env()
@@ -297,7 +301,7 @@ impl Config {
         }
         // Seed this process's env into the table (env wins) so the worker
         // container's SKADI_WORKER_* values are authoritative.
-        for (key, value) in skadi_config::read_env() {
+        for (key, value) in skadi_config::read_env()? {
             store.set_config(key, &value, ConfigSource::Env).await?;
         }
         let view = skadi_config::ConfigView::from_pairs(
@@ -309,6 +313,15 @@ impl Config {
         );
         Ok(Self::from_view(&view, database_url, migrate)?)
     }
+}
+
+/// `SKADI_DATABASE_URL` (or `_FILE`, with an optional
+/// `SKADI_DATABASE_PASSWORD[_FILE]` spliced in), defaulting to
+/// [`skadi_store::DEFAULT_DATABASE_URL`]. The same resolution the daemon uses
+/// ([`skadi_config::database_url`], SKADI-T-0702).
+pub fn database_url_from_env() -> anyhow::Result<String> {
+    Ok(skadi_config::database_url()?
+        .unwrap_or_else(|| skadi_store::DEFAULT_DATABASE_URL.to_string()))
 }
 
 /// How many torrents librqbit initialises (hash-checks) at once. librqbit's

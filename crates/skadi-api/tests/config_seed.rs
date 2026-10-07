@@ -106,3 +106,68 @@ async fn service_fingerprint_reflects_config_changes() {
     // Stable when nothing changes.
     assert_eq!(service_fingerprint(&store).await.unwrap(), fp1);
 }
+
+/// SKADI-T-0702: the daemon takes its secrets from `X_FILE`, seeds the API
+/// token from the file into the table, refuses `X` and `X_FILE` together, and
+/// adds the file's value to the redaction list.
+#[tokio::test]
+#[serial_test::serial(skadi_env)]
+async fn secrets_come_from_files_and_both_set_is_refused() {
+    let dir = skadi_core::unique_temp_path("secret-files");
+    std::fs::create_dir_all(&dir).unwrap();
+    let token_file = dir.join("skadi_api_token");
+    std::fs::write(&token_file, "tok-from-file-0702\n").unwrap();
+    let pw_file = dir.join("postgres_password");
+    std::fs::write(&pw_file, "pg-pass-0702\n").unwrap();
+    let url = temp_store_url();
+    unsafe {
+        std::env::remove_var("SKADI_API_TOKEN");
+        std::env::set_var("SKADI_API_TOKEN_FILE", &token_file);
+        std::env::set_var("SKADI_DATABASE_URL", &url);
+    }
+
+    let cfg = Config::from_env().unwrap();
+    assert_eq!(cfg.bearer_token.as_deref(), Some("tok-from-file-0702"));
+    assert_eq!(
+        cfg.database_url, url,
+        "a URL without a password is unchanged"
+    );
+    assert_eq!(
+        skadi_api::redact::redact("bearer tok-from-file-0702"),
+        "bearer ***"
+    );
+
+    let store = Store::connect(&url).unwrap();
+    store.run_migrations().await.unwrap();
+    seed_config_from_env(&store).await.unwrap();
+    let tok = store.get_config("api_token").await.unwrap().unwrap();
+    assert_eq!(tok.value, "tok-from-file-0702");
+
+    // A password file is spliced into a postgres URL that names a user.
+    unsafe {
+        std::env::set_var("SKADI_DATABASE_URL", "postgres://skadi@db:5432/skadi");
+        std::env::set_var("SKADI_DATABASE_PASSWORD_FILE", &pw_file);
+    }
+    let cfg = Config::from_env().unwrap();
+    assert_eq!(
+        cfg.database_url,
+        "postgres://skadi:pg-pass-0702@db:5432/skadi"
+    );
+    assert_eq!(skadi_api::redact::redact("pw=pg-pass-0702"), "pw=***");
+
+    // Both set: a config error naming the variable, never the value.
+    unsafe { std::env::set_var("SKADI_API_TOKEN", "tok-plain-0702") };
+    let err = Config::from_env().unwrap_err().to_string();
+    assert!(err.contains("SKADI_API_TOKEN_FILE"), "{err}");
+    assert!(!err.contains("tok-plain-0702") && !err.contains("tok-from-file-0702"));
+    let err = seed_config_from_env(&store).await.unwrap_err().to_string();
+    assert!(err.contains("SKADI_API_TOKEN_FILE"), "{err}");
+
+    unsafe {
+        std::env::remove_var("SKADI_API_TOKEN");
+        std::env::remove_var("SKADI_API_TOKEN_FILE");
+        std::env::remove_var("SKADI_DATABASE_URL");
+        std::env::remove_var("SKADI_DATABASE_PASSWORD_FILE");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

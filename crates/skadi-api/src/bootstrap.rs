@@ -317,7 +317,8 @@ pub async fn ensure_default_providers(store: &Store) -> Result<()> {
 /// the number of keys seeded. Tier-0 keys are excluded by `read_env`.
 pub async fn seed_config_from_env(store: &Store) -> Result<usize> {
     let mut n = 0;
-    for (key, value) in skadi_config::read_env() {
+    let seeded = skadi_config::read_env().map_err(|e| AppError::Config(e.to_string()))?;
+    for (key, value) in seeded {
         store.set_config(key, &value, ConfigSource::Env).await?;
         n += 1;
     }

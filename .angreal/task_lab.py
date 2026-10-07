@@ -24,6 +24,18 @@ LAB_COMPOSE_FILES = [
 ]
 LAB_ENV_FILE = os.path.join(deploy_dir, ".env.lab")
 LAB_STORAGE_DIR = os.path.join(deploy_dir, ".lab", "storage")
+# Secrets from files (SKADI-T-0702): when this directory exists, every lab
+# command adds deploy/docker-compose.secrets.yml (between the base file and the
+# lab overlay) with SKADI_SECRETS_DIR pointed here. `angreal lab up --secrets`
+# writes it; deleting it returns the lab to plain env vars.
+LAB_SECRETS_DIR = os.path.join(deploy_dir, ".lab", "secrets")
+LAB_SECRETS_OVERLAY = os.path.join(deploy_dir, "docker-compose.secrets.yml")
+# secret file -> the .env.lab variable it is written from
+LAB_SECRET_FILES = {
+    "postgres_password": "POSTGRES_PASSWORD",
+    "skadi_api_token": "SKADI_API_TOKEN",
+    "skadi_secret_key": "SKADI_SECRET_KEY",
+}
 # Readiness, not liveness — see SKADI-T-0475: bare `/health` is the SPA fallback
 # and answers 200 as soon as the socket binds.
 LAB_HEALTH_URL = "http://127.0.0.1:8091/api/v1/health/ready"
@@ -46,10 +58,42 @@ def _LAB_compose(args):
         "a module-level name collision (SKADI-T-0533)"
     )
     cmd = ["docker", "compose", "-p", LAB_PROJECT, "--env-file", LAB_ENV_FILE]
-    for f in LAB_COMPOSE_FILES:
+    files = list(LAB_COMPOSE_FILES)
+    env = _LAB_build_env()
+    if os.path.isdir(LAB_SECRETS_DIR):
+        # Before the lab overlay, which must stay last (assert above).
+        files.insert(len(files) - 1, LAB_SECRETS_OVERLAY)
+        env["SKADI_SECRETS_DIR"] = LAB_SECRETS_DIR
+    for f in files:
         cmd += ["-f", f]
     # cwd=deploy so the base file's relative `./apk` mount resolves like prod.
-    return subprocess.run(cmd + args, cwd=deploy_dir, env=_LAB_build_env())
+    return subprocess.run(cmd + args, cwd=deploy_dir, env=env)
+
+
+def _LAB_write_secrets():
+    """Write deploy/.lab/secrets/* from the values in deploy/.env.lab, so the
+    lab runs the secrets-from-files overlay with the same credentials its
+    postgres volume was initialised with. Existing files are kept."""
+    values = {}
+    with open(LAB_ENV_FILE) as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                values[k.strip()] = v.strip()
+    os.makedirs(LAB_SECRETS_DIR, mode=0o700, exist_ok=True)
+    for name, var in LAB_SECRET_FILES.items():
+        path = os.path.join(LAB_SECRETS_DIR, name)
+        if os.path.exists(path):
+            continue
+        if not values.get(var):
+            print(f"{var} is empty in deploy/.env.lab; cannot write {path}", file=sys.stderr)
+            raise SystemExit(1)
+        with open(path, "w") as fh:
+            fh.write(values[var] + "\n")
+        # World-readable so any container uid can read the bind mount; the
+        # 0700 directory keeps other host users out.
+        os.chmod(path, 0o444)
 
 
 def _LAB_build_env():
@@ -145,6 +189,9 @@ def _LAB_missing_images():
           `:local` builds when prod is down) as `:lab` instead of building
           (fast way to get a lab copy of what is running).
         - The worker has NO kill switch here — local/synthetic torrents only.
+        - `--secrets` writes deploy/.lab/secrets/ and runs the secrets-from-files
+          overlay (SKADI-T-0702). While that directory exists every lab command
+          uses the overlay; delete it to return to plain env vars.
         """,
         risk_level="safe",
     ),
@@ -157,8 +204,14 @@ def _LAB_missing_images():
     name="from_prod", long="from-prod", takes_value=False, is_flag=True,
     help="tag the images prod runs (else the :local builds) as :lab instead of building",
 )
-def up(build=False, from_prod=False):
+@angreal.argument(
+    name="secrets", long="secrets", takes_value=False, is_flag=True,
+    help="run with secrets from files: write deploy/.lab/secrets/ from .env.lab and apply the secrets overlay",
+)
+def up(build=False, from_prod=False, secrets=False):
     _LAB_ensure_storage()
+    if secrets:
+        _LAB_write_secrets()
     if from_prod:
         for img in LAB_IMAGES:
             src = _LAB_prod_image(img)

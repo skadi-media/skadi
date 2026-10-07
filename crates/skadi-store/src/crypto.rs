@@ -32,13 +32,16 @@ impl Cipher {
         Self { key }
     }
 
-    /// Build a cipher from `SKADI_SECRET_KEY` if it is set and non-empty.
-    #[must_use]
-    pub fn from_env() -> Option<Self> {
-        match std::env::var(SECRET_KEY_ENV) {
-            Ok(secret) if !secret.is_empty() => Some(Self::from_secret(&secret)),
-            _ => None,
-        }
+    /// Build a cipher from `SKADI_SECRET_KEY` (or the file `SKADI_SECRET_KEY_FILE`
+    /// names, SKADI-T-0702) if it is set and non-empty. Both set, or an
+    /// unreadable file, is a config error — never a silent fall back to
+    /// plaintext.
+    pub fn from_env() -> Result<Option<Self>> {
+        let secret = skadi_config::env_or_file(SECRET_KEY_ENV)
+            .map_err(|e| AppError::Config(e.to_string()))?;
+        Ok(secret
+            .filter(|s| !s.is_empty())
+            .map(|s| Self::from_secret(&s)))
     }
 
     fn aead(&self) -> ChaCha20Poly1305 {

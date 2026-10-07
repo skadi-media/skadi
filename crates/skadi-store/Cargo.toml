@@ -10,6 +10,8 @@ description = "Storage layer for Skadi: dual-backend (SQLite/Postgres) store and
 
 [dependencies]
 skadi-core = { workspace = true }
+# `SKADI_X_FILE` resolution for the database URL and the secret key (SKADI-T-0702).
+skadi-config = { workspace = true }
 diesel = { workspace = true }
 diesel-dualdb = { workspace = true }
 diesel_migrations = { workspace = true }

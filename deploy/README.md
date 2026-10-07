@@ -156,9 +156,10 @@ the watchdog's gentle cadence lets it cool while still probing. A genuinely flag
 recovers fastest by **regenerating the NordLynx key** at nordaccount.com (manual /
 WireGuard config) and updating `WIREGUARD_PRIVATE_KEY` + `WIREGUARD_ADDRESSES` in
 `.env`. Optionally broaden the server pool (drop `SERVER_CITIES`, keep
-`SERVER_COUNTRIES`). gluetun's `:v3` tag floats; the `iptables-nft` change in v3.39+
-breaks WireGuard on **old kernels** (e.g. Synology 4.4.x) — if you run on such a host,
-pin `qmcgaw/gluetun:v3.38.0` (modern kernels are unaffected).
+`SERVER_COUNTRIES`). gluetun is pinned to `v3.41.3` (see "Image pins"); the
+`iptables-nft` change in v3.39+ breaks WireGuard on **old kernels** (e.g. Synology
+4.4.x) — if you run on such a host, pin `qmcgaw/gluetun:v3.38.0` with its digest
+instead (modern kernels are unaffected).
 
 ## First-run walkthrough
 
@@ -371,10 +372,14 @@ gluetun, so the tunnel is not re-established (see "VPN stability").
 Keep the outgoing image before a risky redeploy and swap tags back if needed:
 
 ```sh
-docker tag skadi-downloader-worker:latest skadi-downloader-worker:prev   # before the redeploy
-docker tag skadi-downloader-worker:prev   skadi-downloader-worker:latest # to roll back
+docker tag skadi-downloader-worker:local skadi-downloader-worker:prev    # before the redeploy
+docker tag skadi-downloader-worker:prev  skadi-downloader-worker:local   # to roll back
 docker compose up -d --force-recreate skadi-downloader-worker            # from deploy/
 ```
+
+(`:local` is the tag of an unpinned, locally built stack. A stack that runs the
+published images rolls back by setting the previous release in `SKADI_IMAGE_TAG`,
+then `angreal deploy pull && angreal deploy up`.)
 
 The worker's librqbit session + fastresume files live under the library
 (`downloads/.rqbit-session`), not in the image or a volume, so a rollback
@@ -456,6 +461,47 @@ hang, check `docker system df` first.
 **Read-only smoke checklist.** `deploy/lab/ops-smoke.sh` (proposal; defaults to
 the lab project) inspects running state, healthchecks, OOM kills, log caps,
 ghost networks and `/api/v1/health` without changing anything.
+
+## Image pins
+
+Every third-party image in `docker-compose.yml` is pinned to a version tag plus
+its multi-arch index digest, so a `pull` cannot change what runs. Set
+2026-10-07 to what prod was already running:
+
+| service | image | tag |
+|---|---|---|
+| gluetun | `qmcgaw/gluetun` | `v3.41.3` |
+| flaresolverr | `ghcr.io/flaresolverr/flaresolverr` | `v3.4.6` |
+| postgres, postgres-backup | `postgres` | `16.15` (a 16.15 build of 2026-08-25) |
+| vpn-watchdog | `docker` | `29.8.0-cli` |
+| autoheal | `willfarrell/autoheal` | `1.2.0` |
+| tailscale | `tailscale/tailscale` | `v1.102.5` |
+| tailscale-http-redirect | `nginx` | `1.27.5-alpine` |
+
+gluetun's earlier leak (see "Memory budget and fuses") was on the floating `v3`
+tag, release not recorded; keep the 512m fuse whatever you pin.
+
+**skadi and the worker** are this repo's images. With `SKADI_IMAGE_TAG` unset they
+are built from the checkout as `skadi:local` / `skadi-downloader-worker:local`
+(development). To run a published release, set both `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/`
+and `SKADI_IMAGE_TAG=<release>` (e.g. `0.1.4`) in `.env`; never follow `latest`.
+A pinned stack rolls forward with `angreal deploy pull` + `angreal deploy up`,
+not `redeploy` (which builds; see SKADI-T-0641).
+
+### Bumping an image pin
+
+1. Pick the release tag (read the project's release notes; for gluetun, check
+   the issue tracker for memory reports first).
+2. Get its multi-arch index digest — the `Digest:` line, not a per-platform one:
+   `docker buildx imagetools inspect qmcgaw/gluetun:v3.42.0`
+3. Write both into the `image:` line: `qmcgaw/gluetun:v3.42.0@sha256:<digest>`.
+   For postgres, change `postgres` and `postgres-backup` together and stay on
+   major 16 (a new major needs a dump and restore).
+4. `angreal check compose`, then try it on the lab stack (`angreal lab up`)
+   before prod. Bring prod over with `docker compose pull <service>` +
+   `up -d <service>` — and never casually for gluetun (NordVPN rate limit; a
+   recreated gluetun also needs its namespace mates recreated).
+5. Update the table above.
 
 ## Memory budget and fuses
 

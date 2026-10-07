@@ -331,7 +331,8 @@ def logs(service=None):
         - Needs `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in `deploy/.env`.
           Without it the compose file names local images and there is nothing
           to pull — the task says so rather than silently doing nothing.
-        - `SKADI_IMAGE_TAG` picks a version (`0.1.0`); it defaults to `latest`.
+        - Set `SKADI_IMAGE_TAG` to a release (`0.1.4`) too: unset it is
+          `local`, the tag of a local build, which no registry has.
         - Follow with `angreal deploy up` (or `redeploy`) to actually roll it
           out. Pulling on its own changes nothing that is running.
         """,
@@ -341,10 +342,13 @@ def logs(service=None):
 def pull():
     env_file = os.path.join(cwd, "deploy", ".env")
     prefix = ""
+    tag = ""
     if os.path.exists(env_file):
         for line in open(env_file):
             if line.startswith("SKADI_IMAGE_PREFIX="):
                 prefix = line.split("=", 1)[1].strip()
+            elif line.startswith("SKADI_IMAGE_TAG="):
+                tag = line.split("=", 1)[1].strip()
     if not prefix:
         print(
             "SKADI_IMAGE_PREFIX is not set in deploy/.env, so the compose file\n"
@@ -358,7 +362,18 @@ def pull():
         # so the explanation above was written and then swallowed — the task
         # just failed silently, which is the opposite of the point.
         raise SystemExit(1)
-    print(f"pulling {prefix}skadi and {prefix}skadi-downloader-worker …", flush=True)
+    if not tag:
+        # Unset, the compose default is `local` (SKADI-T-0701): the name of a
+        # local build, which the registry does not have. Say so rather than
+        # letting the pull fail with "manifest unknown".
+        print(
+            "SKADI_IMAGE_TAG is not set in deploy/.env. With a registry prefix,\n"
+            "pin a published release, e.g.\n\n"
+            "  SKADI_IMAGE_TAG=0.1.4\n",
+            flush=True,
+        )
+        raise SystemExit(1)
+    print(f"pulling {prefix}skadi:{tag} and {prefix}skadi-downloader-worker:{tag} …", flush=True)
     raise SystemExit(_DEP_compose(["pull", "skadi", "skadi-downloader-worker"]).returncode)
 
 

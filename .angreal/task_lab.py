@@ -94,6 +94,21 @@ def _LAB_wait_healthy(timeout_s=120):
 LAB_IMAGES = ("skadi", "skadi-downloader-worker")
 
 
+def _LAB_prod_image(img):
+    """The image the prod container of `img` runs; else the local build.
+
+    Prod may run a published image (`ghcr.io/skadi-media/skadi:0.1.4`) or a
+    local build (`skadi:local`, SKADI-T-0701), so read it off the container.
+    `docker inspect` is read-only: prod is not touched.
+    """
+    r = subprocess.run(
+        ["docker", "inspect", "-f", "{{.Config.Image}}", f"skadi-{img}-1"],
+        capture_output=True, text=True,
+    )
+    ref = r.stdout.strip()
+    return ref if r.returncode == 0 and ref else f"{img}:local"
+
+
 def _LAB_image_exists(ref):
     return (
         subprocess.run(
@@ -126,8 +141,9 @@ def _LAB_missing_images():
 
         ## Notes
         - Builds the `:lab` images if missing; `--build` forces a rebuild;
-          `--from-prod` tags the current prod `:latest` images as `:lab` instead
-          of building (fast way to get a lab copy of what is running).
+          `--from-prod` tags the images the prod containers run (or the local
+          `:local` builds when prod is down) as `:lab` instead of building
+          (fast way to get a lab copy of what is running).
         - The worker has NO kill switch here — local/synthetic torrents only.
         """,
         risk_level="safe",
@@ -139,13 +155,13 @@ def _LAB_missing_images():
 )
 @angreal.argument(
     name="from_prod", long="from-prod", takes_value=False, is_flag=True,
-    help="tag prod's skadi:latest / skadi-downloader-worker:latest as :lab instead of building",
+    help="tag the images prod runs (else the :local builds) as :lab instead of building",
 )
 def up(build=False, from_prod=False):
     _LAB_ensure_storage()
     if from_prod:
         for img in LAB_IMAGES:
-            src = f"{img}:latest"
+            src = _LAB_prod_image(img)
             if not _LAB_image_exists(src):
                 # Say which image and how to get it, rather than letting `docker
                 # tag` fail with a bare "No such image" (SKADI-T-0490).
@@ -170,7 +186,7 @@ def up(build=False, from_prod=False):
                 "missing lab image(s): " + ", ".join(f"{m}:lab" for m in missing) + "\n"
                 "compose would build them from source now (several minutes). Either:\n"
                 "  angreal lab up --build       # build them, deliberately\n"
-                "  angreal lab up --from-prod   # retag the existing :latest images",
+                "  angreal lab up --from-prod   # retag the images prod runs",
                 file=sys.stderr,
             )
             raise SystemExit(1)

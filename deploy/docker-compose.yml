@@ -66,6 +66,19 @@
 
 name: skadi
 
+# ## Image pins (SKADI-T-0701)
+#
+# Every third-party image is pinned to a version tag AND the multi-arch index
+# digest (`image: name:1.2.3@sha256:…`). With a digest, Docker ignores the tag:
+# a `pull` can no longer swap what runs under a live stack, and the tag is kept
+# only so a human can read which version it is. The pins are the versions prod
+# ran when they were set (2026-10-07), so pinning changed nothing. To bump one,
+# see "Bumping an image pin" in deploy/README.md.
+#
+# skadi + the worker are this repo's own images: an unset SKADI_IMAGE_TAG builds
+# them from this checkout as `:local`; a stack that runs the published images
+# sets SKADI_IMAGE_PREFIX and a release SKADI_IMAGE_TAG in .env (see .env.example).
+
 # Bound EVERY container's logs. Without this the default json-file driver grows a
 # per-container log forever; gluetun's control-server access log (polled by the
 # vpn-watchdog every few seconds) grew to ~15 GB, filled the Docker VM disk, and
@@ -80,7 +93,11 @@ x-logging: &default-logging
 services:
   gluetun:
     logging: *default-logging
-    image: qmcgaw/gluetun:v3
+    # Pinned to v3.41.3, the release prod ran when pins were set. The leak below
+    # happened on the floating `v3` tag; which release was not recorded, so keep
+    # the fuse whatever the pin. v3.39+ breaks WireGuard on old kernels — see
+    # deploy/README.md.
+    image: qmcgaw/gluetun:v3.41.3@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027
     # Hard RAM ceiling. gluetun's `v3` rolling tag has memory leaks — it ballooned
     # to ~15 GB and starved the Docker VM, so postgres/the daemon couldn't service
     # queries (health still answered — it needs no DB — but /books hung): the other
@@ -168,7 +185,7 @@ services:
   # reaches it at http://gluetun:8191 (gluetun opens FIREWALL_INPUT_PORTS=8191).
   flaresolverr:
     logging: *default-logging
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.4.6@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e
     # Memory fuse (SKADI-T-0566), sized from measurement: this container was
     # observed at 846 MiB steady and 993 MiB mid-solve on 2026-09-10, so a 512m
     # cap would OOM it on sight and turn a headroom fix into an outage.
@@ -211,7 +228,7 @@ services:
   # gluetun (gluetun churn trips NordVPN auth rate-limiting; see ops notes).
   autoheal:
     logging: *default-logging
-    image: willfarrell/autoheal:1.2.0
+    image: willfarrell/autoheal:1.2.0@sha256:31f580ef0279eaced5b38d631b08c474d70d8403c1c2fdd6ddcf2e879d5f3f7c
     restart: unless-stopped
     environment:
       AUTOHEAL_CONTAINER_LABEL: autoheal
@@ -230,7 +247,7 @@ services:
   # on the fast Docker-healthcheck cadence and can't do the netns dependency cascade.)
   vpn-watchdog:
     logging: *default-logging
-    image: docker:cli
+    image: docker:29.8.0-cli@sha256:eccaacfeed644c7de222ff047483568cb988dde95476fbaaf10ea2d04921bb66
     restart: unless-stopped
     network_mode: none
     volumes:
@@ -280,7 +297,8 @@ services:
   # Pairs with SKADI-T-0463's app-level config backup — this is the raw DB half.
   postgres-backup:
     logging: *default-logging
-    image: postgres:16
+    # Same pin as `postgres` (pg_dump must match the server major); bump both.
+    image: postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     depends_on:
       postgres:
         condition: service_healthy
@@ -341,7 +359,9 @@ services:
 
   postgres:
     logging: *default-logging
-    image: postgres:16
+    # Stays on major 16 (a major bump needs a dump/restore). Same pin as
+    # `postgres-backup`; bump both.
+    image: postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-skadi}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -372,14 +392,16 @@ services:
       # and `angreal lab` set it from git; unset, the daemon reports `unknown`.
       args:
         SKADI_BUILD_COMMIT: ${SKADI_BUILD_COMMIT:-}
-    # Local build by default — unchanged behaviour, and what development wants.
+    # Local build by default — what development wants. The default tag is
+    # `local` (SKADI-T-0701), not `latest`: it names a build of this checkout,
+    # never something a registry could move under the stack.
     #
-    # Set `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in deploy/.env to run the
-    # images CI publishes instead, then `docker compose pull && up -d`
-    # (or `angreal deploy pull`). The `-` form rather than `:-` is deliberate:
-    # an explicitly *empty* prefix means "local images", which is a thing an
-    # operator may want to say.
-    image: ${SKADI_IMAGE_PREFIX-}skadi:${SKADI_IMAGE_TAG:-latest}
+    # Set `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` AND a release
+    # `SKADI_IMAGE_TAG` (e.g. 0.1.4) in deploy/.env to run the images CI
+    # publishes instead, then `angreal deploy pull && angreal deploy up`.
+    # The `-` form rather than `:-` is deliberate: an explicitly *empty* prefix
+    # means "local images", which is a thing an operator may want to say.
+    image: ${SKADI_IMAGE_PREFIX-}skadi:${SKADI_IMAGE_TAG:-local}
     # PUID/PGID for LSIO parity (SKADI-T-0487). Only the removed qbittorrent
     # service honoured these; skadi and the worker ran as the image's fixed uid.
     #
@@ -499,7 +521,7 @@ services:
   # single-use; disable key expiry for the node in the admin console.
   tailscale:
     logging: *default-logging
-    image: tailscale/tailscale:latest
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     profiles: ["tailscale"]
     network_mode: "service:skadi"
     depends_on:
@@ -558,7 +580,7 @@ services:
   # on loopback and it is never exposed on the host or the LAN.
   tailscale-http-redirect:
     logging: *default-logging
-    image: nginx:1.27-alpine
+    image: nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     profiles: ["tailscale"]
     network_mode: "service:skadi"
     depends_on:
@@ -578,7 +600,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/worker.Dockerfile
-    image: ${SKADI_IMAGE_PREFIX-}skadi-downloader-worker:${SKADI_IMAGE_TAG:-latest}
+    # Same tag rule as `skadi` above.
+    image: ${SKADI_IMAGE_PREFIX-}skadi-downloader-worker:${SKADI_IMAGE_TAG:-local}
     # Memory fuse (SKADI-T-0566). SKADI-T-0392 was a worker that reached ~9 GB;
     # the fix landed and it now sits at ~535 MiB with a full 371-torrent library
     # (measured 2026-09-10). The cap is not tuning — it turns a regression of that

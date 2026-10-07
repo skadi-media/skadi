@@ -22,8 +22,8 @@
 #   - local storage: the NFS `storage` / `nas-library` volumes are replaced by a
 #     bind mount of deploy/.lab/storage (gitignored), so nothing reaches the NAS
 #     and hash-checks run at local disk speed.
-#   - `:lab` image tags, so a lab build never replaces the `:latest` images the
-#     prod containers are (re)created from.
+#   - `:lab` image tags, so a lab build never replaces the images the prod
+#     containers are (re)created from (`:local` or a pinned release).
 #   - own subnet / postgres IP / host port (deploy/.env.lab): 172.29.0.0/16,
 #     172.29.0.5, http://127.0.0.1:8091.
 

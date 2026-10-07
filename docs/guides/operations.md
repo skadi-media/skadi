@@ -74,8 +74,8 @@ stack has a gentle watchdog for that. Migrations run at daemon start.
 Keep the previous image before a risky redeploy, then swap tags back:
 
 ```sh
-docker tag skadi-downloader-worker:latest skadi-downloader-worker:prev   # before
-docker tag skadi-downloader-worker:prev skadi-downloader-worker:latest   # rollback
+docker tag skadi-downloader-worker:local skadi-downloader-worker:prev    # before
+docker tag skadi-downloader-worker:prev skadi-downloader-worker:local    # rollback
 cd deploy && docker compose up -d --force-recreate skadi-downloader-worker
 ```
 

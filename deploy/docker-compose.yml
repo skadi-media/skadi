@@ -169,12 +169,9 @@ services:
   flaresolverr:
     logging: *default-logging
     image: ghcr.io/flaresolverr/flaresolverr:latest
-    # Memory fuse (SKADI-T-0566). **Sized from measurement, not copied from
-    # docker-compose.nas.yml**, which uses 512m: this container was observed at
-    # 846 MiB steady and 993 MiB mid-solve on 2026-09-10, so the NAS value would
-    # OOM it on sight and turn a headroom fix into an outage. (That the NAS runs
-    # it that tight is very likely why Chromium dies mid-solve there —
-    # SKADI-T-0488.)
+    # Memory fuse (SKADI-T-0566), sized from measurement: this container was
+    # observed at 846 MiB steady and 993 MiB mid-solve on 2026-09-10, so a 512m
+    # cap would OOM it on sight and turn a headroom fix into an outage.
     #
     # Chromium has no reason to grow without bound; if this fuse ever blows, the
     # solver is leaking and that is worth knowing rather than absorbing into a
@@ -198,9 +195,8 @@ services:
     # it `Exited (128)`. A solve takes tens of seconds under load, so the check
     # was measuring queue depth and calling it death.
     #
-    # These are the NAS overlay's values, which were relaxed for exactly this
-    # reason on cut-over day and have held since. The base file having the tight
-    # ones meant the two environments failed differently under the same load.
+    # These values were relaxed for exactly this reason on 2026-09-06 and have
+    # held since.
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -m 25 -o /dev/null http://$$(hostname -i):8191/ || exit 1"]
       interval: 60s
@@ -376,13 +372,12 @@ services:
     #
     # Set `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/` in deploy/.env to run the
     # images CI publishes instead, then `docker compose pull && up -d`
-    # (or `angreal deploy pull`). The `-` form rather than `:-` is deliberate,
-    # matching the NAS overlay: an explicitly *empty* prefix means "local
-    # images", which is a thing an operator may want to say.
+    # (or `angreal deploy pull`). The `-` form rather than `:-` is deliberate:
+    # an explicitly *empty* prefix means "local images", which is a thing an
+    # operator may want to say.
     image: ${SKADI_IMAGE_PREFIX-}skadi:${SKADI_IMAGE_TAG:-latest}
     # PUID/PGID for LSIO parity (SKADI-T-0487). Only the removed qbittorrent
-    # service honoured these; skadi and the worker ran as the image's fixed uid,
-    # which is why the NAS overlay had to override `user:` by hand.
+    # service honoured these; skadi and the worker ran as the image's fixed uid.
     #
     # The defaults are **exactly what the image already produced** — uid 1000,
     # gid 999 from `useradd --system` — so this changes nothing for an existing
@@ -391,7 +386,7 @@ services:
     # owned by the old one.
     #
     # Overriding PUID also needs a writable HOME: /home/skadi belongs to uid 1000
-    # in the image. Set `HOME=/tmp` alongside it, as docker-compose.nas.yml does.
+    # in the image. Set `HOME=/tmp` alongside it.
     user: "${PUID:-1000}:${PGID:-999}"
     depends_on:
       postgres:
@@ -521,7 +516,7 @@ services:
       #
       # Declared here rather than left to a one-off `tailscale serve` command:
       # that persists in the state volume and so survives restarts, but a fresh
-      # deploy or the NAS would silently not have it.
+      # deploy would silently not have it.
       #
       # **serve, not funnel** — `tailscale serve status` must keep saying
       # "tailnet only". Funnel would publish this to the public internet.

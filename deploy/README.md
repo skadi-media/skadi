@@ -425,11 +425,11 @@ Containers with `restart: unless-stopped` return on their own.
 decoding torrent" (the challenge page was handed over as a `.torrent`) or every
 search on those indexers returns nothing. The solver is down: check
 `flaresolverr` in `docker compose ps`. autoheal restarts it when its healthcheck
-fails; the vpn-watchdog restarts it together with gluetun. On a slow CPU a
-burst of solves can exceed the base file's 8 s check timeout and get it killed
-mid-solve — the NAS overlay relaxes the check for that reason.
+fails; the vpn-watchdog restarts it together with gluetun. A burst of solves
+takes tens of seconds, which is why its healthcheck allows a 30 s timeout at a
+60 s interval: a tighter check got it killed mid-solve.
 
-**Database backup / restore (manual — there is no scheduled backup yet).**
+**Database backup / restore.** The `postgres-backup` sidecar dumps daily; a manual dump and restore:
 
 ```sh
 docker compose exec -T postgres pg_dump -U ${POSTGRES_USER:-skadi} -Fc ${POSTGRES_DB:-skadi} \
@@ -465,11 +465,9 @@ Postgres out of memory.
 
 Two things worth knowing before changing these:
 
-- **FlareSolverr's cap is deliberately higher than the NAS overlay's 512m.** It
-  was sized from measurement on this host, where the container is routinely
-  around 850 MiB; 512m would OOM it on sight. That the NAS runs it that tight is
-  very likely why Chromium dies mid-solve there.
-- **The worker's 1g is the same fuse the NAS overlay documents.** A previous
+- **FlareSolverr's cap was sized from measurement on this host**, where the
+  container is routinely around 850 MiB; a 512m cap would OOM it on sight.
+- **The worker's 1g is a fuse.** A previous
   leak was a worker that reached ~9 GB; at ~535 MiB with a full library there is
   roughly 2× headroom, which is enough to ride out a burst and tight enough that
   a genuine regression trips it rather than hiding.
@@ -477,8 +475,7 @@ Two things worth knowing before changing these:
 `skadi` (~600 MiB) and `postgres` (~250 MiB) are uncapped in the base file.
 Neither has misbehaved, and Postgres in particular manages its own buffers — a
 container cap set below what its `shared_buffers` expects converts a tuning
-mistake into an OOM kill. The NAS overlay caps them because 4 GB forces the
-question.
+mistake into an OOM kill.
 
 Applying a change to these means recreating the affected containers, so do it
 when the worker is not mid-restore.
@@ -577,96 +574,7 @@ BOTH images first, or compose silently starts a full build for the missing one).
 three `STORAGE_NFS_* not set` warnings every lab command prints are harmless:
 the base file interpolates them before the overlay removes those volumes.
 `deploy/lab/features/*.feature` hold the (unexecuted) Gherkin description of the
-expected ops behaviour for this stack, the lab and the NAS overlay.
-
-## Running on the NAS (Synology DS1821+)
-
-The stack can run ON the storage host instead of reaching it over NFS. Same
-compose file plus `docker-compose.nas.yml` (local bind mounts, `mem_limit`s,
-per-service `user:`) and `.env.nas` (ssh target, paths, uid — copy from
-`.env.nas.example`; gitignored). The NAS never builds. Images come from one of
-two places:
-
-- **GHCR (the overlay's default)** — `.github/workflows/images.yml` publishes
-  multi-arch (`linux/amd64` + `linux/arm64`) builds of `main` as
-  `ghcr.io/skadi-media/<image>:latest`; `angreal nas pull` then
-  `angreal nas up --recreate` rolls one out. It is a **reusable workflow called
-  from `ci.yml`**, gated on the whole test suite, so nothing publishes until the
-  tests are green — and it never runs on `pull_request`, so a fork cannot
-  publish. Both packages are public, so pulling needs no credentials — no
-  `docker login` on the NAS. If a pull ever does 401, fetch a token from
-  `https://ghcr.io/token?scope=repository:skadi-media/<image>:pull` first: a
-  bare manifest GET returns 401 even for a public image, so that alone is
-  not evidence the package went private.
-- **Local `:nas` images** — `angreal nas build` (`docker build --platform
-  linux/amd64` on this machine, ~11 min for the worker, 20–30 min for the
-  daemon) and `angreal nas push --images` (`docker save | ssh | docker load`).
-  Select with `NAS_IMAGE_PREFIX=` (empty) and `NAS_IMAGE_TAG=nas` in `.env.nas`.
-  This is the path the 2026-09-06 cut-over used.
-
-The NAS's Container Manager ships an older compose (2.20 was observed), which
-is why the overlay redefines the named volumes instead of using
-`!reset`/`!override`, and why `angreal nas push` renders one fully interpolated
-`compose.yaml` on the NAS (the file Container Manager's Project imports).
-
-```sh
-# DSM, once (operator):
-#   Package Center → Container Manager
-#   Control Panel → Task Scheduler → Triggered task, root, on boot-up:
-#       insmod /lib/modules/tun.ko           # gluetun needs /dev/net/tun
-#   sudo without a password for docker (DSM has no docker group; the socket is root-only):
-#     echo "<ssh-user> ALL=(root) NOPASSWD: /usr/local/bin/docker" | sudo tee /etc/sudoers.d/skadi-docker
-#   (NAS_DOCKER in .env.nas is "sudo /usr/local/bin/docker" — non-interactive ssh has no /usr/local/bin on PATH)
-#   passwordless ssh from this machine (see NAS_SSH_* in .env.nas)
-
-angreal nas build            # docker build --platform linux/amd64 → skadi:nas, skadi-downloader-worker:nas
-angreal nas push [--images]  # rsync compose sources + apk/, write .env (= .env + .env.nas), render compose.yaml; --images ships the :nas images
-angreal nas pull             # fetch newer GHCR images (no restart)
-angreal nas up [--recreate] [-s svc]   # compose up -d on the NAS, wait for http://<nas>:<SKADI_PORT>/health
-angreal nas status | logs | psql -c '…' | down
-```
-
-**Cut-over from the Mac (the runbook that was executed 2026-09-06):**
-
-1. Freeze the Mac: `docker stop -t 5 skadi-skadi-1 skadi-skadi-downloader-worker-1`,
-   then stop gluetun, flaresolverr and the vpn-watchdog there too. Only **one
-   worker** may run at a time — its state dir is the shared library
-   (`skadi/downloads/.rqbit-session`), and a second worker restores the live
-   session and starts writing pieces. Only **one VPN session** at a time — a
-   second connection on the same key gets throttled, and the NAS gluetun must be
-   started fresh, not bounced for tests.
-2. `angreal nas up --service postgres`, then `angreal nas db-migrate`
-   (`pg_dump -Fc` from the Mac → `pg_restore --clean` into the NAS; the Mac DB is
-   only read; the dump is kept under `deploy/.nas-dump/`). Verify row counts with
-   `angreal nas psql -c 'select status,count(*) from downloads group by 1'`.
-3. `angreal nas up`. Expect `restored=N fastresume=true` and one hash check only
-   for torrents without a `.bitv` (seconds each on local disk).
-4. Repoint clients (`SKADI_ADVERTISE_HOST` is the NAS in `.env.nas`).
-
-**Rollback to the Mac.** If the NAS has taken writes since the cut-over,
-`angreal nas down` alone loses them. The executed rollback was: stop everything
-on the NAS except postgres → on the NAS, `docker compose exec -T postgres pg_dump -U skadi -Fc skadi > nas.dump`
-→ `pg_restore --clean --if-exists` of that dump into the Mac's postgres → `angreal nas down` →
-start the Mac containers from `deploy/` (`docker compose up -d`). The Mac's
-pre-move dump remains the backup of record. Leave the NAS data dirs and `:nas`
-images in place for the next attempt.
-
-Compose 2.20 gotcha on the NAS: `up --no-deps` on a `network_mode:
-service:gluetun` service fails with "network service:gluetun not found" —
-recreate without `--no-deps` (running deps are left alone).
-
-Memory (4 GB box, DSM ~1 GB): skadi ~340 MiB, postgres ~230, flaresolverr ~330,
-gluetun ≤512, worker ~150 idle / ~1 GiB under 38 concurrent downloads (measured
-on cut-over day) — caps are in the overlay (`NAS_MEM_*`); the
-worker's limit is a fuse, not a budget, and was raised to 1.5 GiB under load.
-`SKADI_WORKER_MAX_ACTIVE=8` is now set in `.env.nas.example` —
-without it the worker runs whatever the hunter queues. The cap is also enforced
-over a session restore, which librqbit otherwise brings up in full regardless of
-the setting. flaresolverr's healthcheck is relaxed in
-the overlay (30 s timeout / 60 s interval / 180 s start) because the base file's
-8 s timeout got Chromium killed mid-solve on this CPU. Files are written as the
-ssh user (`NAS_PUID:NAS_PGID`); the share is mode 777 so that coexists with the
-NFS-era owner.
+expected ops behaviour for this stack and the lab.
 
 ## Note
 

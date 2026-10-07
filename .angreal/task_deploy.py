@@ -120,8 +120,8 @@ def _DEP_compose(args):
     # root, compose looks for `.env` beside the *compose file* only when
     # --project-directory says so; without it the deploy stack came up with
     # STORAGE_NFS_ADDR/PATH unset (warned, not failed), which silently maps the
-    # NFS volume to an empty address. `angreal nas` and `angreal lab` already
-    # pass --env-file; this brings prod in line.
+    # NFS volume to an empty address. `angreal lab` already
+    # passes --env-file; this brings prod in line.
     #
     # --project-directory also anchors the base file's relative `./apk` mount, so
     # it resolves the same whichever directory the command is invoked from.

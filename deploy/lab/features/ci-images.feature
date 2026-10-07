@@ -42,4 +42,4 @@ Feature: CI, images and release workflows
   @gap
   Scenario: Compose files are validated somewhere
     # Nothing in CI runs `docker compose config` on base + overlays.
-    Then a CI step renders base, base+lab and base+nas with placeholder env and fails on errors
+    Then a CI step renders base and base+lab with placeholder env and fails on errors

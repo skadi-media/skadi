@@ -3,7 +3,7 @@
 **Status: documentation only — NOT executed by any runner.**
 
 These `.feature` files describe the *expected* operational behaviour of the
-deploy stack (`deploy/docker-compose.yml` + overlays, the `angreal deploy|lab|nas`
+deploy stack (`deploy/docker-compose.yml` + overlays, the `angreal deploy|lab`
 task groups, CI/GHCR). They follow the BDD conventions
 (`@C37`, exactly one of `@passing | @gap | @bug`, `@lab` for scenarios that need
 a Docker host) but there is no cucumber runner for ops in this pass: nothing under

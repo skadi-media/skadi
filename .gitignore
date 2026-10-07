@@ -69,9 +69,9 @@ deploy/apk/
 
 # Lab stack local storage (angreal lab, SKADI-T-0393)
 deploy/.lab/
-# NAS site config (angreal nas): host, user, uid — personal, keep out of git
+# ssh access to the storage host (remux-on-nas.py, cull-unfixable.py) — personal
 deploy/.env.nas
-# DB dumps from `angreal nas db-migrate`
+# DB dumps from the 2026-09-06 NAS cut-over (real library data)
 deploy/.nas-dump/
 # Pre-deploy database dumps (SKADI-T-0481). Real library data — never committed.
 deploy/.backups/

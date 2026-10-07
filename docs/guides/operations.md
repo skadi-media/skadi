@@ -3,14 +3,13 @@
 The production appliance is the Docker Compose stack under
 [`deploy/`](https://github.com/skadi-media/skadi/tree/main/deploy); its README
 is the authoritative setup guide. This page is the short day-2 runbook — what
-to run, what to expect, and how to recover — for the three ways the stack is
+to run, what to expect, and how to recover — for the two ways the stack is
 driven:
 
 | Entry point | Compose project | What it is |
 |---|---|---|
 | `angreal deploy …` | `skadi` | production on the Docker Desktop host, library over NFS |
 | `angreal lab …` | `skadi-lab` | isolated second copy for experiments — no VPN, local storage |
-| `angreal nas …` | `skadi` *on the NAS* | the same stack on the storage host (`docker-compose.nas.yml`) |
 
 `angreal tree` lists every command. Nothing in `angreal lab` can address the
 production project; `angreal lab reset` is the only `down -v` that exists.
@@ -93,10 +92,9 @@ it down — use the GUI if that happens. Containers with
 
 **Cloudflare-fronted indexers all failing ("error decoding torrent").** The
 solver is down: check `flaresolverr` in `docker compose ps`; autoheal restarts
-it when its healthcheck fails, the vpn-watchdog restarts it with gluetun. Slow
-CPUs need the relaxed healthcheck the NAS overlay uses.
+it when its healthcheck fails, the vpn-watchdog restarts it with gluetun.
 
-**Database backup / restore (manual).**
+**Database backup / restore.**
 
 ```sh
 cd deploy
@@ -104,7 +102,8 @@ docker compose exec -T postgres pg_dump -U skadi -Fc skadi > skadi-$(date -u +%Y
 docker compose exec -T postgres pg_restore -U skadi -d skadi --clean --if-exists --no-owner < skadi-<stamp>.dump
 ```
 
-Stop the daemon and worker before a restore. There is no scheduled backup yet.
+Stop the daemon and worker before a restore. The `postgres-backup` sidecar also
+takes a verified daily dump and keeps the newest 14.
 
 ## Lab
 
@@ -114,13 +113,3 @@ Stop the daemon and worker before a restore. There is no scheduled backup yet.
 `STORAGE_NFS_* not set` warnings it prints are harmless — the overlay replaces
 those volumes. See the lab section of `deploy/README.md` for the synthetic
 library and the memory knobs.
-
-## NAS
-
-`angreal nas push` syncs the compose sources and a merged `.env`, renders one
-self-contained `compose.yaml` on the NAS, and (`--images`) ships locally built
-`linux/amd64` images. `angreal nas up|status|logs|psql|down` drive it over ssh.
-Rules learned on cut-over day: exactly **one worker** (the session dir is
-shared) and **one VPN session** at a time, and a rollback that happens after the
-NAS has taken writes must dump the NAS database back into the Mac first — see
-`deploy/README.md` "Running on the NAS".

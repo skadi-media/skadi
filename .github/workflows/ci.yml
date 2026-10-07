@@ -190,7 +190,7 @@ jobs:
         run: df -h /
 
   compose-config:
-    name: Compose renders (base, +lab, +nas)
+    name: Compose renders (base, +lab)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # No `needs: check` — this validates YAML and env interpolation, not Rust, so

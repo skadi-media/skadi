@@ -37,7 +37,7 @@ Feature: Deploy stack bring-up and smoke checks
 
   @bug
   Scenario: The angreal health gate must probe the API, not the SPA fallback
-    # .angreal/task_deploy.py:22, task_lab.py:26, task_nas.py:93 poll `/health`;
+    # .angreal/task_deploy.py:22, task_lab.py:26 poll `/health`;
     # the daemon only serves `/api/v1/health` (skadi-api/src/serve.rs:22) and
     # answers ANY unknown GET with index.html + 200 (skadi-api/src/assets.rs:36).
     Given the skadi container is listening but the database is unreachable
@@ -61,6 +61,6 @@ Feature: Deploy stack bring-up and smoke checks
   @gap
   Scenario: LSIO PUID/PGID parity for skadi and the worker
     # PUID/PGID/TZ in .env reach no service any more: skadi and the worker run
-    # as the image's fixed uid 1000 unless the NAS overlay sets `user:`.
+    # as the image's fixed uid 1000.
     Given PUID/PGID are set in .env
     Then files written by skadi and the worker are owned by PUID:PGID

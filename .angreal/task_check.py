@@ -101,7 +101,7 @@ def all_checks():
 @check()
 @angreal.command(
     name="compose",
-    about="render base, base+lab and base+nas compose with placeholder env",
+    about="render base and base+lab compose with placeholder env",
 )
 def compose_check():
     """Validate the deploy compose files (SKADI-T-0485).

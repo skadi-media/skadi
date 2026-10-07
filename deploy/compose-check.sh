@@ -4,7 +4,7 @@
 # Nothing validated the compose files before this: a broken overlay key or a
 # typo'd interpolation surfaced at deploy time, on the machine being deployed to.
 #
-# Renders base, base+lab and base+nas. Runs from a scratch copy of `deploy/`
+# Renders base and base+lab. Runs from a scratch copy of `deploy/`
 # because it writes a placeholder `.env`, and on a machine running the stack the
 # real `deploy/.env` holds live credentials that must not be clobbered.
 #
@@ -18,7 +18,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 cp "$repo_deploy"/docker-compose*.yml "$work/"
-cp "$repo_deploy"/.env.example "$repo_deploy"/.env.lab "$repo_deploy"/.env.nas.example "$work/"
+cp "$repo_deploy"/.env.example "$repo_deploy"/.env.lab "$work/"
 
 fail=0
 
@@ -26,9 +26,7 @@ render() {
   local name="$1" envs="$2"
   shift 2
   # Later definitions win, which is how the overlays' env files are meant to
-  # stack. Concatenation rather than repeated `--env-file` because the NAS runs
-  # compose 2.20, which cannot stack them — the check should exercise the shape
-  # that actually ships.
+  # stack.
   local paths=""
   for e in $envs; do paths="$paths $work/$e"; done
   # shellcheck disable=SC2086
@@ -52,6 +50,5 @@ render() {
 
 render "base"      ".env.example"                     -f docker-compose.yml
 render "base+lab"  ".env.example .env.lab"            -f docker-compose.yml -f docker-compose.lab.yml
-render "base+nas"  ".env.example .env.nas.example"    -f docker-compose.yml -f docker-compose.nas.yml
 
 exit "$fail"

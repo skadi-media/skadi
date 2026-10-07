@@ -664,3 +664,164 @@ fn book_id_parses_from_uuid_string() {
     let id = BookId::from(u);
     assert_eq!(id.to_string(), u.to_string());
 }
+
+// --- bulk (SKADI-T-0696) ---
+
+/// A book under `root` with one file in `status` (its `file` set when imported).
+async fn seed_book(store: &Store, asin: &str, root: &str, status: AcquisitionStatus) -> String {
+    use skadi_audiobooks::{Book, BookFile};
+    let book = Book::new(
+        skadi_core::ExternalIds {
+            asin: Some(skadi_core::AsinId(asin.into())),
+            ..Default::default()
+        },
+        format!("Book {asin}"),
+        skadi_core::ProfileId::new(),
+        skadi_core::RootFolder::new(root),
+    );
+    store.upsert_book(&book).await.unwrap();
+    let mut file = BookFile::missing(book.id);
+    if let AcquisitionStatus::Imported { file: f, .. } = &status {
+        file.file = Some(f.clone());
+    }
+    file.status = status;
+    store.upsert_book_file(&file).await.unwrap();
+    book.id.to_string()
+}
+
+fn imported_at(path: std::path::PathBuf) -> AcquisitionStatus {
+    AcquisitionStatus::Imported {
+        file: skadi_core::FileRef { path },
+        quality: skadi_core::QualityId::new(),
+        score: 0,
+        at: chrono::Utc::now(),
+    }
+}
+
+async fn bulk(h: &Harness, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    call(h.http.routes(), "POST", "/books/bulk", Some(body)).await
+}
+
+#[tokio::test]
+async fn bulk_unmonitors_and_monitors_many_books_in_one_request() {
+    let h = harness().await;
+    let mut ids = Vec::new();
+    for n in 0..20 {
+        ids.push(
+            seed_book(
+                &h.store,
+                &format!("B{n:09}"),
+                "/library/audiobook",
+                AcquisitionStatus::Missing,
+            )
+            .await,
+        );
+    }
+    let (s, report) = bulk(&h, json!({ "ids": ids, "action": "unmonitor" })).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"].as_array().unwrap().len(), 20);
+    let (_, unmon) = call(h.http.routes(), "GET", "/books?monitored=false", None).await;
+    assert_eq!(unmon.as_array().unwrap().len(), 20);
+
+    let ghost = BookId::new().to_string();
+    let (s, report) = bulk(&h, json!({ "ids": [ids[0], ghost], "action": "monitor" })).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"], json!([ids[0]]));
+    assert_eq!(report["not_found"], json!([ghost]));
+}
+
+#[tokio::test]
+async fn bulk_refuses_a_malformed_request() {
+    let h = harness().await;
+    for body in [
+        json!({ "ids": [], "action": "monitor" }),
+        json!({ "ids": ["x"], "action": "search" }),
+        json!({ "ids": [BookId::new().to_string()], "action": "search", "delete_files": true }),
+    ] {
+        let (s, got) = bulk(&h, body.clone()).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body} → {got}");
+    }
+}
+
+#[tokio::test]
+async fn bulk_search_starts_runs_for_missing_files_only() {
+    let h = harness().await;
+    let missing = seed_book(
+        &h.store,
+        "B000000001",
+        "/library/audiobook",
+        AcquisitionStatus::Missing,
+    )
+    .await;
+    let owned = seed_book(
+        &h.store,
+        "B000000002",
+        "/library/audiobook",
+        imported_at("/library/audiobook/x.m4b".into()),
+    )
+    .await;
+    let busy = seed_book(
+        &h.store,
+        "B000000003",
+        "/library/audiobook",
+        AcquisitionStatus::Searching {
+            since: chrono::Utc::now(),
+            attempts: 1,
+        },
+    )
+    .await;
+    let body = json!({ "ids": [missing, owned, busy], "action": "search" });
+    let (s, got) = bulk(&h, body.clone()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{got}");
+    assert_eq!(got["error"], "domain_disabled");
+
+    h.store.set_enabled("audiobooks", true).await.unwrap();
+    let (s, report) = bulk(&h, body).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["searches_started"], 1);
+    assert_eq!(report["done"], json!([missing]));
+    assert_eq!(report["skipped"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn bulk_delete_removes_rows_and_only_asked_for_files() {
+    let h = harness().await;
+    let root = std::env::temp_dir().join(format!("skadi-ab-bulk-{}", uuid::Uuid::new_v4()));
+    let mut files = Vec::new();
+    let mut ids = Vec::new();
+    for (asin, name) in [("B000000011", "One"), ("B000000012", "Two")] {
+        let dir = root.join("Author").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("book.m4b");
+        std::fs::write(&f, b"audio").unwrap();
+        ids.push(
+            seed_book(
+                &h.store,
+                asin,
+                root.to_str().unwrap(),
+                imported_at(f.clone()),
+            )
+            .await,
+        );
+        files.push(f);
+    }
+    let (s, report) = bulk(
+        &h,
+        json!({ "ids": [ids[0]], "action": "delete", "delete_files": true }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert!(!files[0].exists(), "the book file went");
+    assert!(
+        !root.join("Author/One").exists(),
+        "the emptied folder is pruned"
+    );
+    assert!(root.join("Author").exists(), "a folder still in use stays");
+
+    let (s, report) = bulk(&h, json!({ "ids": [ids[1]], "action": "delete" })).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert!(files[1].exists(), "no delete_files → the file stays");
+    let (_, left) = call(h.http.routes(), "GET", "/books", None).await;
+    assert_eq!(left.as_array().unwrap().len(), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

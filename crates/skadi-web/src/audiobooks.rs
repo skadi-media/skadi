@@ -16,6 +16,7 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
 use crate::library_toolbar::{
     AUDIOBOOKS_SORT_STORAGE, BOOK_SORT_KEYS, LibCounts, LibraryToolbar, chip_matches, sort_items,
     stored_sort,
@@ -690,6 +691,27 @@ pub fn AudiobooksPage() -> impl IntoView {
             })
             .collect::<Vec<_>>()
     };
+    // Multi-select + bulk bar (SKADI-T-0696), admin only, on the flat wall
+    // only: the clusters have their own order and collapse, so "select all"
+    // would act on tiles the operator cannot see.
+    let sel = Selection::new();
+    let flat_shown = move || {
+        let mut bs = filtered();
+        sort_items(&mut bs, sort.get());
+        bs
+    };
+    let visible_ids =
+        Signal::derive(move || flat_shown().into_iter().map(|b| b.id).collect::<Vec<_>>());
+    let on_bulk_done = Callback::new(
+        move |(action, report): (api::BulkAction, api::BulkReport)| {
+            books.update(|bs| apply_report(bs, action, &report));
+        },
+    );
+    Effect::new(move |_| {
+        if organize.get() != "none" {
+            sel.exit();
+        }
+    });
     // The wall: a flat poster-grid, or collapsible author/series clusters.
     let grid = move || {
         let bs = filtered();
@@ -779,7 +801,9 @@ pub fn AudiobooksPage() -> impl IntoView {
                 let mut bs = bs;
                 sort_items(&mut bs, sort.get());
                 view! {
-                    <div class="poster-grid">{bs.into_iter().map(cover_tile).collect_view()}</div>
+                    <div class="poster-grid">
+                        {bs.into_iter().map(|b| cover_tile_in(b, Some(sel))).collect_view()}
+                    </div>
                 }
                 .into_any()
             }
@@ -843,6 +867,17 @@ pub fn AudiobooksPage() -> impl IntoView {
                         {org_chip("series", "Series")}
                     </div>
                 }
+                // Reactive inside: the slot renders once, and the role (and the
+                // organize mode) resolve later.
+                bulk=move || view! { {move || (is_admin_view() && organize.get() == "none").then(|| view! {
+                    <BulkBar
+                        sel=sel
+                        visible=visible_ids
+                        collection="books"
+                        noun=crate::library_select::BOOKS
+                        on_done=on_bulk_done
+                    />
+                })} }
             />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || books.get().is_empty().then(|| view! { <p class="muted">"No audiobooks yet — add one with + Add media."</p> })}
@@ -871,10 +906,26 @@ pub fn audiobook_lib_status(b: &api::Book) -> &'static str {
 /// One 2:3 cover tile in the audiobook library wall: BOOK tag + status dot, title/
 /// byline over a scrim, dashed "+" when wanted; opens the full-page detail.
 fn cover_tile(b: api::Book) -> AnyView {
+    cover_tile_in(b, None)
+}
+
+/// [`cover_tile`] on the flat wall, where select mode (SKADI-T-0696) makes a
+/// click toggle the tile instead of opening it.
+fn cover_tile_in(b: api::Book, sel: Option<Selection>) -> AnyView {
     let id = b.id.clone();
     // Open the full-page detail (the drawer was dropped).
     let nav = use_navigate();
-    let on_open = move |_| nav(&format!("/audiobooks/{id}"), Default::default());
+    let on_open = move |_| match sel {
+        Some(s) if s.mode.get_untracked() => s.toggle(&id),
+        _ => nav(&format!("/audiobooks/{id}"), Default::default()),
+    };
+    let base = if b.monitored {
+        "poster-tile book"
+    } else {
+        "poster-tile book unmonitored"
+    };
+    let class = tile_class(base, sel, b.id.clone());
+    let check = tile_check(sel, b.id.clone());
     let status = audiobook_lib_status(&b);
     let dot = match status {
         "owned" => "owned",
@@ -887,12 +938,13 @@ fn cover_tile(b: api::Book) -> AnyView {
     let byline = b.authors.join(", ");
 
     view! {
-        <div class="poster-tile book" on:click=on_open>
+        <div class=class on:click=on_open>
             <div class="poster-img book-cover">
                 {match cover {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
                     None => view! { <div class="poster-ph">{title.clone()}</div> }.into_any(),
                 }}
+                {check}
                 {(status != "owned")
                     .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
                 {wanted.then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}

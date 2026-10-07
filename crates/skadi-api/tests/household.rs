@@ -904,3 +904,85 @@ async fn only_the_admin_can_act_on_an_activity_row() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+/// SKADI-T-0696: the library bulk endpoints are the admin's alone. A kid,
+/// member or contributor is refused each at the gate, including the
+/// contributor, whose `POST /movies` (add) and `…/acquire` (search) do pass —
+/// `/movies/bulk` must not ride on either. Admin short-circuits `path_allowed`,
+/// so only these roles can show a hole; the admin reaches the handler.
+///
+/// The bulk handlers live in the domain crates, which skadi-api cannot depend
+/// on, so a stand-in router serves the same three paths behind the real gate
+/// (an unrouted path answers 404 before the gate runs, which would prove
+/// nothing).
+#[tokio::test]
+async fn only_the_admin_can_run_a_library_bulk_action() {
+    use axum::routing::post;
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let reached = || async { axum::Json(serde_json::json!({"reached": true})) };
+    let domains = axum::Router::new()
+        .route("/movies/bulk", post(reached))
+        .route("/series/bulk", post(reached))
+        .route("/books/bulk", post(reached));
+    let app = skadi_api::build_app(state.clone(), vec![domains]);
+    let send = |uri: &str, token: &str, body: &serde_json::Value| {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let app = app.clone();
+        async move {
+            let res = app.oneshot(req).await.unwrap();
+            let status = res.status();
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default(),
+            )
+        }
+    };
+    let routes = [
+        "/api/v1/movies/bulk",
+        "/api/v1/series/bulk",
+        "/api/v1/books/bulk",
+    ];
+    let id = "11111111-1111-1111-1111-111111111111";
+    let bodies = [
+        serde_json::json!({"ids": [id], "action": "unmonitor"}),
+        serde_json::json!({"ids": [id], "action": "search"}),
+        serde_json::json!({"ids": [id], "action": "delete", "delete_files": true}),
+    ];
+    for (name, role) in [("Kai", "kid"), ("Mo", "member"), ("Cy", "contributor")] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            Some("operator-token"),
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        let tok = created["token"].as_str().unwrap().to_string();
+        for uri in routes {
+            for body in &bodies {
+                let (st, got) = send(uri, &tok, body).await;
+                assert_eq!(
+                    st,
+                    StatusCode::FORBIDDEN,
+                    "POST {uri} {body} as {role}: {got}"
+                );
+                assert_eq!(got["message"], "not allowed on this account");
+            }
+        }
+    }
+    for uri in routes {
+        let (st, got) = send(uri, "operator-token", &bodies[2]).await;
+        assert_eq!(st, StatusCode::OK, "POST {uri} as admin: {got}");
+        assert_eq!(got["reached"], true);
+    }
+}

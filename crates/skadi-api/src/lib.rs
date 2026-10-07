@@ -14,6 +14,7 @@ pub mod auth;
 pub mod backup;
 pub mod blocklist;
 pub mod bootstrap;
+pub mod bulk;
 pub mod calendar;
 pub mod config;
 pub mod config_api;

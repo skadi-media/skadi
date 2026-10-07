@@ -19,6 +19,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use skadi_api::bulk::{BulkAction, BulkOutcome, BulkReport, BulkRequest};
 use skadi_api::{ApiError, HttpModule, LibraryEditionDto, LibraryItemDto, LibraryProvider};
 use skadi_core::{
     AcquisitionStatus, AppError, EpisodeId, MediaKind, ProfileId, QualityId, RootFolder, SeasonId,
@@ -67,6 +68,8 @@ impl HttpModule for TelevisionHttp {
             .route("/series", get(list_series).post(create_series))
             // Static `/series/lookup` before `/series/{id}`.
             .route("/series/lookup", get(lookup_series))
+            // One request for a selection on the wall (SKADI-T-0696).
+            .route("/series/bulk", post(bulk_series))
             .route(
                 "/series/{id}",
                 get(get_series).patch(patch_series).delete(delete_series),
@@ -492,7 +495,7 @@ async fn get_series(
     Ok(Json(series))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct PatchSeries {
     monitored: Option<bool>,
     /// Quality profile id. Mirrors `PatchMovie` (SKADI-T-0607): an old show
@@ -511,7 +514,17 @@ async fn patch_series(
     Json(req): Json<PatchSeries>,
 ) -> Result<impl IntoResponse, ApiError> {
     let id: SeriesId = parse_id(&id, "series")?;
-    let mut series = repo(&http)
+    Ok(Json(apply_patch(&http, id, req).await?))
+}
+
+/// The one PATCH path, shared by `PATCH /series/{id}` and the bulk
+/// monitor/unmonitor (SKADI-T-0696). 404 when the series is not there.
+async fn apply_patch(
+    http: &TelevisionHttp,
+    id: SeriesId,
+    req: PatchSeries,
+) -> Result<Series, ApiError> {
+    let mut series = repo(http)
         .get_series(id)
         .await?
         .ok_or_else(|| ApiError(AppError::NotFound(format!("series {id} not found"))))?;
@@ -535,7 +548,7 @@ async fn patch_series(
         changed = true;
     }
     if changed {
-        repo(&http).upsert_series(&series).await?;
+        repo(http).upsert_series(&series).await?;
     }
     if let Some(tags) = req.tags {
         use skadi_store::ItemTagRepo;
@@ -543,7 +556,7 @@ async fn patch_series(
             .set_tags("series", &series.id.0.to_string(), &tags)
             .await?;
     }
-    Ok(Json(series))
+    Ok(series)
 }
 
 /// Delete options (SKADI-T-0316): `?delete_files=true` also removes every imported episode
@@ -560,13 +573,29 @@ async fn delete_series(
     axum::extract::Query(opts): axum::extract::Query<DeleteOpts>,
 ) -> Result<impl IntoResponse, ApiError> {
     let id: SeriesId = parse_id(&id, "series")?;
-    let Some(series) = repo(&http).get_series(id).await? else {
+    if !delete_one(&http, id, opts.delete_files).await? {
         return Err(ApiError(AppError::NotFound(format!(
             "series {id} not found"
         ))));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The one delete path, shared by `DELETE /series/{id}` and the bulk delete
+/// (SKADI-T-0696). With `delete_files`, removes the files the episodes record
+/// as imported (those exact paths, nothing else) and prunes the emptied
+/// folders up to the series' root, never past it. Returns `false` when the
+/// series is not there.
+async fn delete_one(
+    http: &TelevisionHttp,
+    id: SeriesId,
+    delete_files: bool,
+) -> Result<bool, ApiError> {
+    let Some(series) = repo(http).get_series(id).await? else {
+        return Ok(false);
     };
     // Remove every imported episode file + prune empty folders first (SKADI-T-0316).
-    if opts.delete_files {
+    if delete_files {
         let paths: Vec<std::path::PathBuf> = series
             .episodes
             .iter()
@@ -590,8 +619,70 @@ async fn delete_series(
         use skadi_store::ItemTagRepo;
         let _ = http.store.clear_item("series", &id.0.to_string()).await;
     }
-    repo(&http).delete_series(id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    repo(http).delete_series(id).await?;
+    Ok(true)
+}
+
+/// `POST /series/bulk` (SKADI-T-0696): apply one action to many series in one
+/// request. Each id goes through the single-item path (`apply_patch`,
+/// `start_episode_acquire`, `delete_one`), so a bulk action cannot do what the
+/// single route would not.
+async fn bulk_series(
+    State(http): State<TelevisionHttp>,
+    skadi_api::error::ApiJson(req): skadi_api::error::ApiJson<BulkRequest>,
+) -> Result<Response, ApiError> {
+    let ids: Vec<(String, SeriesId)> = req.parsed_ids()?;
+    if req.action == BulkAction::Search && !domain_enabled(&http).await? {
+        return Ok(domain_disabled_response());
+    }
+    let mut report = BulkReport::new(req.action, ids.len());
+    for (raw, id) in ids {
+        let outcome = match req.action {
+            BulkAction::Monitor | BulkAction::Unmonitor => {
+                let patch = PatchSeries {
+                    monitored: Some(req.action == BulkAction::Monitor),
+                    ..PatchSeries::default()
+                };
+                apply_patch(&http, id, patch)
+                    .await
+                    .map(|_| BulkOutcome::Done)
+            }
+            BulkAction::Search => search_series(&http, id).await,
+            BulkAction::Delete => delete_one(&http, id, req.delete_files).await.map(|found| {
+                if found {
+                    BulkOutcome::Done
+                } else {
+                    BulkOutcome::NotFound
+                }
+            }),
+        };
+        report.record(raw, outcome);
+    }
+    Ok(Json(report).into_response())
+}
+
+/// Search one series now: start the manual acquire for each monitored episode
+/// that has aired, is not imported and is not already in flight. Unaired and
+/// unmonitored episodes are left alone: a search for them finds nothing, or
+/// fetches what the operator chose not to want.
+async fn search_series(http: &TelevisionHttp, id: SeriesId) -> Result<BulkOutcome, ApiError> {
+    let Some(series) = repo(http).get_series(id).await? else {
+        return Ok(BulkOutcome::NotFound);
+    };
+    let today = chrono::Utc::now().date_naive();
+    let mut started = 0;
+    for episode in &series.episodes {
+        if !episode.monitored
+            || !episode.has_aired_or_undated(today, false)
+            || matches!(episode.status, AcquisitionStatus::Imported { .. })
+        {
+            continue;
+        }
+        if start_episode_acquire(http, &series, episode) {
+            started += 1;
+        }
+    }
+    Ok(BulkOutcome::Searched(started))
 }
 
 #[derive(Deserialize)]
@@ -1551,7 +1642,32 @@ async fn acquire_episode(
         .await?
         .ok_or_else(|| ApiError(AppError::NotFound(format!("series {series_id} not found"))))?;
     let episode = episode_of(&http, series_id, episode_id).await?;
+    if !start_episode_acquire(&http, &series, &episode) {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "already_in_flight",
+                "message": "an acquire run for this episode is already in progress"
+            })),
+        )
+            .into_response());
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "run_id": eid, "accepted": true })),
+    )
+        .into_response())
+}
 
+/// The manual acquire for one episode, shared by `POST …/acquire` and the bulk
+/// search (SKADI-T-0696). Returns `false` (and starts nothing) when a fresh run
+/// is already working the episode.
+fn start_episode_acquire(
+    http: &TelevisionHttp,
+    series: &Series,
+    episode: &crate::episode::Episode,
+) -> bool {
+    let episode_id = episode.id;
     // In-flight guard, with the same staleness escape hatch movies uses
     // (SKADI-T-0112): a daemon crash leaves an episode wedged in a non-terminal
     // state with no live run, and without the grace window a manual acquire
@@ -1566,14 +1682,7 @@ async fn acquire_episode(
     let fresh = (chrono::Utc::now() - episode.updated_at)
         < chrono::Duration::seconds(skadi_hunter::STALE_ACQUIRE_GRACE.as_secs() as i64);
     if in_flight && fresh {
-        return Ok((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "already_in_flight",
-                "message": "an acquire run for this episode is already in progress"
-            })),
-        )
-            .into_response());
+        return false;
     }
     if in_flight {
         tracing::warn!(
@@ -1582,18 +1691,14 @@ async fn acquire_episode(
         );
     }
 
-    let seed = crate::wanted::episode_seed(&series, &episode);
+    let seed = crate::wanted::episode_seed(series, episode);
     let runner = http.runner.clone();
     tokio::spawn(async move {
         if let Err(e) = skadi_hunter::start_acquire(&runner, seed).await {
             tracing::warn!(error = %e, "manual episode acquire failed to start");
         }
     });
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "run_id": eid, "accepted": true })),
-    )
-        .into_response())
+    true
 }
 
 /// `POST /series/{id}/episodes/{eid}/reset` — force a wedged episode back to

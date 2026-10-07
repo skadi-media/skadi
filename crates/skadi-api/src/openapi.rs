@@ -570,6 +570,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     ("DELETE", "/movies/{id}", "movies", "Delete a movie"),
     (
+        "POST",
+        "/movies/bulk",
+        "movies",
+        "Monitor, unmonitor, search or delete many movies in one request",
+    ),
+    (
         "GET",
         "/movies/lookup",
         "movies",
@@ -699,6 +705,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "Update a series' monitoring or quality profile",
     ),
     ("DELETE", "/series/{id}", "tv", "Delete a series"),
+    (
+        "POST",
+        "/series/bulk",
+        "tv",
+        "Monitor, unmonitor, search or delete many series in one request",
+    ),
     ("GET", "/series/lookup", "tv", "Search for a series to add"),
     (
         "POST",
@@ -763,6 +775,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "Update a book's monitoring or quality profile",
     ),
     ("DELETE", "/books/{id}", "audiobooks", "Delete a book"),
+    (
+        "POST",
+        "/books/bulk",
+        "audiobooks",
+        "Monitor, unmonitor, search or delete many books in one request",
+    ),
     (
         "GET",
         "/books/lookup",

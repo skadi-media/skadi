@@ -1190,3 +1190,198 @@ async fn subtitles_beside_the_video_are_listed_and_served() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --- bulk (SKADI-T-0696) ---
+
+/// Add a movie by tmdb id with no search; returns `(movie_id, edition_id)`.
+async fn add_quiet(h: &Harness, tmdb: u64) -> (String, String) {
+    let (s, created) = call(
+        h.http.routes(),
+        "POST",
+        "/movies",
+        Some(serde_json::json!({ "tmdb_id": tmdb, "search": false })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{created}");
+    (
+        created["id"].as_str().unwrap().to_string(),
+        created["editions"][0]["id"].as_str().unwrap().to_string(),
+    )
+}
+
+fn edition_id(s: &str) -> MovieEditionId {
+    MovieEditionId::from(uuid::Uuid::parse_str(s).unwrap())
+}
+
+fn imported_at(path: std::path::PathBuf) -> AcquisitionStatus {
+    AcquisitionStatus::Imported {
+        file: skadi_core::FileRef { path },
+        quality: skadi_core::QualityId::new(),
+        score: 0,
+        at: chrono::Utc::now(),
+    }
+}
+
+/// Selecting 50 movies and unmonitoring them is one request, and the list
+/// reads the change straight after. Monitoring them back reports an unknown id
+/// as not found and still applies the rest.
+#[tokio::test]
+async fn bulk_unmonitors_fifty_movies_in_one_request() {
+    let h = harness().await;
+    register_profile_and_root(&h.store).await;
+    let mut ids = Vec::new();
+    for tmdb in 1..=50 {
+        ids.push(add_quiet(&h, tmdb).await.0);
+    }
+
+    let (s, report) = call(
+        h.http.routes(),
+        "POST",
+        "/movies/bulk",
+        Some(serde_json::json!({ "ids": ids, "action": "unmonitor" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["action"], "unmonitor");
+    assert_eq!(report["requested"], 50);
+    assert_eq!(report["done"].as_array().unwrap().len(), 50);
+    let (_, unmon) = call(h.http.routes(), "GET", "/movies?monitored=false", None).await;
+    assert_eq!(unmon.as_array().unwrap().len(), 50);
+
+    let ghost = uuid::Uuid::new_v4().to_string();
+    let mut again = ids.clone();
+    again.push(ghost.clone());
+    let (s, report) = call(
+        h.http.routes(),
+        "POST",
+        "/movies/bulk",
+        Some(serde_json::json!({ "ids": again, "action": "monitor" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"].as_array().unwrap().len(), 50);
+    assert_eq!(report["not_found"], serde_json::json!([ghost]));
+    let (_, mon) = call(h.http.routes(), "GET", "/movies?monitored=true", None).await;
+    assert_eq!(mon.as_array().unwrap().len(), 50);
+}
+
+#[tokio::test]
+async fn bulk_refuses_a_malformed_request() {
+    let h = harness().await;
+    let id = uuid::Uuid::new_v4().to_string();
+    for body in [
+        serde_json::json!({ "ids": [], "action": "monitor" }),
+        serde_json::json!({ "ids": ["not-a-uuid"], "action": "monitor" }),
+        serde_json::json!({ "ids": [id], "action": "explode" }),
+        serde_json::json!({ "ids": [id], "action": "unmonitor", "delete_files": true }),
+        serde_json::json!({ "ids": [id] }),
+    ] {
+        let (s, got) = call(h.http.routes(), "POST", "/movies/bulk", Some(body.clone())).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body} → {got}");
+    }
+}
+
+/// Search starts the manual acquire for each edition that is not imported and
+/// not already in flight, and needs the domain enabled, like the single acquire.
+#[tokio::test]
+async fn bulk_search_starts_runs_for_missing_editions_only() {
+    let h = harness().await;
+    register_profile_and_root(&h.store).await;
+    let (missing, _) = add_quiet(&h, 1).await;
+    let (owned, owned_ed) = add_quiet(&h, 2).await;
+    let (busy, busy_ed) = add_quiet(&h, 3).await;
+    h.store
+        .set_edition_status(
+            edition_id(&owned_ed),
+            imported_at("/library/movie/x.mkv".into()),
+        )
+        .await
+        .unwrap();
+    h.store
+        .set_edition_status(
+            edition_id(&busy_ed),
+            AcquisitionStatus::Searching {
+                since: chrono::Utc::now(),
+                attempts: 1,
+            },
+        )
+        .await
+        .unwrap();
+    let body = serde_json::json!({ "ids": [missing, owned, busy], "action": "search" });
+
+    let (s, got) = call(h.http.routes(), "POST", "/movies/bulk", Some(body.clone())).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{got}");
+    assert_eq!(got["error"], "domain_disabled");
+
+    h.store.set_enabled("movies", true).await.unwrap();
+    let (s, report) = call(h.http.routes(), "POST", "/movies/bulk", Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["searches_started"], 1);
+    assert_eq!(report["done"], serde_json::json!([missing]));
+    let skipped: Vec<&str> = report["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(skipped, vec![owned.as_str(), busy.as_str()]);
+}
+
+/// Delete goes through the single delete: with `delete_files` the imported
+/// file goes and its emptied folder is pruned (the root stays); without it the
+/// file stays. The rows go either way.
+#[tokio::test]
+async fn bulk_delete_removes_rows_and_only_asked_for_files() {
+    let h = harness().await;
+    register_profile_and_root(&h.store).await;
+    let lib = std::env::temp_dir().join(format!("skadi-bulk-{}", uuid::Uuid::new_v4()));
+    h.store
+        .set_config("library.root", lib.to_str().unwrap(), ConfigSource::Runtime)
+        .await
+        .unwrap();
+    let root = lib.join("movie");
+    let mut files = Vec::new();
+    let mut movies = Vec::new();
+    for (tmdb, name) in [(1u64, "One"), (2, "Two"), (3, "Three")] {
+        let (id, ed) = add_quiet(&h, tmdb).await;
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join(format!("{name}.mkv"));
+        std::fs::write(&f, b"video").unwrap();
+        h.store
+            .set_edition_status(edition_id(&ed), imported_at(f.clone()))
+            .await
+            .unwrap();
+        files.push(f);
+        movies.push(id);
+    }
+
+    let (s, report) = call(
+        h.http.routes(),
+        "POST",
+        "/movies/bulk",
+        Some(serde_json::json!({
+            "ids": [movies[0], movies[1]], "action": "delete", "delete_files": true
+        })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"].as_array().unwrap().len(), 2);
+    assert!(!files[0].exists() && !files[1].exists(), "the files went");
+    assert!(!root.join("One").exists(), "the emptied folder is pruned");
+    assert!(root.exists(), "the domain root stays");
+
+    let (s, report) = call(
+        h.http.routes(),
+        "POST",
+        "/movies/bulk",
+        Some(serde_json::json!({ "ids": [movies[2]], "action": "delete" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert!(files[2].exists(), "no delete_files → the file stays");
+
+    let (_, left) = call(h.http.routes(), "GET", "/movies", None).await;
+    assert_eq!(left.as_array().unwrap().len(), 0);
+    let _ = std::fs::remove_dir_all(&lib);
+}

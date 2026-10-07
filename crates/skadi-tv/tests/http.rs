@@ -350,3 +350,200 @@ async fn an_unknown_view_returns_the_full_shape() {
     let (_, odd) = call(h.http.routes(), "GET", "/series?view=nonsense", None).await;
     assert_eq!(odd, full, "an unrecognised view must not silently trim");
 }
+
+// --- bulk (SKADI-T-0696) ---
+
+/// A series named `title` under `root`, with episodes from `eps`
+/// `(number, aired, monitored, status)` in season 1.
+async fn seed_series(
+    store: &Store,
+    tvdb: u64,
+    title: &str,
+    root: &str,
+    eps: &[(u16, bool, bool, AcquisitionStatus)],
+) -> SeriesId {
+    let series = skadi_tv::Series::new(
+        skadi_core::ExternalIds {
+            tvdb: Some(TvdbId(tvdb)),
+            ..Default::default()
+        },
+        title,
+        skadi_core::ProfileId::new(),
+        skadi_core::RootFolder::new(root),
+    );
+    store.upsert_series(&series).await.unwrap();
+    let today = chrono::Utc::now().date_naive();
+    for (n, aired, monitored, status) in eps {
+        let mut ep = skadi_tv::Episode::missing(series.id, 1, *n);
+        ep.air_date = Some(if *aired {
+            today - chrono::Duration::days(30)
+        } else {
+            today + chrono::Duration::days(30)
+        });
+        ep.monitored = *monitored;
+        ep.status = status.clone();
+        store.upsert_episode(&ep).await.unwrap();
+    }
+    series.id
+}
+
+fn imported_at(path: std::path::PathBuf) -> AcquisitionStatus {
+    AcquisitionStatus::Imported {
+        file: skadi_core::FileRef { path },
+        quality: skadi_core::QualityId::new(),
+        score: 0,
+        at: chrono::Utc::now(),
+    }
+}
+
+async fn bulk(h: &Harness, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    call(h.http.routes(), "POST", "/series/bulk", Some(body)).await
+}
+
+#[tokio::test]
+async fn bulk_unmonitors_and_monitors_many_series_in_one_request() {
+    let h = harness().await;
+    let mut ids = Vec::new();
+    for n in 0..20u64 {
+        let id = seed_series(
+            &h.store,
+            100 + n,
+            &format!("Show {n}"),
+            "/library/television",
+            &[],
+        )
+        .await;
+        ids.push(id.to_string());
+    }
+    let (s, report) = bulk(&h, serde_json::json!({ "ids": ids, "action": "unmonitor" })).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"].as_array().unwrap().len(), 20);
+    let (_, unmon) = call(h.http.routes(), "GET", "/series?monitored=false", None).await;
+    assert_eq!(unmon.as_array().unwrap().len(), 20);
+
+    let ghost = SeriesId::new().to_string();
+    let (s, report) = bulk(
+        &h,
+        serde_json::json!({ "ids": [ids[0], ghost], "action": "monitor" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["done"], serde_json::json!([ids[0]]));
+    assert_eq!(report["not_found"], serde_json::json!([ghost]));
+    let (_, mon) = call(h.http.routes(), "GET", "/series?monitored=true", None).await;
+    assert_eq!(mon.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn bulk_refuses_a_malformed_request() {
+    let h = harness().await;
+    for body in [
+        serde_json::json!({ "ids": [], "action": "monitor" }),
+        serde_json::json!({ "ids": ["x"], "action": "monitor" }),
+        serde_json::json!({ "ids": [SeriesId::new().to_string()], "action": "nuke" }),
+    ] {
+        let (s, got) = bulk(&h, body.clone()).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body} → {got}");
+    }
+}
+
+/// Search starts the manual acquire for each monitored, aired episode that is
+/// not imported and not in flight; the domain must be enabled.
+#[tokio::test]
+async fn bulk_search_starts_runs_for_wanted_episodes_only() {
+    let h = harness().await;
+    let busy = AcquisitionStatus::Searching {
+        since: chrono::Utc::now(),
+        attempts: 1,
+    };
+    let wanted = seed_series(
+        &h.store,
+        1,
+        "Wanted",
+        "/library/television",
+        &[
+            (1, true, true, AcquisitionStatus::Missing),
+            (2, true, true, AcquisitionStatus::Missing),
+            (3, false, true, AcquisitionStatus::Missing), // not aired
+            (4, true, false, AcquisitionStatus::Missing), // unmonitored
+            (
+                5,
+                true,
+                true,
+                imported_at("/library/television/x.mkv".into()),
+            ),
+            (6, true, true, busy.clone()),
+        ],
+    )
+    .await;
+    let done = seed_series(
+        &h.store,
+        2,
+        "Done",
+        "/library/television",
+        &[(
+            1,
+            true,
+            true,
+            imported_at("/library/television/y.mkv".into()),
+        )],
+    )
+    .await;
+    let body =
+        serde_json::json!({ "ids": [wanted.to_string(), done.to_string()], "action": "search" });
+
+    let (s, got) = bulk(&h, body.clone()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{got}");
+    assert_eq!(got["error"], "domain_disabled");
+
+    set_domain(&h.store, true).await;
+    let (s, report) = bulk(&h, body).await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["searches_started"], 2);
+    assert_eq!(report["done"], serde_json::json!([wanted.to_string()]));
+    assert_eq!(report["skipped"][0]["id"], done.to_string());
+}
+
+#[tokio::test]
+async fn bulk_delete_removes_rows_and_only_asked_for_files() {
+    let h = harness().await;
+    let root = std::env::temp_dir().join(format!("skadi-tv-bulk-{}", uuid::Uuid::new_v4()));
+    let mut files = Vec::new();
+    let mut ids = Vec::new();
+    for (n, name) in [(1u64, "One"), (2, "Two")] {
+        let dir = root.join(name).join("Season 01");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("e01.mkv");
+        std::fs::write(&f, b"video").unwrap();
+        let id = seed_series(
+            &h.store,
+            n,
+            name,
+            root.to_str().unwrap(),
+            &[(1, true, true, imported_at(f.clone()))],
+        )
+        .await;
+        files.push(f);
+        ids.push(id.to_string());
+    }
+    let (s, report) = bulk(
+        &h,
+        serde_json::json!({ "ids": [ids[0]], "action": "delete", "delete_files": true }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert!(!files[0].exists(), "the episode file went");
+    assert!(!root.join("One").exists(), "the emptied folders are pruned");
+    assert!(root.exists(), "the root stays");
+
+    let (s, report) = bulk(
+        &h,
+        serde_json::json!({ "ids": [ids[1]], "action": "delete" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert!(files[1].exists(), "no delete_files → the file stays");
+    let (_, left) = call(h.http.routes(), "GET", "/series", None).await;
+    assert_eq!(left.as_array().unwrap().len(), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

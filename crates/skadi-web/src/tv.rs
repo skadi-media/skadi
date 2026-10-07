@@ -12,6 +12,7 @@ use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
 use crate::library_toolbar::{
     LibCounts, LibraryToolbar, TV_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
@@ -88,7 +89,10 @@ pub fn TvPage() -> impl IntoView {
 
     let counts =
         Signal::derive(move || series.with(|ss| LibCounts::of(ss.iter().map(series_lib_status))));
-    let tiles = move || {
+    // Multi-select + bulk bar (SKADI-T-0696), admin only.
+    let sel = Selection::new();
+    // The wall as shown: filtered, then sorted; tiles and "select all" share it.
+    let shown_series = move || {
         let f = lib_filter.get();
         let q = lib_text.get().to_lowercase();
         let mut shown: Vec<api::Series> = series
@@ -103,8 +107,21 @@ pub fn TvPage() -> impl IntoView {
             })
             .collect();
         sort_items(&mut shown, sort.get());
-        shown.into_iter().map(series_tile).collect_view()
+        shown
     };
+    let tiles = move || {
+        shown_series()
+            .into_iter()
+            .map(|s| series_tile(s, Some(sel)))
+            .collect_view()
+    };
+    let visible_ids =
+        Signal::derive(move || shown_series().into_iter().map(|s| s.id).collect::<Vec<_>>());
+    let on_bulk_done = Callback::new(
+        move |(action, report): (api::BulkAction, api::BulkReport)| {
+            series.update(|ss| apply_report(ss, action, &report));
+        },
+    );
     let genre_chips = move || {
         let counts = crate::genre_counts(series.get().iter().map(|s| s.genres.as_slice()));
         let active = genre_filter.get();
@@ -151,6 +168,16 @@ pub fn TvPage() -> impl IntoView {
                 sort_keys=VIDEO_SORT_KEYS
                 storage_key=TV_SORT_STORAGE
                 facets=move || view! { <div class="filter-chips genre-chips">{genre_chips}</div> }
+                // Reactive inside: the slot renders once, and the role resolves later.
+                bulk=move || view! { {move || is_admin().then(|| view! {
+                    <BulkBar
+                        sel=sel
+                        visible=visible_ids
+                        collection="series"
+                        noun=crate::library_select::SERIES
+                        on_done=on_bulk_done
+                    />
+                })} }
             />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || series.get().is_empty().then(|| view! { <p class="muted">"No series yet — add one with + Add media."</p> })}
@@ -159,11 +186,22 @@ pub fn TvPage() -> impl IntoView {
     }
 }
 
-/// One poster tile in the series wall; click navigates to the detail page.
-fn series_tile(s: api::Series) -> AnyView {
+/// One poster tile in the series wall; click navigates to the detail page, or
+/// toggles the tile in select mode (SKADI-T-0696).
+fn series_tile(s: api::Series, sel: Option<Selection>) -> AnyView {
     let id = s.id.clone();
     let nav = use_navigate();
-    let on_open = move |_| nav(&format!("/tv/{id}"), Default::default());
+    let on_open = move |_| match sel {
+        Some(x) if x.mode.get_untracked() => x.toggle(&id),
+        _ => nav(&format!("/tv/{id}"), Default::default()),
+    };
+    let base = if s.monitored {
+        "poster-tile"
+    } else {
+        "poster-tile unmonitored"
+    };
+    let class = tile_class(base, sel, s.id.clone());
+    let check = tile_check(sel, s.id.clone());
     let year = s.year.map(|y| y.to_string()).unwrap_or_default();
     let status = series_lib_status(&s);
     let dot = match status {
@@ -180,12 +218,13 @@ fn series_tile(s: api::Series) -> AnyView {
     let title = s.title.clone();
 
     view! {
-        <div class="poster-tile" on:click=on_open>
+        <div class=class on:click=on_open>
             <div class="poster-img">
                 {match poster {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
                     None => view! { <div class="poster-ph">{title.clone()}</div> }.into_any(),
                 }}
+                {check}
                 {(status != "owned")
                     .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
                 {wanted.then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}

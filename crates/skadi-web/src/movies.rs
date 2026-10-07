@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
+use crate::library_select::{BulkBar, Selection, apply_report, tile_check, tile_class};
 use crate::library_toolbar::{
     LibCounts, LibraryToolbar, MOVIES_SORT_STORAGE, VIDEO_SORT_KEYS, chip_matches, sort_items,
     stored_sort,
@@ -76,7 +77,11 @@ pub fn MoviesPage() -> impl IntoView {
     // Chip counts.
     let counts =
         Signal::derive(move || movies.with(|ms| LibCounts::of(ms.iter().map(movie_lib_status))));
-    let poster_tiles = move || {
+    // Multi-select + bulk bar (SKADI-T-0696), admin only.
+    let sel = Selection::new();
+    // The wall as shown: filtered, then sorted. Tiles and "select all" both
+    // read this one list, so "all" is exactly what is on screen.
+    let shown_movies = move || {
         let f = lib_filter.get();
         let q = lib_text.get().to_lowercase();
         let mut shown: Vec<api::Movie> = movies
@@ -91,8 +96,21 @@ pub fn MoviesPage() -> impl IntoView {
             })
             .collect();
         sort_items(&mut shown, sort.get());
-        shown.into_iter().map(poster_tile).collect_view()
+        shown
     };
+    let poster_tiles = move || {
+        shown_movies()
+            .into_iter()
+            .map(|m| poster_tile(m, Some(sel)))
+            .collect_view()
+    };
+    let visible_ids =
+        Signal::derive(move || shown_movies().into_iter().map(|m| m.id).collect::<Vec<_>>());
+    let on_bulk_done = Callback::new(
+        move |(action, report): (api::BulkAction, api::BulkReport)| {
+            movies.update(|ms| apply_report(ms, action, &report));
+        },
+    );
     let genre_chips = move || {
         let counts = crate::genre_counts(movies.get().iter().map(|m| m.genres.as_slice()));
         let active = genre_filter.get();
@@ -140,6 +158,16 @@ pub fn MoviesPage() -> impl IntoView {
                 sort_keys=VIDEO_SORT_KEYS
                 storage_key=MOVIES_SORT_STORAGE
                 facets=move || view! { <div class="filter-chips genre-chips">{genre_chips}</div> }
+                // Reactive inside: the slot renders once, and the role resolves later.
+                bulk=move || view! { {move || is_admin().then(|| view! {
+                    <BulkBar
+                        sel=sel
+                        visible=visible_ids
+                        collection="movies"
+                        noun=crate::library_select::MOVIES
+                        on_done=on_bulk_done
+                    />
+                })} }
             />
             {move || error.get().map(|e| view! { <p class="bad">"Load failed: " {e}</p> })}
             {move || movies.get().is_empty().then(|| view! { <p class="muted">"No movies yet — add one with + Add media."</p> })}
@@ -184,11 +212,22 @@ pub fn movie_lib_status(m: &api::Movie) -> &'static str {
 
 /// One 2:3 poster tile in the library wall: media tag + status dot, title/sub
 /// bottom-anchored over a scrim, a dashed "+" overlay when wanted (SKADI-T-0245).
-fn poster_tile(m: api::Movie) -> AnyView {
+/// In select mode (SKADI-T-0696) a click toggles the tile instead of opening it.
+fn poster_tile(m: api::Movie, sel: Option<Selection>) -> AnyView {
     let id = m.id.clone();
     // Open the full-page detail (the drawer was dropped).
     let nav = use_navigate();
-    let on_open = move |_| nav(&format!("/movies/{id}"), Default::default());
+    let on_open = move |_| match sel {
+        Some(s) if s.mode.get_untracked() => s.toggle(&id),
+        _ => nav(&format!("/movies/{id}"), Default::default()),
+    };
+    let base = if m.monitored {
+        "poster-tile"
+    } else {
+        "poster-tile unmonitored"
+    };
+    let class = tile_class(base, sel, m.id.clone());
+    let check = tile_check(sel, m.id.clone());
     let year = m.year.map(|y| y.to_string()).unwrap_or_default();
     let status = movie_lib_status(&m);
     let dot = match status {
@@ -205,12 +244,13 @@ fn poster_tile(m: api::Movie) -> AnyView {
     let title = m.title.clone();
 
     view! {
-        <div class="poster-tile" on:click=on_open>
+        <div class=class on:click=on_open>
             <div class="poster-img">
                 {match poster {
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
                     None => view! { <div class="poster-ph">{title.clone()}</div> }.into_any(),
                 }}
+                {check}
                 // Dot only for non-owned states — a wall of identical green
                 // dots on a fully-owned library is pure noise (SKADI-T-0348).
                 // Type chip dropped: you're already in the Movies wall.

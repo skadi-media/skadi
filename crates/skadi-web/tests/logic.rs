@@ -2970,3 +2970,148 @@ fn library_walls_sort_by_each_key() {
         ["b2", "b3", "b1"]
     );
 }
+
+// --- library multi-select (SKADI-T-0696) ---
+
+mod library_select {
+    use std::collections::HashSet;
+
+    use skadi_web::api::{BulkAction, BulkNote, BulkReport, BulkRequest, Movie};
+    use skadi_web::library_select::{
+        BOOKS, MOVIES, SERIES, apply_report, delete_confirm, ordered_selection, report_message,
+        select_all_or_none, toggle_id,
+    };
+    use wasm_bindgen_test::*;
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+    fn wall(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+    fn movie(id: &str) -> Movie {
+        Movie {
+            id: id.into(),
+            monitored: true,
+            ..Default::default()
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn toggling_adds_then_removes() {
+        let mut s = HashSet::new();
+        toggle_id(&mut s, "a");
+        assert!(s.contains("a"));
+        toggle_id(&mut s, "a");
+        assert!(s.is_empty());
+    }
+
+    #[wasm_bindgen_test]
+    fn the_action_takes_the_selected_ids_on_the_wall_in_wall_order() {
+        let got = ordered_selection(&wall(&["c", "a", "b"]), &set(&["a", "c", "gone"]));
+        assert_eq!(got, wall(&["c", "a"]));
+    }
+
+    #[wasm_bindgen_test]
+    fn select_all_takes_the_wall_or_clears_when_all_are_in() {
+        let w = wall(&["a", "b"]);
+        assert_eq!(select_all_or_none(&w, &set(&["a"])), set(&["a", "b"]));
+        assert!(select_all_or_none(&w, &set(&["a", "b"])).is_empty());
+        assert!(select_all_or_none(&[], &set(&[])).is_empty());
+    }
+
+    #[wasm_bindgen_test]
+    fn fifty_ids_are_one_request_body() {
+        let ids: Vec<String> = (0..50).map(|n| format!("id-{n}")).collect();
+        let body = serde_json::to_value(BulkRequest::new(ids, BulkAction::Unmonitor)).unwrap();
+        assert_eq!(body["action"], "unmonitor");
+        assert_eq!(body["ids"].as_array().unwrap().len(), 50);
+        assert!(body.get("delete_files").is_none());
+        let del = serde_json::to_value(BulkRequest::new(
+            wall(&["a"]),
+            BulkAction::Delete { files: true },
+        ))
+        .unwrap();
+        assert_eq!(del["action"], "delete");
+        assert_eq!(del["delete_files"], true);
+    }
+
+    #[wasm_bindgen_test]
+    fn delete_asks_with_the_count() {
+        let spec = delete_confirm(MOVIES, 12, true);
+        assert_eq!(spec.title, "Delete 12 movies?");
+        assert_eq!(spec.confirm_label, "Delete 12");
+        assert!(spec.destructive);
+        assert!(spec.body.contains("deleted from disk"));
+        let keep = delete_confirm(BOOKS, 1, false);
+        assert_eq!(keep.title, "Delete 1 audiobook?");
+        assert!(keep.body.contains("stay on disk"));
+        assert_eq!(delete_confirm(SERIES, 2, false).title, "Delete 2 series?");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_grid_updates_from_the_report_without_a_refetch() {
+        let mut ms = vec![movie("a"), movie("b"), movie("c")];
+        let r = BulkReport {
+            done: wall(&["a", "b"]),
+            not_found: wall(&["c"]),
+            ..Default::default()
+        };
+        apply_report(&mut ms, BulkAction::Unmonitor, &r);
+        assert_eq!(ms.len(), 2, "a vanished item leaves the wall");
+        assert!(ms.iter().all(|m| !m.monitored));
+
+        let mut ms = vec![movie("a"), movie("b")];
+        let r = BulkReport {
+            done: wall(&["a"]),
+            ..Default::default()
+        };
+        apply_report(&mut ms, BulkAction::Delete { files: false }, &r);
+        assert_eq!(
+            ms.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["b"]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_message_says_what_happened() {
+        let r = BulkReport {
+            done: wall(&["a", "b"]),
+            ..Default::default()
+        };
+        assert_eq!(
+            report_message(BulkAction::Unmonitor, MOVIES, &r),
+            (true, "Unmonitored 2 movies.".to_string())
+        );
+        let r = BulkReport {
+            done: wall(&["a"]),
+            skipped: vec![BulkNote {
+                id: "b".into(),
+                reason: "x".into(),
+            }],
+            failed: vec![BulkNote {
+                id: "c".into(),
+                reason: "db down".into(),
+            }],
+            searches_started: 3,
+            ..Default::default()
+        };
+        let (ok, text) = report_message(BulkAction::Search, SERIES, &r);
+        assert!(!ok);
+        assert_eq!(
+            text,
+            "Searching 1 series (3 searches started). 1 series had nothing to search. 1 failed: db down"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_report_reads_the_server_shape() {
+        let r: BulkReport = serde_json::from_value(serde_json::json!({
+            "action": "delete", "requested": 2, "done": ["a"], "skipped": [],
+            "not_found": [], "failed": [{"id": "b", "error": "boom"}], "searches_started": 0
+        }))
+        .unwrap();
+        assert_eq!(r.failed[0].reason, "boom");
+        assert_eq!(r.requested, 2);
+    }
+}

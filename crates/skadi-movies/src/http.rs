@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use chrono::Utc;
+use skadi_api::bulk::{BulkAction, BulkOutcome, BulkReport, BulkRequest};
 use skadi_api::{ApiError, HttpModule, LibraryEditionDto, LibraryItemDto, LibraryProvider};
 
 use skadi_core::{
@@ -87,6 +88,8 @@ impl HttpModule for MoviesHttp {
             // Static `/movies/lookup` registered before `/movies/{id}` — the
             // metadata search the "add movie" UI uses (SKADI-T-0069).
             .route("/movies/lookup", get(lookup_movies))
+            // One request for a selection on the wall (SKADI-T-0696).
+            .route("/movies/bulk", post(bulk_movies))
             .route(
                 "/movies/{id}",
                 get(get_movie).patch(patch_movie).delete(delete_movie),
@@ -642,7 +645,7 @@ async fn get_movie(
     Ok(Json(movie))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct PatchMovie {
     monitored: Option<bool>,
     profile: Option<String>,
@@ -664,7 +667,13 @@ async fn patch_movie(
     Json(patch): Json<PatchMovie>,
 ) -> Result<impl IntoResponse, ApiError> {
     let id: MovieId = parse_id(&id, "movie")?;
-    let mut movie = repo(&http)
+    Ok(Json(apply_patch(&http, id, patch).await?))
+}
+
+/// The one PATCH path, shared by `PATCH /movies/{id}` and the bulk
+/// monitor/unmonitor (SKADI-T-0696). 404 when the movie is not there.
+async fn apply_patch(http: &MoviesHttp, id: MovieId, patch: PatchMovie) -> Result<Movie, ApiError> {
+    let mut movie = repo(http)
         .get_movie(id)
         .await?
         .ok_or_else(|| ApiError(AppError::NotFound(format!("movie {id} not found"))))?;
@@ -683,14 +692,14 @@ async fn patch_movie(
     //
     // Silently ignored rather than rejected: the field is still in the wire
     // shape, and an old client sending it should not start failing.
-    repo(&http).upsert_movie(&movie).await?;
+    repo(http).upsert_movie(&movie).await?;
     if let Some(tags) = patch.tags {
         use skadi_store::ItemTagRepo;
         http.store
             .set_tags("movie", &movie.id.0.to_string(), &tags)
             .await?;
     }
-    Ok(Json(movie))
+    Ok(movie)
 }
 
 /// Delete options (SKADI-T-0316): `?delete_files=true` also removes the imported files +
@@ -708,13 +717,25 @@ async fn delete_movie(
 ) -> Result<impl IntoResponse, ApiError> {
     let id: MovieId = parse_id(&id, "movie")?;
     // 404 if it isn't there, so DELETE is honest about what it removed.
-    let Some(movie) = repo(&http).get_movie(id).await? else {
+    if !delete_one(&http, id, opts.delete_files).await? {
         return Err(ApiError(AppError::NotFound(format!(
             "movie {id} not found"
         ))));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The one delete path, shared by `DELETE /movies/{id}` and the bulk delete
+/// (SKADI-T-0696). With `delete_files`, removes the files the movie's editions
+/// record as imported (those exact paths, nothing else) and prunes the emptied
+/// folders up to the movie's root, never past it. Returns `false` when the
+/// movie is not there.
+async fn delete_one(http: &MoviesHttp, id: MovieId, delete_files: bool) -> Result<bool, ApiError> {
+    let Some(movie) = repo(http).get_movie(id).await? else {
+        return Ok(false);
     };
     // Remove the imported files + prune empty folders first (SKADI-T-0316), before the rows go.
-    if opts.delete_files {
+    if delete_files {
         let paths: Vec<std::path::PathBuf> = movie
             .editions
             .iter()
@@ -738,8 +759,64 @@ async fn delete_movie(
         use skadi_store::ItemTagRepo;
         let _ = http.store.clear_item("movie", &id.0.to_string()).await;
     }
-    repo(&http).delete_movie(id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    repo(http).delete_movie(id).await?;
+    Ok(true)
+}
+
+/// `POST /movies/bulk` (SKADI-T-0696): apply one action to many movies in one
+/// request. Each id goes through the single-item path (`apply_patch`,
+/// `start_edition_acquire`, `delete_one`), so a bulk action cannot do what the
+/// single route would not.
+async fn bulk_movies(
+    State(http): State<MoviesHttp>,
+    skadi_api::error::ApiJson(req): skadi_api::error::ApiJson<BulkRequest>,
+) -> Result<Response, ApiError> {
+    let ids: Vec<(String, MovieId)> = req.parsed_ids()?;
+    if req.action == BulkAction::Search && !domain_enabled(&http).await? {
+        return Ok(domain_disabled_response());
+    }
+    let mut report = BulkReport::new(req.action, ids.len());
+    for (raw, id) in ids {
+        let outcome = match req.action {
+            BulkAction::Monitor | BulkAction::Unmonitor => {
+                let patch = PatchMovie {
+                    monitored: Some(req.action == BulkAction::Monitor),
+                    ..PatchMovie::default()
+                };
+                apply_patch(&http, id, patch)
+                    .await
+                    .map(|_| BulkOutcome::Done)
+            }
+            BulkAction::Search => search_movie(&http, id).await,
+            BulkAction::Delete => delete_one(&http, id, req.delete_files).await.map(|found| {
+                if found {
+                    BulkOutcome::Done
+                } else {
+                    BulkOutcome::NotFound
+                }
+            }),
+        };
+        report.record(raw, outcome);
+    }
+    Ok(Json(report).into_response())
+}
+
+/// Search one movie now: start the manual acquire for each edition that is not
+/// imported and not already in flight.
+async fn search_movie(http: &MoviesHttp, id: MovieId) -> Result<BulkOutcome, ApiError> {
+    let Some(movie) = repo(http).get_movie(id).await? else {
+        return Ok(BulkOutcome::NotFound);
+    };
+    let mut started = 0;
+    for edition in &movie.editions {
+        if matches!(edition.status, AcquisitionStatus::Imported { .. }) {
+            continue;
+        }
+        if start_edition_acquire(http, &movie, edition) {
+            started += 1;
+        }
+    }
+    Ok(BulkOutcome::Searched(started))
 }
 
 // --- manual acquire ---
@@ -789,21 +866,8 @@ async fn acquire_edition(
     let edition_id: MovieEditionId = parse_id(&eid, "edition")?;
 
     // Manual acquire requires the movies domain to be enabled.
-    let enabled = http
-        .store
-        .get(DOMAIN_NAME)
-        .await?
-        .map(|s| s.enabled)
-        .unwrap_or(false);
-    if !enabled {
-        return Ok((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "domain_disabled",
-                "message": "the movies domain is disabled; enable it before acquiring"
-            })),
-        )
-            .into_response());
+    if !domain_enabled(&http).await? {
+        return Ok(domain_disabled_response());
     }
 
     let movie = repo(&http)
@@ -820,6 +884,50 @@ async fn acquire_edition(
             "edition {edition_id} does not belong to movie {movie_id}"
         ))));
     }
+    if !start_edition_acquire(&http, &movie, &edition) {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "already_in_flight",
+                "message": "an acquire run for this edition is already in progress"
+            })),
+        )
+            .into_response());
+    }
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "run_id": eid, "accepted": true })),
+    )
+        .into_response())
+}
+
+/// Whether the movies domain is enabled; manual acquire is refused while off.
+async fn domain_enabled(http: &MoviesHttp) -> Result<bool, ApiError> {
+    Ok(http
+        .store
+        .get(DOMAIN_NAME)
+        .await?
+        .map(|s| s.enabled)
+        .unwrap_or(false))
+}
+
+fn domain_disabled_response() -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "domain_disabled",
+            "message": "the movies domain is disabled; enable it before acquiring"
+        })),
+    )
+        .into_response()
+}
+
+/// The manual acquire for one edition, shared by `POST …/acquire` and the bulk
+/// search (SKADI-T-0696). Returns `false` (and starts nothing) when a fresh run
+/// is already working the edition.
+fn start_edition_acquire(http: &MoviesHttp, movie: &Movie, edition: &MovieEdition) -> bool {
+    let edition_id = edition.id;
     // In-flight guard (SKADI-I-0012 Flow 3): an edition already being worked
     // (searching / snatched / downloading) must not get a second concurrent
     // run — that would double-snatch and double-download. Full sweep-side
@@ -841,14 +949,7 @@ async fn acquire_edition(
     let fresh = (Utc::now() - edition.updated_at)
         < chrono::Duration::seconds(skadi_hunter::STALE_ACQUIRE_GRACE.as_secs() as i64);
     if in_flight && fresh {
-        return Ok((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "already_in_flight",
-                "message": "an acquire run for this edition is already in progress"
-            })),
-        )
-            .into_response());
+        return false;
     }
     if in_flight {
         tracing::warn!(
@@ -857,7 +958,7 @@ async fn acquire_edition(
         );
     }
 
-    let seed = acquire_seed(&movie, &edition);
+    let seed = acquire_seed(movie, edition);
 
     // Fire-and-forget: the acquire workflow runs to completion on its own task,
     // and the edition's status is persisted by the pipeline's status sink. We
@@ -869,12 +970,7 @@ async fn acquire_edition(
             tracing::warn!(error = %e, "manual acquire run failed to start");
         }
     });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "run_id": eid, "accepted": true })),
-    )
-        .into_response())
+    true
 }
 
 /// Force a wedged edition back to `Missing` so it can be re-acquired

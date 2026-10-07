@@ -752,3 +752,124 @@ async fn library_toolbar_chips_bulk_slot_and_hidden_sort() {
     settle_dom().await;
     assert!(display(&sort_box).contains("display: none"));
 }
+
+// ---------------------------------------------------------------------------
+// Library bulk bar (SKADI-T-0696)
+// ---------------------------------------------------------------------------
+
+fn button_with_text(host: &HtmlElement, label: &str) -> HtmlButtonElement {
+    let list = host.query_selector_all("button").unwrap();
+    (0..list.length())
+        .filter_map(|i| list.item(i))
+        .find(|n| n.text_content().as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("no button {label:?}"))
+        .dyn_into::<HtmlButtonElement>()
+        .unwrap()
+}
+
+/// Mount the bar over a wall of `wall` ids with the dialog host.
+fn mount_bulk_bar(
+    wall: &[&str],
+) -> (
+    HtmlElement,
+    skadi_web::library_select::Selection,
+    RwSignal<usize>,
+    Box<dyn std::any::Any>,
+) {
+    use skadi_web::confirm::ConfirmDialogHost;
+    use skadi_web::library_select::{BulkBar, MOVIES, Selection};
+    let host = host();
+    let sel = Selection::new();
+    let ids: Vec<String> = wall.iter().map(|s| (*s).to_string()).collect();
+    let done = RwSignal::new(0usize);
+    let on_done = Callback::new(move |_| done.update(|n| *n += 1));
+    let handle = mount_to(host.clone(), move || {
+        let visible = Signal::derive({
+            let ids = ids.clone();
+            move || ids.clone()
+        });
+        view! {
+            <BulkBar sel=sel visible=visible collection="movies" noun=MOVIES on_done=on_done/>
+            <ConfirmDialogHost/>
+        }
+    });
+    (host, sel, done, Box::new(handle))
+}
+
+#[wasm_bindgen_test]
+async fn bulk_bar_select_all_takes_the_wall_and_clears_again() {
+    let (host, sel, _done, _h) = mount_bulk_bar(&["c", "a", "b"]);
+    assert_eq!(buttons_with_text(&host, "Monitor"), 0, "off until Select");
+    button_with_text(&host, "Select").click();
+    settle_dom().await;
+    assert!(sel.mode.get_untracked());
+    assert_eq!(
+        find(&host, ".bulk-count").text_content().as_deref(),
+        Some("0 selected")
+    );
+    assert!(
+        button_with_text(&host, "Unmonitor").disabled(),
+        "nothing selected yet"
+    );
+
+    button_with_text(&host, "Select all (3)").click();
+    settle_dom().await;
+    assert_eq!(
+        find(&host, ".bulk-count").text_content().as_deref(),
+        Some("3 selected")
+    );
+    assert!(!button_with_text(&host, "Unmonitor").disabled());
+    button_with_text(&host, "Clear").click();
+    settle_dom().await;
+    assert_eq!(
+        find(&host, ".bulk-count").text_content().as_deref(),
+        Some("0 selected")
+    );
+
+    button_with_text(&host, "Done").click();
+    settle_dom().await;
+    assert!(!sel.mode.get_untracked());
+    assert_eq!(buttons_with_text(&host, "Select"), 1);
+}
+
+/// Delete names the count and asks once; cancelling sends nothing.
+#[wasm_bindgen_test]
+async fn bulk_delete_names_the_count_and_asks_once() {
+    let (host, sel, done, _h) = mount_bulk_bar(&["a", "b", "c", "d"]);
+    sel.mode.set(true);
+    // "z" is selected but no longer on the wall (a filter hid it): not counted.
+    sel.ids.set(
+        ["a", "b", "d", "z"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+    );
+    settle_dom().await;
+    assert_eq!(
+        find(&host, ".bulk-count").text_content().as_deref(),
+        Some("3 selected")
+    );
+
+    button_with_text(&host, "Delete + files").click();
+    settle_dom().await;
+    assert_eq!(count(&host, ".confirm-dialog"), 1, "one question");
+    assert_eq!(
+        find(&host, ".confirm-title").text_content().as_deref(),
+        Some("Delete 3 movies?")
+    );
+    assert!(
+        find(&host, ".confirm-dialog")
+            .text_content()
+            .unwrap()
+            .contains("deleted from disk")
+    );
+    assert_eq!(
+        find(&host, ".confirm-ok").text_content().as_deref(),
+        Some("Delete 3")
+    );
+    find(&host, ".confirm-cancel").click();
+    settle_dom().await;
+    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(done.get_untracked(), 0, "a cancelled delete sends nothing");
+    assert_eq!(sel.ids.get_untracked().len(), 4, "the selection is kept");
+}

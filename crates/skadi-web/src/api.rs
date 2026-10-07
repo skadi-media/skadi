@@ -2301,6 +2301,82 @@ pub async fn run_import(req: &ManualImportRequest) -> Result<ImportOutcome, ApiE
     post_json("import", &format!("{API_BASE}/downloads/import"), req).await
 }
 
+/// One of the library bulk actions (SKADI-T-0696); the wire name is
+/// [`BulkAction::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAction {
+    Monitor,
+    Unmonitor,
+    Search,
+    /// `true` also removes the imported files.
+    Delete {
+        files: bool,
+    },
+}
+
+impl BulkAction {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BulkAction::Monitor => "monitor",
+            BulkAction::Unmonitor => "unmonitor",
+            BulkAction::Search => "search",
+            BulkAction::Delete { .. } => "delete",
+        }
+    }
+}
+
+/// The `POST /{movies|series|books}/bulk` body.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BulkRequest {
+    pub ids: Vec<String>,
+    pub action: &'static str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub delete_files: bool,
+}
+
+impl BulkRequest {
+    #[must_use]
+    pub fn new(ids: Vec<String>, action: BulkAction) -> Self {
+        Self {
+            ids,
+            action: action.as_str(),
+            delete_files: matches!(action, BulkAction::Delete { files: true }),
+        }
+    }
+}
+
+/// One id the server skipped or failed, with its reason.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct BulkNote {
+    pub id: String,
+    #[serde(default, alias = "error")]
+    pub reason: String,
+}
+
+/// The server's answer to a bulk request.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct BulkReport {
+    #[serde(default)]
+    pub requested: usize,
+    #[serde(default)]
+    pub done: Vec<String>,
+    #[serde(default)]
+    pub skipped: Vec<BulkNote>,
+    #[serde(default)]
+    pub not_found: Vec<String>,
+    #[serde(default)]
+    pub failed: Vec<BulkNote>,
+    #[serde(default)]
+    pub searches_started: usize,
+}
+
+/// `POST /{collection}/bulk` — one request for a whole selection
+/// (SKADI-T-0696). `collection` is `movies`, `series` or `books`.
+pub async fn bulk(collection: &str, req: &BulkRequest) -> Result<BulkReport, ApiError> {
+    post_json("bulk action", &format!("{API_BASE}/{collection}/bulk"), req).await
+}
+
 /// `GET /downloads` — the active download queue (queued + downloading) with live
 /// torrent metrics. Empty when nothing is downloading.
 pub async fn list_downloads() -> Result<Vec<Download>, ApiError> {

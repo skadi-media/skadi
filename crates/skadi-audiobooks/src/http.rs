@@ -37,6 +37,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use skadi_api::bulk::{BulkAction, BulkOutcome, BulkReport, BulkRequest};
 use skadi_api::{ApiError, HttpModule};
 use skadi_core::{
     AcquisitionStatus, AppError, AsinId, AuthorId, BookFileId, BookId, MediaKind, ProfileId,
@@ -127,6 +128,8 @@ impl HttpModule for AudiobooksHttp {
             // Free-text "search by title" over the Audible catalog (SKADI-T-0151),
             // mirroring movies' add-by-search.
             .route("/books/search", get(search_books))
+            // One request for a selection on the wall (SKADI-T-0696).
+            .route("/books/bulk", post(bulk_books))
             .route("/books", get(list_books).post(create_book))
             .route(
                 "/books/{id}",
@@ -1252,7 +1255,7 @@ async fn get_book(
     Ok(Json(book))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct PatchBook {
     monitored: Option<bool>,
     /// The item's tags, as settings-record ids (SKADI-T-0560).
@@ -1268,21 +1271,31 @@ async fn patch_book(
     Json(patch): Json<PatchBook>,
 ) -> Result<impl IntoResponse, ApiError> {
     let id: BookId = parse_id(&id, "book")?;
-    let mut book = repo(&http)
+    Ok(Json(apply_patch(&http, id, patch).await?))
+}
+
+/// The one PATCH path, shared by `PATCH /books/{id}` and the bulk
+/// monitor/unmonitor (SKADI-T-0696). 404 when the book is not there.
+async fn apply_patch(
+    http: &AudiobooksHttp,
+    id: BookId,
+    patch: PatchBook,
+) -> Result<Book, ApiError> {
+    let mut book = repo(http)
         .get_book(id)
         .await?
         .ok_or_else(|| ApiError(AppError::NotFound(format!("book {id} not found"))))?;
     if let Some(m) = patch.monitored {
         book.monitored = m;
     }
-    repo(&http).upsert_book(&book).await?;
+    repo(http).upsert_book(&book).await?;
     if let Some(tags) = patch.tags {
         use skadi_store::ItemTagRepo;
         http.store
             .set_tags("audiobook", &book.id.0.to_string(), &tags)
             .await?;
     }
-    Ok(Json(book))
+    Ok(book)
 }
 
 /// Delete options (SKADI-T-0316): `?delete_files=true` also removes the imported files +
@@ -1300,12 +1313,28 @@ async fn delete_book(
 ) -> Result<impl IntoResponse, ApiError> {
     let id: BookId = parse_id(&id, "book")?;
     // 404 if it isn't there, so DELETE is honest about what it removed.
-    let Some(book) = repo(&http).get_book(id).await? else {
+    if !delete_one(&http, id, opts.delete_files).await? {
         return Err(ApiError(AppError::NotFound(format!("book {id} not found"))));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The one delete path, shared by `DELETE /books/{id}` and the bulk delete
+/// (SKADI-T-0696). With `delete_files`, removes the files the book records as
+/// imported (those exact paths, nothing else) and prunes the emptied folders
+/// up to the book's root, never past it. Returns `false` when the book is not
+/// there.
+async fn delete_one(
+    http: &AudiobooksHttp,
+    id: BookId,
+    delete_files: bool,
+) -> Result<bool, ApiError> {
+    let Some(book) = repo(http).get_book(id).await? else {
+        return Ok(false);
     };
     // Remove the imported files + prune empty folders first (SKADI-T-0316), before the rows go.
-    if opts.delete_files {
-        let paths: Vec<std::path::PathBuf> = repo(&http)
+    if delete_files {
+        let paths: Vec<std::path::PathBuf> = repo(http)
             .list_book_files(id)
             .await
             .unwrap_or_default()
@@ -1327,8 +1356,85 @@ async fn delete_book(
         use skadi_store::ItemTagRepo;
         let _ = http.store.clear_item("audiobook", &id.0.to_string()).await;
     }
-    repo(&http).delete_book(id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    repo(http).delete_book(id).await?;
+    Ok(true)
+}
+
+/// `POST /books/bulk` (SKADI-T-0696): apply one action to many books in one
+/// request. Each id goes through the single-item path (`apply_patch`,
+/// `start_file_acquire`, `delete_one`), so a bulk action cannot do what the
+/// single route would not.
+async fn bulk_books(
+    State(http): State<AudiobooksHttp>,
+    skadi_api::error::ApiJson(req): skadi_api::error::ApiJson<BulkRequest>,
+) -> Result<Response, ApiError> {
+    let ids: Vec<(String, BookId)> = req.parsed_ids()?;
+    if req.action == BulkAction::Search && !domain_enabled(&http).await? {
+        return Ok(domain_disabled_response());
+    }
+    let mut report = BulkReport::new(req.action, ids.len());
+    for (raw, id) in ids {
+        let outcome = match req.action {
+            BulkAction::Monitor | BulkAction::Unmonitor => {
+                let patch = PatchBook {
+                    monitored: Some(req.action == BulkAction::Monitor),
+                    ..PatchBook::default()
+                };
+                apply_patch(&http, id, patch)
+                    .await
+                    .map(|_| BulkOutcome::Done)
+            }
+            BulkAction::Search => search_book(&http, id).await,
+            BulkAction::Delete => delete_one(&http, id, req.delete_files).await.map(|found| {
+                if found {
+                    BulkOutcome::Done
+                } else {
+                    BulkOutcome::NotFound
+                }
+            }),
+        };
+        report.record(raw, outcome);
+    }
+    Ok(Json(report).into_response())
+}
+
+/// Search one book now: start the manual acquire for each file that is not
+/// imported and not already in flight.
+async fn search_book(http: &AudiobooksHttp, id: BookId) -> Result<BulkOutcome, ApiError> {
+    let Some(book) = repo(http).get_book(id).await? else {
+        return Ok(BulkOutcome::NotFound);
+    };
+    let mut started = 0;
+    for file in &book.files {
+        if matches!(file.status, AcquisitionStatus::Imported { .. }) {
+            continue;
+        }
+        if start_file_acquire(http, &book, file) {
+            started += 1;
+        }
+    }
+    Ok(BulkOutcome::Searched(started))
+}
+
+/// Whether the audiobooks domain is enabled; manual acquire is refused while off.
+async fn domain_enabled(http: &AudiobooksHttp) -> Result<bool, ApiError> {
+    Ok(http
+        .store
+        .get(DOMAIN_NAME)
+        .await?
+        .map(|s| s.enabled)
+        .unwrap_or(false))
+}
+
+fn domain_disabled_response() -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "domain_disabled",
+            "message": "the audiobooks domain is disabled; enable it before acquiring"
+        })),
+    )
+        .into_response()
 }
 
 // --- manual acquire ---
@@ -1585,25 +1691,12 @@ async fn acquire_file(
     let file_id: BookFileId = parse_id(&fid, "book file")?;
 
     // Manual acquire requires the audiobooks domain to be enabled.
-    let enabled = http
-        .store
-        .get(DOMAIN_NAME)
-        .await?
-        .map(|s| s.enabled)
-        .unwrap_or(false);
-    if !enabled {
-        return Ok((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "domain_disabled",
-                "message": "the audiobooks domain is disabled; enable it before acquiring"
-            })),
-        )
-            .into_response());
+    if !domain_enabled(&http).await? {
+        return Ok(domain_disabled_response());
     }
 
     let (book, file) = load_book_file(&http, book_id, file_id).await?;
-    if fresh_in_flight(&file.status, file.updated_at) {
+    if !start_file_acquire(&http, &book, &file) {
         return Ok((
             StatusCode::CONFLICT,
             Json(serde_json::json!({
@@ -1614,9 +1707,23 @@ async fn acquire_file(
             .into_response());
     }
 
-    let seed = acquire_seed(&book, &file);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "run_id": fid, "accepted": true })),
+    )
+        .into_response())
+}
+
+/// The manual acquire for one book file, shared by `POST …/acquire` and the
+/// bulk search (SKADI-T-0696). Returns `false` (and starts nothing) when a fresh
+/// run is already working the file.
+fn start_file_acquire(http: &AudiobooksHttp, book: &Book, file: &BookFile) -> bool {
+    if fresh_in_flight(&file.status, file.updated_at) {
+        return false;
+    }
+    let seed = acquire_seed(book, file);
     // Fire-and-forget: the acquire workflow runs on its own task and the file's
-    // status is persisted by the pipeline's status sink. Return 202 immediately
+    // status is persisted by the pipeline's status sink. The caller answers 202
     // with the file id as the correlation reference.
     let runner = http.runner.clone();
     tokio::spawn(async move {
@@ -1624,12 +1731,7 @@ async fn acquire_file(
             tracing::warn!(error = %e, "manual acquire run failed to start");
         }
     });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "run_id": fid, "accepted": true })),
-    )
-        .into_response())
+    true
 }
 
 /// Force a wedged book file back to `Missing` so it can be re-acquired. Mirrors

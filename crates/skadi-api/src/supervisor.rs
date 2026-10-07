@@ -101,7 +101,8 @@ impl Supervisor {
 
     /// Share the [`AppState`](crate::AppState) whose API token this supervisor
     /// keeps current, so rotating `api_token` applies on the next tick
-    /// (SKADI-T-0466). The refresh itself lives on `AppState` so tests can drive
+    /// (SKADI-T-0466). The same tick also refreshes the health checks of that
+    /// state (SKADI-T-0680). The refresh itself lives on `AppState` so tests can drive
     /// it without standing up a supervisor.
     #[must_use]
     pub fn with_live_token(mut self, state: Arc<crate::AppState>) -> Self {
@@ -142,6 +143,11 @@ impl Supervisor {
         if let Some(state) = &self.auth_state {
             state.refresh_api_token().await;
             state.refresh_members().await;
+            // Spawned, not awaited: a provider probe can take its whole 30 s
+            // budget, and the tick must not wait on it. The cache does not
+            // start a check that an earlier tick is still running (SKADI-T-0680).
+            let state = state.clone();
+            tokio::spawn(async move { state.refresh_health().await });
         }
         for module in &self.registry {
             let name = module.name();

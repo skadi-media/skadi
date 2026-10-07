@@ -20,6 +20,12 @@ use crate::providers::build_one;
 /// working indexers as failing.
 const PROVIDER_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a provider result stays fresh (SKADI-T-0680). A provider probe is a
+/// network round trip to a service outside skadi (through FlareSolverr for some
+/// trackers), so it runs less often than the local checks. The search path's
+/// circuit breaker still marks a dead indexer down between two runs.
+const PROVIDER_CHECK_TTL: Duration = Duration::from_secs(5 * 60);
+
 /// Consecutive failures at which an indexer's health check answers from the
 /// cached health registry instead of a live `test()` (SKADI-T-0308). Live-testing
 /// a dead CloudFlare tracker serializes behind the single-threaded FlareSolverr
@@ -318,6 +324,9 @@ impl HealthCheck for ProviderCheck {
     }
     fn timeout(&self) -> Duration {
         PROVIDER_TEST_TIMEOUT
+    }
+    fn ttl(&self) -> Duration {
+        PROVIDER_CHECK_TTL
     }
     async fn run(&self) -> Outcome {
         // Known-down indexer → answer from the cached health registry instead of

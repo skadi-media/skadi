@@ -20,9 +20,8 @@ Feature: C34 health check model, cache, warnings and config sanity
   `database`, `worker`, `root`, `root:<domain>`, `disk-space`, `indexers`,
   `download-clients`, `domain:<domain>`, `indexer:<name>` and `vpn`.
 
-  "the health checks have run" sends `POST /health/checks/run`. Until that
-  route exists (SKADI-T-0680) a 404 is accepted, because `GET` still probes
-  live; so the model, warn and VPN scenarios do not wait on the cache task.
+  "the health checks have run" sends `POST /health/checks/run`, which runs
+  every check now; `GET` only reads the stored results (SKADI-T-0680).
 
   Background:
     Given a daemon running in open mode
@@ -48,7 +47,7 @@ Feature: C34 health check model, cache, warnings and config sanity
 
   # ---- the cache and the forced run (SKADI-T-0680) --------------------------
 
-  @C34 @gap
+  @C34 @passing
   Scenario: the health checks are served from the cache without probing a provider
     Given an indexer "countixr" whose server counts its requests
     When the client requests GET "/api/v1/health/checks"
@@ -56,7 +55,9 @@ Feature: C34 health check model, cache, warnings and config sanity
     Then the response status is 200
     And the server of indexer "countixr" has received 0 requests
 
-  @C34 @gap
+  # @serial: a latency budget measured while 60 other scenarios load the same
+  # Postgres measures the load, not the request.
+  @C34 @passing @serial
   Scenario: a provider that hangs does not slow the health checks request
     Given an indexer "hangixr" whose server accepts connections but never answers
     When the client requests GET "/api/v1/health/checks"
@@ -64,7 +65,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the request took less than 100 ms
     And the health check "indexer:hangixr" is pending
 
-  @C34 @gap
+  @C34 @passing
   Scenario: a check that has never run reports as pending, and the supervisor tick fills it in
     When the client requests GET "/api/v1/health/checks"
     Then the health check "database" is pending
@@ -73,7 +74,7 @@ Feature: C34 health check model, cache, warnings and config sanity
     Then the health check "database" has severity "ok"
     And the health check "database" has a checked_at time
 
-  @C34 @gap
+  @C34 @passing
   Scenario: POST /health/checks/run refreshes the cache and returns the new results
     When the client requests POST "/api/v1/health/checks/run"
     Then the response status is 200

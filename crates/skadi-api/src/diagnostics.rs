@@ -1,13 +1,13 @@
 //! Health checks + root-folder free-space diagnostics (SKADI-T-0116).
 //!
-//! Two read-only endpoints the Home dashboard ([[SKADI-T-0072]]) renders as
-//! badges:
+//! The endpoints the Home dashboard ([[SKADI-T-0072]]) renders as badges:
 //!
 //! - `GET /health/checks` — the results of the [`crate::health_checks`]
 //!   registry (SKADI-T-0679): one `{ id, label, severity, message, remediation,
 //!   checked_at }` per check, plus the old `{ name, status, detail }` as a
-//!   projection. Checks run concurrently, each within its own budget, so one
-//!   slow/dead provider can't hang the endpoint.
+//!   projection. It reads the stored results (SKADI-T-0680): the supervisor
+//!   tick runs the checks, so one slow/dead provider cannot slow the request.
+//! - `POST /health/checks/run[?id=]` — run the checks now (admin only).
 //! - `GET /root-folders` — per root folder: path, existence, writability, and
 //!   free/total bytes (via `statvfs`), so the UI can warn before a download
 //!   fills the disk (a real risk on the space-limited deploy host).
@@ -19,14 +19,14 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Serialize;
 
 use skadi_core::AppError;
 use skadi_store::{DomainStateRepo, Store};
 
 use crate::error::ApiError;
-use crate::health_checks::{CheckContext, HealthRegistry};
+use crate::health_checks::CheckContext;
 use crate::state::AppState;
 
 /// Free-space + health report for one configured root folder (SKADI-T-0232). Status is
@@ -56,6 +56,7 @@ pub struct RootFolderReport {
 pub fn diagnostics_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health/checks", get(health_checks))
+        .route("/health/checks/run", post(run_health_checks))
         .route("/root-folders", get(root_folders))
         .route("/root-folders/{id}/unmapped", get(unmapped_folders))
         .route("/system/status", get(system_status))
@@ -217,9 +218,36 @@ fn store(state: &AppState) -> Result<&Store, ApiError> {
         .ok_or_else(|| ApiError(AppError::Internal("store not configured".into())))
 }
 
+/// `GET /health/checks` — the stored results; runs no check (SKADI-T-0680). A
+/// check that has not run yet is `pending`, with `checked_at: null`.
 async fn health_checks(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let ctx = CheckContext::from_state(&state)?;
-    Ok(Json(HealthRegistry::builtin().run_all(&ctx).await))
+    Ok(Json(state.health.snapshot(&ctx).await))
+}
+
+/// Query for `POST /health/checks/run`.
+#[derive(serde::Deserialize)]
+struct RunChecksQuery {
+    /// Run only this check. Without it, every check runs.
+    id: Option<String>,
+}
+
+/// `POST /health/checks/run[?id=<check id>]` — run the checks now, store the
+/// results, and return every check as `GET /health/checks` would (SKADI-T-0680).
+/// Admin only: the household gate refuses a POST here to every other role. It
+/// waits for the checks it runs, each within its own timeout.
+async fn run_health_checks(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<RunChecksQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = CheckContext::from_state(&state)?;
+    match state.health.run_now(&ctx, q.id.as_deref()).await {
+        Some(results) => Ok(Json(results)),
+        None => Err(ApiError(AppError::NotFound(format!(
+            "no health check {:?}",
+            q.id.unwrap_or_default()
+        )))),
+    }
 }
 
 async fn root_folders(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {

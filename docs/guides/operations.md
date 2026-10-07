@@ -22,7 +22,12 @@ the web UI's single-page-app fallback with `200` and `index.html`, so it proves
 nothing. `/api/v1/health/checks` (bearer token required) is the diagnostics
 view: one entry per check with an `id`, a `label`, a `severity`
 (`ok`/`warn`/`error`), a `message`, a `remediation` (how to fix it; `null` when
-ok) and `checked_at`. Neither the daemon nor the worker has a compose `healthcheck`; only
+ok) and `checked_at`. The route reads stored results and does not probe. The
+daemon runs the checks in the background: the local checks every 30 s, the
+indexers and download clients every 5 minutes. A check that has not run yet has
+the severity `pending` and `checked_at: null`. To run the checks now, send
+`POST /api/v1/health/checks/run` (admin only; add `?id=<check id>` for one
+check). Neither the daemon nor the worker has a compose `healthcheck`; only
 gluetun, flaresolverr and postgres do — `docker compose ps` shows those three.
 
 ## Bring-up

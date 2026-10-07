@@ -85,6 +85,9 @@ async fn health_checks_cover_daemon_db_domain_and_a_dead_provider() {
     .await;
     assert_eq!(s, StatusCode::CREATED);
 
+    // GET serves the stored results (SKADI-T-0680): run the checks first.
+    let (s, _) = call(&state, "POST", "/api/v1/health/checks/run", None).await;
+    assert_eq!(s, StatusCode::OK);
     let (s, checks) = call(&state, "GET", "/api/v1/health/checks", None).await;
     assert_eq!(s, StatusCode::OK);
 
@@ -125,7 +128,16 @@ async fn health_checks_cover_daemon_db_domain_and_a_dead_provider() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
+    // A newly enabled domain is listed at once, pending until it runs.
     let (_, checks) = call(&state, "GET", "/api/v1/health/checks", None).await;
+    assert!(find(&checks, "domain:movies").unwrap()["checked_at"].is_null());
+    let (_, checks) = call(
+        &state,
+        "POST",
+        "/api/v1/health/checks/run?id=domain:movies",
+        None,
+    )
+    .await;
     assert_eq!(find(&checks, "domain:movies").unwrap()["status"], "ok");
 }
 

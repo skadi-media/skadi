@@ -184,10 +184,35 @@ impl Drop for EnvGuard {
 
 /// A `wiremock::MockServer` that stands in for a provider or for gluetun. The
 /// world keeps it alive for the scenario.
-pub struct Fake(pub wiremock::MockServer);
+pub struct Fake(Option<wiremock::MockServer>);
+
+impl Fake {
+    pub fn new(server: wiremock::MockServer) -> Self {
+        Fake(Some(server))
+    }
+
+    pub fn server(&self) -> &wiremock::MockServer {
+        self.0
+            .as_ref()
+            .expect("the fake server lives until the world drops")
+    }
+}
+
+impl Drop for Fake {
+    /// `MockServer`'s own `Drop` runs `futures::executor::block_on(verify())`.
+    /// The world drops on the thread that drives every scenario, so that
+    /// `block_on` can stall the whole run (seen as a hang at random steps,
+    /// SKADI-T-0680). Drop the server on a thread of its own instead.
+    fn drop(&mut self) {
+        if let Some(server) = self.0.take() {
+            std::thread::spawn(move || drop(server));
+        }
+    }
+}
+
 impl std::fmt::Debug for Fake {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Fake({})", self.0.uri())
+        write!(f, "Fake({})", self.server().uri())
     }
 }
 

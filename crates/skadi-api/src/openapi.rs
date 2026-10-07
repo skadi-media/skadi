@@ -98,6 +98,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "Per-subsystem health checks with their last result",
     ),
     (
+        "POST",
+        "/health/checks/run",
+        "system",
+        "Run the health checks now (all, or one by `?id=`) and return the new results. Admin only",
+    ),
+    (
         "GET",
         "/system/status",
         "system",

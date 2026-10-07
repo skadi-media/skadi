@@ -49,7 +49,8 @@ Feature: C34 health & diagnostics
   @C34 @passing
   Scenario: the health checks always include the daemon and the database
     Given a daemon running in open mode
-    When the client requests GET "/api/v1/health/checks"
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
     Then the response status is 200
     And the health check named "daemon" has status "ok"
     And the health check named "database" has status "ok"
@@ -60,7 +61,8 @@ Feature: C34 health & diagnostics
     And the daemon compiles in the "movies" domain
     And the daemon compiles in the "television" domain
     And the "television" domain is enabled
-    When the client requests GET "/api/v1/health/checks"
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
     Then the health check named "domain:television" has status "ok"
     And there is no health check named "domain:movies"
 
@@ -71,7 +73,8 @@ Feature: C34 health & diagnostics
       """
       { "kind": "torznab", "name": "deadixr", "base_url": "http://127.0.0.1:1", "categories": [2000], "api_key": "k" }
       """
-    When the client requests GET "/api/v1/health/checks"
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
     Then the response status is 200
     And the health check named "indexer:deadixr" has status "fail"
 
@@ -106,7 +109,8 @@ Feature: C34 health & diagnostics
   @C34 @passing @SKADI-T-0467
   Scenario: a silent download worker is a failing health check
     Given a daemon running in open mode
-    When the client requests GET "/api/v1/health/checks"
+    When the health checks have run
+    And the client requests GET "/api/v1/health/checks"
     Then the health check named "worker" has status "fail"
 
   @C34 @passing @SKADI-T-0467

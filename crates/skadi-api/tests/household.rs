@@ -655,3 +655,78 @@ async fn renaming_a_member_renames_what_they_sign_in_as() {
         "a deliberate one stands"
     );
 }
+
+/// SKADI-T-0680: forcing a health-check run is the admin's. Every other role is
+/// refused by the household gate (`path_allowed`), which the admin skips — so
+/// this test signs in as each non-admin role, not as the operator.
+#[tokio::test]
+async fn only_the_admin_can_force_a_health_check_run() {
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let mut tokens = Vec::new();
+    for (name, role) in [("Kim", "kid"), ("Jo", "member"), ("Cam", "contributor")] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            Some("operator-token"),
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        tokens.push((role, created["token"].as_str().unwrap().to_string()));
+    }
+    for (role, tok) in &tokens {
+        for uri in [
+            "/api/v1/health/checks/run",
+            "/api/v1/health/checks/run?id=database",
+        ] {
+            let (st, body) = call(&state, "POST", uri, Some(tok), None).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "POST {uri} as {role}: {body}");
+            assert_eq!(body["message"], "not allowed on this account");
+        }
+    }
+    // Nothing ran: the cache still lists the database as pending.
+    let (st, checks) = call(
+        &state,
+        "GET",
+        "/api/v1/health/checks",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let db_check = |checks: &serde_json::Value| {
+        checks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "database")
+            .cloned()
+            .unwrap()
+    };
+    assert!(db_check(&checks)["checked_at"].is_null(), "{checks}");
+
+    let (st, checks) = call(
+        &state,
+        "POST",
+        "/api/v1/health/checks/run",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{checks}");
+    assert_eq!(db_check(&checks)["severity"], "ok");
+    assert!(db_check(&checks)["checked_at"].is_string());
+
+    let (st, _) = call(
+        &state,
+        "POST",
+        "/api/v1/health/checks/run?id=no-such-check",
+        Some("operator-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

@@ -153,3 +153,50 @@ async fn run_loop_brings_up_enabled_domain_and_stops_on_cancel() {
 
     assert_eq!(stopped.load(Ordering::SeqCst), 1);
 }
+
+/// SKADI-T-0680: the supervisor tick refreshes the health checks with no request,
+/// in the background, and a later tick past the TTL moves `checked_at` on.
+#[tokio::test]
+async fn the_tick_refreshes_the_health_checks_without_a_request() {
+    use skadi_api::health_checks::{CheckContext, Severity};
+
+    let (store, _db) = temp_store().await;
+    let state = skadi_api::AppState::new(
+        skadi_api::Config {
+            database_url: "sqlite://:memory:".into(),
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            bearer_token: None,
+        },
+        Some(store.clone()),
+    );
+    let ctx = CheckContext::from_state(&state).unwrap();
+    let database = |snap: Vec<skadi_api::health_checks::CheckResult>| {
+        snap.into_iter().find(|r| r.id == "database").unwrap()
+    };
+    assert_eq!(
+        database(state.health.snapshot(&ctx).await).severity,
+        Severity::Pending
+    );
+
+    let sup = Supervisor::new(store, vec![]).with_live_token(state.clone());
+    sup.tick().await.unwrap();
+    let mut first = None;
+    for _ in 0..200 {
+        let db = database(state.health.snapshot(&ctx).await);
+        if let Some(at) = db.checked_at {
+            assert_eq!(db.severity, Severity::Ok);
+            first = Some(at);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let first = first.expect("the tick ran the database check");
+
+    // Fresh: the next tick does not run it again.
+    sup.tick().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        database(state.health.snapshot(&ctx).await).checked_at,
+        Some(first)
+    );
+}

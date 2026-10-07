@@ -3,8 +3,8 @@
 //!
 //! The fixtures that the code of today can build are real: fake providers and a
 //! fake gluetun (wiremock), a backdated worker heartbeat, recorded domain-worker
-//! failures. Three fixtures need a seam that does not exist yet; each panics and
-//! names the task that adds the seam (`todo_seam`).
+//! failures. The fixtures that still need a seam the code does not have panic and name
+//! the task that adds it (`todo_seam`).
 //!
 //! Checks are looked up by `id`, falling back to `name` (the pre-T-0679 field), in
 //! a bare array or in an object with a `checks` array.
@@ -79,15 +79,14 @@ async fn store_indexer(w: &mut World, name: &str, base_url: &str) {
 
 // ---- running the checks --------------------------------------------------------
 
-/// `POST /health/checks/run`. Until that route exists (SKADI-T-0680) a 404 or a
-/// 405 is accepted: `GET /health/checks` still probes live, so the model, warn and
-/// VPN scenarios do not wait on the cache task.
+/// `POST /health/checks/run` (SKADI-T-0680): runs every check now and stores the
+/// results that `GET /health/checks` then serves.
 #[given("the health checks have run")]
 #[when("the health checks have run")]
 async fn checks_have_run(w: &mut World) {
     let r = w.call("POST", "/api/v1/health/checks/run", None).await;
     assert!(
-        matches!(r.status, 200 | 404 | 405),
+        r.status == 200,
         "POST /health/checks/run answered {}: {}",
         r.status,
         r.text
@@ -97,11 +96,8 @@ async fn checks_have_run(w: &mut World) {
 /// SKADI-T-0680: run the refresh that the supervisor tick runs, against the
 /// cache of the scenario's `AppState` (`w.api()`), without an HTTP request.
 #[when("the supervisor refreshes the health checks")]
-async fn supervisor_refreshes(_w: &mut World) {
-    todo_seam(
-        "SKADI-T-0680",
-        "call the supervisor's health refresh against the scenario AppState's check cache",
-    );
+async fn supervisor_refreshes(w: &mut World) {
+    w.api().await.refresh_health().await;
 }
 
 #[when(expr = "{int} ms pass")]
@@ -123,7 +119,7 @@ async fn counting_indexer(w: &mut World, name: String) {
         .mount(&server)
         .await;
     let uri = server.uri();
-    w.fakes.insert(name.clone(), Fake(server));
+    w.fakes.insert(name.clone(), Fake::new(server));
     store_indexer(w, &name, &uri).await;
 }
 
@@ -136,7 +132,7 @@ async fn hanging_indexer(w: &mut World, name: String) {
         .mount(&server)
         .await;
     let uri = server.uri();
-    w.fakes.insert(name.clone(), Fake(server));
+    w.fakes.insert(name.clone(), Fake::new(server));
     store_indexer(w, &name, &uri).await;
 }
 
@@ -146,7 +142,12 @@ async fn indexer_hits(w: &mut World, name: String, n: usize) {
         .fakes
         .get(&name)
         .unwrap_or_else(|| panic!("no fake server {name:?}"));
-    let got = fake.0.received_requests().await.unwrap_or_default().len();
+    let got = fake
+        .server()
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .len();
     assert_eq!(got, n, "requests that reached indexer {name}");
 }
 
@@ -172,7 +173,7 @@ async fn fake_gluetun(w: &mut World, status: String, exit_ip: String) {
         .await;
     w.env_guards
         .push(EnvGuard::set("SKADI_GLUETUN_CONTROL_URL", &server.uri()));
-    w.fakes.insert("gluetun".into(), Fake(server));
+    w.fakes.insert("gluetun".into(), Fake::new(server));
 }
 
 // ---- configuration -------------------------------------------------------------

@@ -78,6 +78,10 @@ pub struct AppState {
     /// installed [`logbuf::LogBuffer::layer`] on its subscriber — tests and the
     /// CLI's one-shot commands do not.
     pub logs: crate::logbuf::LogBuffer,
+    /// The health checks and their last results (SKADI-T-0680).
+    /// `GET /health/checks` reads it; the supervisor tick refreshes it
+    /// ([`AppState::refresh_health`]).
+    pub health: Arc<crate::health_checks::HealthCache>,
 }
 
 impl AppState {
@@ -125,6 +129,15 @@ impl AppState {
         }
     }
 
+    /// Run the health checks whose results are older than their TTL, and store
+    /// the results (SKADI-T-0680). The supervisor tick spawns it; it returns when
+    /// those checks have finished. Without a store there is nothing to check.
+    pub async fn refresh_health(&self) {
+        if let Ok(ctx) = crate::health_checks::CheckContext::from_state(self) {
+            self.health.refresh_due(&ctx).await;
+        }
+    }
+
     pub fn new_full(
         config: Config,
         store: Option<Store>,
@@ -149,6 +162,9 @@ impl AppState {
                 crate::household::MemberDirectory::default(),
             )),
             logs: crate::logbuf::LogBuffer::new(),
+            health: Arc::new(crate::health_checks::HealthCache::new(
+                crate::health_checks::HealthRegistry::builtin(),
+            )),
         })
     }
 }

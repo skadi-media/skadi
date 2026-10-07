@@ -17,10 +17,10 @@
 //!   [`HealthRegistry::builtin`] (use [`single`] for a check that always exists);
 //! - new inputs a check needs (a disk probe, the gluetun client, …): add a field
 //!   to [`CheckContext`], filled in [`CheckContext::from_state`];
-//! - a cache: [`HealthRegistry::enumerate`] lists every check without running it
-//!   (a cache can list a never-run one as pending, `checked_at: null`), and
-//!   [`run_check`] runs one with its timeout, so a cache can refresh checks one by
-//!   one on its own schedule.
+//! - how often a check runs: [`HealthCheck::ttl`]. The endpoint reads the
+//!   results that [`HealthCache`] stores (SKADI-T-0680); the supervisor tick
+//!   refreshes the ones older than their TTL, and `POST /health/checks/run`
+//!   forces a run.
 //!
 //! The wire shape keeps the pre-T-0679 `{ name, status, detail }` fields as a
 //! projection of the new ones (see [`CheckResult`]), in the same bare JSON array,
@@ -28,6 +28,7 @@
 //! response unchanged.
 
 mod builtin;
+mod cache;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,11 +47,16 @@ pub use builtin::{
     DaemonCheck, DatabaseCheck, DomainCheck, DomainChecks, ProviderCheck, ProviderChecks,
     RootCheck, WorkerCheck,
 };
+pub use cache::HealthCache;
 
 /// How bad a check result is.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    /// Not run yet: the cache lists the check before its first run
+    /// (SKADI-T-0680). Only [`CheckResult::pending`] has it; a check never
+    /// answers it.
+    Pending,
     Ok,
     /// Works, but needs attention soon.
     Warn,
@@ -59,9 +65,12 @@ pub enum Severity {
 }
 
 impl Severity {
-    /// The pre-T-0679 `status` value: `ok` | `warn` | `fail`.
+    /// The pre-T-0679 `status` value: `ok` | `warn` | `fail`. Pending maps to
+    /// `warn`, which the clients of that field show as amber, "not known yet",
+    /// and not as a failure.
     pub fn legacy_status(self) -> &'static str {
         match self {
+            Severity::Pending => "warn",
             Severity::Ok => "ok",
             Severity::Warn => "warn",
             Severity::Error => "fail",
@@ -137,6 +146,18 @@ impl CheckResult {
             checked_at: Some(checked_at),
         }
     }
+
+    /// A check that has not run yet: `severity: pending`, `checked_at: null`.
+    pub fn pending(id: String, label: String) -> Self {
+        CheckResult {
+            id,
+            label,
+            severity: Severity::Pending,
+            message: "not checked yet".into(),
+            remediation: None,
+            checked_at: None,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -202,6 +223,10 @@ impl CheckContext {
 /// check that hangs reports an error instead of hanging the request.
 pub const DEFAULT_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a result stays fresh when the check does not set its own TTL. The
+/// cheap local checks (database, library root, worker heartbeat) use it.
+pub const DEFAULT_CHECK_TTL: Duration = Duration::from_secs(30);
+
 /// One health check.
 #[async_trait]
 pub trait HealthCheck: Send + Sync {
@@ -212,6 +237,11 @@ pub trait HealthCheck: Send + Sync {
     /// How long [`run`](Self::run) may take before the runner reports a timeout.
     fn timeout(&self) -> Duration {
         DEFAULT_CHECK_TIMEOUT
+    }
+    /// How long a result stays fresh before the next refresh runs the check
+    /// again ([`HealthCache::refresh_due`]).
+    fn ttl(&self) -> Duration {
+        DEFAULT_CHECK_TTL
     }
     /// Probe and report. Never panics on a failed probe: a failure is an
     /// [`Outcome::error`], not an `Err`.

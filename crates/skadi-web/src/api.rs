@@ -2105,6 +2105,117 @@ pub struct Download {
     /// string). `None` from a daemon older than SKADI-T-0686.
     #[serde(default)]
     pub created_at: Option<String>,
+    /// What a manual import of this transfer needs, and how its import went
+    /// (SKADI-T-0689). `None` unless it finished and its grab target is known.
+    #[serde(default)]
+    pub import: Option<DownloadImport>,
+}
+
+/// The manual-import facts of one finished transfer (mirror of the api
+/// `DownloadImportDto`, SKADI-T-0689).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct DownloadImport {
+    /// The media kind as `POST /downloads/import` takes it (`movie`, `series`, …).
+    pub kind: String,
+    /// The item the transfer was grabbed for.
+    pub acquirable_ref: String,
+    /// The file, or the folder of the files, to scan.
+    pub path: String,
+    /// `imported`, `failed`, `pending` or `not_imported`.
+    pub state: String,
+    /// Why the import failed, for `failed`.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// The body of `POST /downloads/import` and `/downloads/import/preview`
+/// (SKADI-T-0222 / SKADI-T-0224).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ManualImportRequest {
+    pub path: String,
+    pub kind: String,
+    pub acquirable_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+impl ManualImportRequest {
+    /// The request that imports `facts` (the row's own path, kind and target).
+    pub fn for_download(facts: &DownloadImport) -> Self {
+        Self {
+            path: facts.path.clone(),
+            kind: facts.kind.clone(),
+            acquirable_ref: facts.acquirable_ref.clone(),
+            category: None,
+        }
+    }
+}
+
+/// `POST /downloads/import/preview` answer: what an import would do, nothing
+/// touched. `would_import` is `(acquirable_ref, dest, action)`, action `place` or
+/// `replace`; `would_reject` is `(path, reason)`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ImportPlan {
+    #[serde(default)]
+    pub would_import: Vec<(String, String, String)>,
+    #[serde(default)]
+    pub would_reject: Vec<(String, String)>,
+    #[serde(default)]
+    pub would_replace: Vec<String>,
+}
+
+/// `POST /downloads/import` answer: what the import did. `rejected` and
+/// `failed` are `(path, reason)`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ImportOutcome {
+    #[serde(default)]
+    pub imported: Vec<String>,
+    #[serde(default)]
+    pub rejected: Vec<(String, String)>,
+    #[serde(default)]
+    pub replaced: Vec<String>,
+    #[serde(default)]
+    pub failed: Vec<(String, String)>,
+}
+
+/// POST `body` as JSON to `url` and read a `T` back; a refusal becomes the
+/// server's own message (else `what -> HTTP <status>`).
+async fn post_json<T: serde::de::DeserializeOwned>(
+    what: &str,
+    url: &str,
+    body: &impl Serialize,
+) -> Result<T, ApiError> {
+    let resp = post(url).json(body)?.send().await.noted()?;
+    if !resp.ok() {
+        let status = resp.status();
+        let detail = resp
+            .text()
+            .await
+            .ok()
+            .and_then(|t| extract_error_message(&t))
+            .unwrap_or_default();
+        return Err(ApiError(if detail.is_empty() {
+            format!("{what} -> HTTP {status}")
+        } else {
+            detail
+        }));
+    }
+    Ok(resp.json::<T>().await?)
+}
+
+/// `POST /downloads/import/preview` — dry-run a manual import (SKADI-T-0689).
+pub async fn preview_import(req: &ManualImportRequest) -> Result<ImportPlan, ApiError> {
+    post_json(
+        "import preview",
+        &format!("{API_BASE}/downloads/import/preview"),
+        req,
+    )
+    .await
+}
+
+/// `POST /downloads/import` — run a manual import (SKADI-T-0689).
+pub async fn run_import(req: &ManualImportRequest) -> Result<ImportOutcome, ApiError> {
+    post_json("import", &format!("{API_BASE}/downloads/import"), req).await
 }
 
 /// `GET /downloads` — the active download queue (queued + downloading) with live

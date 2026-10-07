@@ -808,7 +808,7 @@ fn DownloadsSection() -> impl IntoView {
         self as dlm, BulkAction, RowState, SelectAll, SortKey, SortState, StateFilter,
     };
     use crate::movies::size_human;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     let jobs = RwSignal::new(Vec::<api::Download>::new());
     // acquirable-ref -> (title, media tag), so a job shows a name + FILM/BOOK chip.
@@ -1229,6 +1229,73 @@ fn DownloadsSection() -> impl IntoView {
         .into_any()
     };
 
+    // Manual import of a finished transfer (SKADI-T-0689). Offered to the admin
+    // only (the import routes are admin-only on the API); the role is read in
+    // the row closure, so an unresolved role offers nothing. One preview is open
+    // at a time; its plan, the per-row result or error, and the rows imported
+    // here this session live apart from the polled rows, so a poll keeps them.
+    let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let import_open = RwSignal::new(None::<String>);
+    let import_plan = RwSignal::new(None::<Result<api::ImportPlan, String>>);
+    let import_busy = RwSignal::new(false);
+    let import_msg = RwSignal::new(HashMap::<String, (bool, String)>::new());
+    let imported_here = RwSignal::new(HashSet::<String>::new());
+    let open_import = move |id: String, facts: api::DownloadImport| {
+        import_open.set(Some(id.clone()));
+        import_plan.set(None);
+        import_msg.update(|m| {
+            m.remove(&id);
+        });
+        spawn_local(async move {
+            let plan = api::preview_import(&api::ManualImportRequest::for_download(&facts))
+                .await
+                .map_err(|e| e.0);
+            // A preview for a panel that was closed or moved on is dropped.
+            if import_open.get_untracked().as_deref() == Some(id.as_str()) {
+                import_plan.set(Some(plan));
+            }
+        });
+    };
+    let run_import = move |id: String, facts: api::DownloadImport| {
+        if import_busy.get_untracked() {
+            return;
+        }
+        let question = import_plan.with_untracked(|p| match p {
+            Some(Ok(plan)) => dlm::import_confirm_message(plan),
+            _ => None,
+        });
+        if let Some(question) = question {
+            // T-0694: use the in-app ConfirmDialog here once it lands.
+            if !window_confirm(&question) {
+                return;
+            }
+        }
+        import_busy.set(true);
+        spawn_local(async move {
+            let result = api::run_import(&api::ManualImportRequest::for_download(&facts)).await;
+            let (ok, text) = match result {
+                Ok(outcome) => dlm::import_result(&outcome),
+                Err(e) => (false, e.0),
+            };
+            if ok {
+                imported_here.update(|s| {
+                    s.insert(id.clone());
+                });
+                import_open.set(None);
+                import_plan.set(None);
+            }
+            import_msg.update(|m| {
+                m.insert(id, (ok, text));
+            });
+            import_busy.set(false);
+            refetch();
+        });
+    };
+    let close_import = move || {
+        import_open.set(None);
+        import_plan.set(None);
+    };
+
     // Seeding: collapsible accordion below active downloads (SKADI-T-0373).
     // Collapsed by default; state persists via localStorage. The Seeding chip
     // opens it, since it is then the only list on show.
@@ -1282,6 +1349,50 @@ fn DownloadsSection() -> impl IntoView {
                 let badge = row_badge_view(&j);
                 let error_line = dlm::error_message(&j)
                     .map(|e| view! { <div class="dl-error seed-error" title=e.clone()>{e.clone()}</div> });
+
+                // Manual import (SKADI-T-0689): the button, the importer's
+                // reason, the preview under the row, and the result or error.
+                let done_here = imported_here.with(|s| s.contains(&j.id));
+                let action = imported_here.with(|s| {
+                    dlm::import_action(&j, role.and_then(|r| r.get()).as_deref(), s)
+                });
+                let import_note = (!done_here)
+                    .then(|| dlm::import_note(&j))
+                    .flatten()
+                    .map(|n| view! { <div class="dl-error seed-error" title=n.clone()>{n.clone()}</div> });
+                let facts = j.import.clone();
+                let import_btn = action.zip(facts.clone()).map(|(a, f)| {
+                    let id = j.id.clone();
+                    view! {
+                        <button type="button" class="dl-toolbar-btn seed-import"
+                            on:click=move |_| open_import(id.clone(), f.clone())>{a.label()}</button>
+                    }
+                });
+                let panel = action
+                    .zip(facts)
+                    .filter(|_| import_open.with(|o| o.as_deref() == Some(j.id.as_str())))
+                    .map(|(a, f)| {
+                        let target = names
+                            .get(&f.acquirable_ref)
+                            .map(|(n, _)| n.clone())
+                            .unwrap_or_else(|| f.acquirable_ref.clone());
+                        import_panel_view(
+                            a,
+                            &target,
+                            &f,
+                            import_plan.get(),
+                            import_busy.get(),
+                            {
+                                let (id, f) = (j.id.clone(), f.clone());
+                                move || run_import(id.clone(), f.clone())
+                            },
+                            close_import,
+                        )
+                    });
+                let msg_line = import_msg.with(|m| m.get(&j.id).cloned()).map(|(ok, t)| {
+                    let cls = if ok { "seed-import-msg ok" } else { "seed-import-msg bad" };
+                    view! { <div class=cls role="status">{t}</div> }
+                });
                 view! {
                     <div class=row_cls>
                         <span class=dot_cls></span>
@@ -1291,7 +1402,11 @@ fn DownloadsSection() -> impl IntoView {
                         <span class="seed-up mono gold">{up}</span>
                         <span class=ratio_cls>{ratio}</span>
                         <span class="seed-added mono faint" title=added_title>{added_str}</span>
+                        {import_btn}
                         {error_line}
+                        {import_note}
+                        {msg_line}
+                        {panel}
                     </div>
                 }
             })
@@ -1416,6 +1531,74 @@ fn DownloadsSection() -> impl IntoView {
             })}
         </section>
     }
+}
+
+/// The preview of a manual import, under its row (SKADI-T-0689): where the scan
+/// starts, the item it is for, what each file would do, and the confirm button
+/// (off while the preview loads, has nothing to import, or an import runs). An
+/// error from the preview endpoint is shown here, in place of the plan.
+fn import_panel_view(
+    action: crate::downloads::ImportAction,
+    target: &str,
+    facts: &api::DownloadImport,
+    plan: Option<Result<api::ImportPlan, String>>,
+    busy: bool,
+    on_confirm: impl Fn() + 'static,
+    on_cancel: impl Fn() + 'static,
+) -> AnyView {
+    use crate::downloads::{ImportAction, plan_view};
+    let body = match plan {
+        None => view! { <p class="muted">"Loading the preview…"</p> }.into_any(),
+        Some(Err(e)) => {
+            view! { <div class="seed-import-msg bad" role="status">{e}</div> }.into_any()
+        }
+        Some(Ok(plan)) => {
+            let v = plan_view(&plan, &facts.acquirable_ref);
+            let match_note = match (action, v.can_import, v.same_target) {
+                (_, false, _) => None,
+                (ImportAction::Retry, true, true) => Some("The match is the same as the grab's."),
+                (_, true, false) => {
+                    Some("The files match other items than the grab's: check the list.")
+                }
+                (ImportAction::Import, true, true) => None,
+            };
+            let lines = v
+                .lines
+                .into_iter()
+                .map(|l| {
+                    let cls = format!("seed-plan-kind {}", l.kind.label());
+                    view! {
+                        <li>
+                            <span class=cls>{l.kind.label()}</span>
+                            <span class="mono" title=l.path.clone()>{l.path.clone()}</span>
+                            <span class="faint">{l.detail}</span>
+                        </li>
+                    }
+                })
+                .collect_view();
+            let can = v.can_import && !busy;
+            view! {
+                <p class="seed-plan-summary">{v.summary}</p>
+                {match_note.map(|n| view! { <p class="muted">{n}</p> })}
+                <ul class="seed-plan">{lines}</ul>
+                <button type="button" class="dl-toolbar-btn" disabled=!can
+                    on:click=move |_| on_confirm()>
+                    {if busy { "Importing…" } else { action.confirm_label() }}
+                </button>
+            }
+            .into_any()
+        }
+    };
+    view! {
+        <div class="seed-import-panel">
+            <div class="u-label">"Import preview"</div>
+            <p class="muted">"For " <strong>{target.to_string()}</strong></p>
+            <p class="mono faint" title=facts.path.clone()>{facts.path.clone()}</p>
+            {body}
+            <button type="button" class="dl-toolbar-btn" on:click=move |_| on_cancel()>"Cancel"</button>
+        </div>
+    }
+    .into_any()
 }
 
 /// Poll cadence for the torrent list (ms) — near-real-time so active transfers

@@ -597,6 +597,101 @@ async fn each_download_row_carries_a_sortable_created_at() {
     assert!(created.ends_with('Z'), "{created}");
 }
 
+/// A finished transfer carries what a manual import of it needs (SKADI-T-0689):
+/// the grab's kind (as the import endpoint takes it) and target, the path to
+/// scan, and how the import went. A row without a known target, or still
+/// downloading, carries none.
+#[tokio::test]
+async fn a_finished_download_carries_its_manual_import_facts() {
+    use skadi_store::{DownloadJobRepo, ImportState, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let enqueue = |name: &'static str| {
+        let store = db.store.clone();
+        async move {
+            store
+                .enqueue(&NewDownloadJob {
+                    acquirable_ref: format!("{name}.Release.1080p"),
+                    source: format!("magnet:?xt=urn:btih:{name}0689"),
+                    category: None,
+                    incomplete_dir: Some("/dl/incomplete".into()),
+                    complete_dir: Some("/dl/complete".into()),
+                })
+                .await
+                .unwrap()
+        }
+    };
+    // Failed import of a season pack: files under one folder of its own.
+    let failed = enqueue("failed").await;
+    db.store
+        .mark_complete(
+            &failed.id,
+            &[
+                "/dl/complete/Show.S01/E01.mkv".into(),
+                "/dl/complete/Show.S01/E02.mkv".into(),
+            ],
+        )
+        .await
+        .unwrap();
+    db.store
+        .set_download_target(&failed.id, "tv", "season-abc-1")
+        .await
+        .unwrap();
+    db.store
+        .set_download_import(&failed.id, ImportState::Failed, Some("no episode matched"))
+        .await
+        .unwrap();
+    // Just finished, no outcome yet: the hunter's to import.
+    let fresh = enqueue("fresh").await;
+    db.store
+        .mark_complete(&fresh.id, &["/dl/complete/Movie.mkv".into()])
+        .await
+        .unwrap();
+    db.store
+        .set_download_target(&fresh.id, "movie", "ed-fresh")
+        .await
+        .unwrap();
+    // Finished but from before the target was recorded.
+    let legacy = enqueue("legacy").await;
+    db.store
+        .mark_complete(&legacy.id, &["/dl/complete/Old.mkv".into()])
+        .await
+        .unwrap();
+    // Still queued, with a target.
+    let queued = enqueue("queued").await;
+    db.store
+        .set_download_target(&queued.id, "movie", "ed-q")
+        .await
+        .unwrap();
+
+    let (status, body) = call(&state, "/api/v1/downloads").await;
+    assert_eq!(status, StatusCode::OK);
+    let row = |id: &str| {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap_or_else(|| panic!("{id} listed: {body}"))
+            .clone()
+    };
+    assert_eq!(
+        row(&failed.id)["import"],
+        serde_json::json!({
+            "kind": "series",
+            "acquirable_ref": "season-abc-1",
+            "path": "/dl/complete/Show.S01",
+            "state": "failed",
+            "error": "no episode matched",
+        })
+    );
+    let fresh_row = row(&fresh.id);
+    assert_eq!(fresh_row["import"]["state"], "pending");
+    assert_eq!(fresh_row["import"]["path"], "/dl/complete/Movie.mkv");
+    assert_eq!(fresh_row["import"]["kind"], "movie");
+    assert_eq!(fresh_row["import"]["error"], serde_json::Value::Null);
+    assert_eq!(row(&legacy.id)["import"], serde_json::Value::Null);
+    assert_eq!(row(&queued.id)["import"], serde_json::Value::Null);
+}
+
 /// `/downloads` lists recent failures next to the live transfers, with their
 /// message, but bounded: at most 50, the most recently updated ones
 /// (SKADI-T-0687). The 7-day age bound is pinned in skadi-store

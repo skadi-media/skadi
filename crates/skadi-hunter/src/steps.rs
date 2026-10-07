@@ -960,7 +960,10 @@ pub async fn snatch(context: &mut Context<Value>) -> Result<()> {
                         None,
                     )
                     .await;
-                    let _ = handle; // (handle already stored in state)
+                    // Tell the download row what it is for (SKADI-T-0689): its own
+                    // `acquirable_ref` is the release title, so without this the
+                    // Downloads page cannot offer a manual import of it.
+                    record_download_target(&svc, &state, &handle.native_id).await;
                 }
             }
         }
@@ -1143,6 +1146,42 @@ fn stall_verdict(
     None
 }
 
+/// Write the grab target on the download row behind `native_id` (SKADI-T-0689).
+/// Best-effort: a row the store does not hold (a test fake's handle) is a no-op,
+/// and a write error is logged, never failing the grab.
+async fn record_download_target(svc: &HunterServices, state: &AcquireState, native_id: &str) {
+    use skadi_store::DownloadJobRepo;
+    let kind = crate::trace::kind_str(state.request.kind);
+    if let Err(e) = svc
+        .store
+        .set_download_target(native_id, kind, &state.acquirable.0)
+        .await
+    {
+        tracing::warn!(error = %e, "recording the download target failed (non-fatal)");
+    }
+}
+
+/// Write the import outcome on the run's download row (SKADI-T-0689): `None` =
+/// imported, `Some(reason)` = failed. Best-effort, like [`record_download_target`].
+async fn record_import_outcome(svc: &HunterServices, state: &AcquireState, failure: Option<&str>) {
+    use skadi_store::{DownloadJobRepo, ImportState};
+    let Some(handle) = state.handle.as_ref() else {
+        return;
+    };
+    let import_state = if failure.is_some() {
+        ImportState::Failed
+    } else {
+        ImportState::Imported
+    };
+    if let Err(e) = svc
+        .store
+        .set_download_import(&handle.native_id, import_state, failure)
+        .await
+    {
+        tracing::warn!(error = %e, "recording the import outcome failed (non-fatal)");
+    }
+}
+
 /// `import`: hand the completed transfer to the importer (resolving a per-run
 /// importer via the `ImporterFactory` if a domain installed one) and write
 /// `Imported`. On failure writes `Failed` + blocklists the release.
@@ -1164,6 +1203,7 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
         match factory.for_acquirable(&state.acquirable).await {
             Ok(i) => Some(i),
             Err(e) => {
+                record_import_outcome(&svc, &state, Some(&format!("importer factory: {e}"))).await;
                 record_failed_retryable(
                     &state,
                     FailureReason::ImportFailed(format!("importer factory: {e}")),
@@ -1181,6 +1221,12 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
         .map(|a| a.as_ref())
         .unwrap_or_else(|| svc.importer.as_ref());
     let result = pipeline::import(&mut state, importer).await;
+    record_import_outcome(
+        &svc,
+        &state,
+        result.as_ref().err().map(|e| e.to_string()).as_deref(),
+    )
+    .await;
     match &result {
         Ok(()) => {
             if let Some(outcome) = &state.outcome {

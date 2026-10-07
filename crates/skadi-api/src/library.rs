@@ -1075,6 +1075,99 @@ struct DownloadDto {
     /// When the job was enqueued: RFC 3339, UTC, always millisecond precision, so
     /// the string sorts in time order (the web "Added" column, SKADI-T-0686).
     created_at: String,
+    /// The manual import this row offers (SKADI-T-0689): set only on a finished
+    /// (`seeding`) transfer whose grab target is known and whose files make one
+    /// path to scan. Its fields are what `POST /downloads/import[/preview]` takes.
+    import: Option<DownloadImportDto>,
+}
+
+/// The manual-import facts of one finished transfer (SKADI-T-0689).
+#[derive(Serialize)]
+struct DownloadImportDto {
+    /// The media kind as `POST /downloads/import` takes it (`movie`, `series`, …).
+    kind: String,
+    /// The item the transfer was grabbed for (not the release title).
+    acquirable_ref: String,
+    /// The one file, or the folder that holds all the files, to scan.
+    path: String,
+    /// `imported`, `failed` (the importer refused it; see `error`), `pending`
+    /// (finished less than [`IMPORT_GRACE`] ago, the hunter can still import it)
+    /// or `not_imported` (finished earlier, no import recorded).
+    state: &'static str,
+    /// Why the import failed, for `failed`.
+    error: Option<String>,
+}
+
+/// How long after a transfer finishes its import is still the hunter's
+/// (SKADI-T-0689): the run's monitor picks the completion up and imports it at
+/// once, so a manual import is offered only after this, unless the import failed.
+const IMPORT_GRACE: chrono::Duration = chrono::Duration::minutes(10);
+
+/// The domain kind string on a download row (the hunter's `tv`, `movie`, …) as
+/// the import endpoints take it (the `MediaKind` debug name: `series`).
+fn import_kind(stored: &str) -> String {
+    match stored {
+        "tv" => "series".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The one path a manual import of `files` should scan (SKADI-T-0689): the file
+/// itself when there is one, else the deepest folder that holds them all. `None`
+/// when there are no files, or when that folder is a shared one (`/`, or the
+/// client's `complete_dir` / `incomplete_dir` or a parent of them): a scan there
+/// would take other transfers' files too.
+fn import_path(files: &[String], shared: &[Option<&str>]) -> Option<String> {
+    use std::path::{Path, PathBuf};
+    let (first, rest) = files.split_first()?;
+    if rest.is_empty() {
+        return Some(first.clone());
+    }
+    let mut common: PathBuf = Path::new(first).parent()?.to_path_buf();
+    for f in rest {
+        while !Path::new(f).starts_with(&common) {
+            common = common.parent()?.to_path_buf();
+        }
+    }
+    // The root holds everything.
+    common.parent()?;
+    let shared_dir = shared
+        .iter()
+        .flatten()
+        .any(|d| Path::new(d).starts_with(&common));
+    (!shared_dir).then(|| common.to_string_lossy().into_owned())
+}
+
+/// The manual-import facts of `j`, when it offers one (SKADI-T-0689).
+fn download_import(j: &skadi_store::DownloadJob) -> Option<DownloadImportDto> {
+    use skadi_store::{DownloadJobStatus, ImportState};
+    if j.status != DownloadJobStatus::Completed {
+        return None;
+    }
+    let (kind, target) = (j.target_kind.as_deref()?, j.target_ref.clone()?);
+    let path = import_path(
+        &j.files,
+        &[j.complete_dir.as_deref(), j.incomplete_dir.as_deref()],
+    )?;
+    let state = match j.import_state {
+        Some(ImportState::Imported) => "imported",
+        Some(ImportState::Failed) => "failed",
+        None => {
+            let finished = j.completed_at.unwrap_or(j.updated_at);
+            if chrono::Utc::now() - finished < IMPORT_GRACE {
+                "pending"
+            } else {
+                "not_imported"
+            }
+        }
+    };
+    Some(DownloadImportDto {
+        kind: import_kind(kind),
+        acquirable_ref: target,
+        path,
+        state,
+        error: j.import_error.clone().filter(|_| state == "failed"),
+    })
 }
 
 /// How far back `/downloads` lists failed transfers (SKADI-T-0687).
@@ -1212,7 +1305,9 @@ async fn downloads(
                 other => other.as_str(),
             }
             .to_string();
+            let import = download_import(&j);
             DownloadDto {
+                import,
                 id: j.id,
                 acquirable_ref: j.acquirable_ref,
                 info_hash: j.info_hash,
@@ -1620,5 +1715,55 @@ mod genre_facet_tests {
                 },
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod import_path_tests {
+    use super::{import_kind, import_path};
+
+    fn files(fs: &[&str]) -> Vec<String> {
+        fs.iter().map(|f| (*f).to_string()).collect()
+    }
+
+    #[test]
+    fn one_file_is_its_own_path() {
+        let got = import_path(&files(&["/dl/complete/Movie.mkv"]), &[Some("/dl/complete")]);
+        assert_eq!(got.as_deref(), Some("/dl/complete/Movie.mkv"));
+    }
+
+    #[test]
+    fn many_files_give_the_folder_that_holds_them_all() {
+        let got = import_path(
+            &files(&[
+                "/dl/complete/Show.S01/E01.mkv",
+                "/dl/complete/Show.S01/Subs/E01.srt",
+                "/dl/complete/Show.S01/E02.mkv",
+            ]),
+            &[Some("/dl/complete"), Some("/dl/incomplete")],
+        );
+        assert_eq!(got.as_deref(), Some("/dl/complete/Show.S01"));
+    }
+
+    #[test]
+    fn a_shared_folder_or_the_root_is_never_offered() {
+        // A multi-file torrent without a folder of its own: the common folder is
+        // the client's complete_dir, which holds other transfers too.
+        let flat = files(&["/dl/complete/a.mkv", "/dl/complete/b.mkv"]);
+        assert_eq!(import_path(&flat, &[Some("/dl/complete")]), None);
+        // A parent of a shared folder is as bad.
+        let split = files(&["/dl/complete/x/a.mkv", "/dl/incomplete/y/b.mkv"]);
+        assert_eq!(import_path(&split, &[Some("/dl/complete")]), None);
+        // The root.
+        let spread = files(&["/a/x.mkv", "/b/y.mkv"]);
+        assert_eq!(import_path(&spread, &[None]), None);
+        assert_eq!(import_path(&[], &[None]), None);
+    }
+
+    #[test]
+    fn the_hunter_tv_kind_is_the_endpoint_series_kind() {
+        assert_eq!(import_kind("tv"), "series");
+        assert_eq!(import_kind("movie"), "movie");
+        assert_eq!(import_kind("audiobook"), "audiobook");
     }
 }

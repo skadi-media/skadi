@@ -2120,3 +2120,22 @@ p.genres.muted {
 .dl-bulk-count { color: var(--fg-bright); margin-right: 0.4rem; }
 .dl-bulk .dl-toolbar-btn.danger { color: var(--bad); border-color: rgba(240, 100, 100, 0.4); }
 .dl-bulk .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Downloads manual import (SKADI-T-0689). The Import… button sits at the end
+   of a seeding row; the preview, the importer's reason and the result open
+   under the row, full width. */
+.seed-row:has(.seed-import-panel, .seed-import-msg, .seed-error) { flex-wrap: wrap; }
+.seed-import { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+.seed-import-msg { flex-basis: 100%; font-size: 0.78rem; overflow-wrap: anywhere; }
+.seed-import-msg.ok { color: var(--ok); }
+.seed-import-msg.bad { color: var(--bad); }
+.seed-import-panel { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; margin: 0.3rem 0 0.2rem; padding: 0.5rem 0.7rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+.seed-import-panel p { margin: 0; overflow-wrap: anywhere; }
+.seed-plan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; width: 100%; }
+.seed-plan li { display: flex; gap: 0.5rem; align-items: baseline; min-width: 0; }
+.seed-plan li .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.seed-plan-kind { font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
+.seed-plan-kind.place { color: var(--ok); }
+.seed-plan-kind.replace { color: var(--warn); }
+.seed-plan-kind.reject { color: var(--bad); }
+.seed-import-panel .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }

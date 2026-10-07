@@ -2780,3 +2780,45 @@ fn ten_selected_transfers_pause_as_exactly_those_ten_and_remove_with_files_asks_
             .starts_with("Remove 13 transfers AND delete")
     );
 }
+
+/// SKADI-T-0689: the row's `import` facts parse from the daemon's JSON, a
+/// failed import offers the admin a retry (and no one else anything), and the
+/// request carries exactly the row's path, kind and target.
+#[wasm_bindgen_test]
+fn a_failed_import_row_parses_and_offers_the_admin_a_retry() {
+    use skadi_web::api::{Download, ManualImportRequest};
+    use skadi_web::downloads::{ImportAction, import_action, import_note};
+    let d: Download = serde_json::from_value(json!({
+        "id": "x", "acquirable_ref": "Show.S01.1080p", "status": "seeding",
+        "progress_bytes": 1, "total_bytes": 1, "percent": 100.0,
+        "import": {
+            "kind": "series", "acquirable_ref": "season-abc-1",
+            "path": "/dl/complete/Show.S01", "state": "failed",
+            "error": "no episode matched"
+        }
+    }))
+    .unwrap();
+    let none = std::collections::HashSet::new();
+    assert_eq!(
+        import_action(&d, Some("admin"), &none),
+        Some(ImportAction::Retry)
+    );
+    assert_eq!(import_action(&d, Some("member"), &none), None);
+    assert_eq!(
+        import_note(&d).as_deref(),
+        Some("Import failed: no episode matched")
+    );
+    let req = ManualImportRequest::for_download(d.import.as_ref().unwrap());
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"path": "/dl/complete/Show.S01", "kind": "series", "acquirable_ref": "season-abc-1"})
+    );
+    // A row from an older daemon has no facts and offers nothing.
+    let old: Download = serde_json::from_value(json!({
+        "id": "o", "acquirable_ref": "r", "status": "seeding",
+        "progress_bytes": 0, "total_bytes": 0, "percent": 0.0
+    }))
+    .unwrap();
+    assert_eq!(old.import, None);
+    assert_eq!(import_action(&old, Some("admin"), &none), None);
+}

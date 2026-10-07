@@ -83,6 +83,10 @@ diesel::table! {
         completed_at -> Nullable<Timestamp>,
         lease_expires_at -> Nullable<Timestamp>,
         client_state -> Nullable<Text>,
+        target_kind -> Nullable<Text>,
+        target_ref -> Nullable<Text>,
+        import_state -> Nullable<Text>,
+        import_error -> Nullable<Text>,
     }
 }
 

@@ -781,3 +781,58 @@ async fn the_system_page_endpoints_are_the_admins_alone() {
     assert!(!commit.is_empty(), "{status}");
     assert_eq!(commit, skadi_api::diagnostics::BUILD_COMMIT);
 }
+
+/// SKADI-T-0689: the manual import the Downloads page offers is the admin's
+/// alone. A kid, member or contributor is refused both the preview and the
+/// import (and the Downloads list itself) at the gate; the admin passes it.
+#[tokio::test]
+async fn only_the_admin_can_preview_or_run_a_manual_import() {
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let body = serde_json::json!({
+        "path": "/nowhere/Movie.mkv",
+        "kind": "movie",
+        "acquirable_ref": "ed-1",
+    });
+    let routes = [
+        ("POST", "/api/v1/downloads/import/preview"),
+        ("POST", "/api/v1/downloads/import"),
+        ("GET", "/api/v1/downloads"),
+    ];
+    for (name, role) in [("Kai", "kid"), ("Mo", "member"), ("Cy", "contributor")] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            Some("operator-token"),
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        let tok = created["token"].as_str().unwrap().to_string();
+        for (method, uri) in routes {
+            let (st, got) = call(&state, method, uri, Some(&tok), Some(body.clone())).await;
+            assert_eq!(st, StatusCode::FORBIDDEN, "{method} {uri} as {role}: {got}");
+            assert_eq!(got["message"], "not allowed on this account");
+        }
+    }
+    // The admin gets past the gate: the handler answers (no domain is mounted
+    // here, so the kind is unknown: a 400 from the handler, not a 403).
+    for (method, uri) in routes {
+        let (st, got) = call(
+            &state,
+            method,
+            uri,
+            Some("operator-token"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_ne!(st, StatusCode::FORBIDDEN, "{method} {uri} as admin: {got}");
+        assert_ne!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} as admin: {got}"
+        );
+    }
+}

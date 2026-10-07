@@ -178,6 +178,48 @@ pub struct DownloadJob {
     /// client still `initializing`, which is exactly the case the stall watch used
     /// to mistake for a dead transfer. `None` when the client reports nothing.
     pub client_state: Option<String>,
+    /// What the transfer was grabbed for (SKADI-T-0689): the domain kind string
+    /// (`movie`, `tv`, `audiobook`, …) and the acquirable ref. The hunter writes
+    /// them at hand-off ([`set_download_target`]); `None` on rows from before, and
+    /// on transfers no hunter run grabbed. (`acquirable_ref` above is the release
+    /// title, not the item.)
+    ///
+    /// [`set_download_target`]: DownloadJobRepo::set_download_target
+    pub target_kind: Option<String>,
+    pub target_ref: Option<String>,
+    /// How the import of this transfer went (SKADI-T-0689): `imported` or
+    /// `failed` ([`ImportState`]), with the reason in `import_error`. `None` until
+    /// an import step ends.
+    pub import_state: Option<ImportState>,
+    pub import_error: Option<String>,
+}
+
+/// The outcome of the import of a finished transfer (SKADI-T-0689).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportState {
+    Imported,
+    Failed,
+}
+
+impl ImportState {
+    /// The stored `import_state` value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImportState::Imported => "imported",
+            ImportState::Failed => "failed",
+        }
+    }
+
+    /// Parse a stored value; an unknown one reads as `None` (tolerant read).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "imported" => Some(ImportState::Imported),
+            "failed" => Some(ImportState::Failed),
+            _ => None,
+        }
+    }
 }
 
 /// The daemon enqueues + reads; the worker claims, writes progress, and tears
@@ -217,6 +259,18 @@ pub trait DownloadJobRepo: Send + Sync {
     /// Mark a seeding (`completed`) job `seeded` — a seed-ratio/seed-time limit was
     /// reached, so the worker stopped seeding it (SKADI-T-0210). Terminal.
     async fn mark_seeded(&self, id: &str) -> Result<()>;
+    /// Record what a transfer was grabbed for (SKADI-T-0689): the domain `kind`
+    /// string and the acquirable ref. A missing row is not an error (no-op).
+    async fn set_download_target(&self, id: &str, kind: &str, target_ref: &str) -> Result<()>;
+    /// Record how the import of a transfer went (SKADI-T-0689): `Imported` clears
+    /// any earlier error; `Failed` keeps `error` as the reason. Leaves `status`
+    /// and `updated_at` alone. A missing row is not an error (no-op).
+    async fn set_download_import(
+        &self,
+        id: &str,
+        state: ImportState,
+        error: Option<&str>,
+    ) -> Result<()>;
     /// Mark a job `error` with a reason.
     async fn mark_error(&self, id: &str, reason: &str) -> Result<()>;
     /// Request removal (`remove_requested`); the worker actions it then calls
@@ -329,6 +383,10 @@ struct Row {
     completed_at: Option<Timestamp>,
     lease_expires_at: Option<Timestamp>,
     client_state: Option<String>,
+    target_kind: Option<String>,
+    target_ref: Option<String>,
+    import_state: Option<String>,
+    import_error: Option<String>,
 }
 
 impl TryFrom<Row> for DownloadJob {
@@ -360,6 +418,10 @@ impl TryFrom<Row> for DownloadJob {
             completed_at: r.completed_at.map(|t| t.0),
             lease_expires_at: r.lease_expires_at.map(|t| t.0),
             client_state: r.client_state,
+            target_kind: r.target_kind,
+            target_ref: r.target_ref,
+            import_state: r.import_state.as_deref().and_then(ImportState::parse),
+            import_error: r.import_error,
         })
     }
 }
@@ -405,6 +467,10 @@ impl DownloadJobRepo for Store {
             completed_at: None,
             lease_expires_at: None,
             client_state: None,
+            target_kind: None,
+            target_ref: None,
+            import_state: None,
+            import_error: None,
         };
         let id = row.id.clone();
         let acquirable_ref = req.acquirable_ref.clone();
@@ -638,6 +704,45 @@ impl DownloadJobRepo for Store {
             ))
             .execute(conn)
             .map_err(db_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn set_download_target(&self, id: &str, kind: &str, target_ref: &str) -> Result<()> {
+        let (id, kind, target_ref) = (id.to_string(), kind.to_string(), target_ref.to_string());
+        self.with_conn(move |conn| {
+            diesel::update(downloads::table.find(&id))
+                .set((
+                    downloads::target_kind.eq(Some(kind)),
+                    downloads::target_ref.eq(Some(target_ref)),
+                ))
+                .execute(conn)
+                .map_err(db_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn set_download_import(
+        &self,
+        id: &str,
+        state: ImportState,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let id = id.to_string();
+        let error = match state {
+            ImportState::Imported => None,
+            ImportState::Failed => error.map(str::to_owned),
+        };
+        self.with_conn(move |conn| {
+            diesel::update(downloads::table.find(&id))
+                .set((
+                    downloads::import_state.eq(Some(state.as_str())),
+                    downloads::import_error.eq(error),
+                ))
+                .execute(conn)
+                .map_err(db_err)?;
             Ok(())
         })
         .await
@@ -934,6 +1039,55 @@ mod tests {
         let fetched = store.get_download(&job.id).await.unwrap().unwrap();
         assert_eq!(fetched, job);
         assert!(store.get_download("nope").await.unwrap().is_none());
+    }
+
+    /// The grab target and the import outcome round-trip on the row
+    /// (SKADI-T-0689), and neither write moves `status` or `updated_at` (the
+    /// errored-list window and the dedup read `updated_at`).
+    #[tokio::test]
+    async fn the_import_target_and_outcome_round_trip() {
+        let store = temp_store().await;
+        let job = store
+            .enqueue(&req("Some.Release.1080p", "magnet:?t"))
+            .await
+            .unwrap();
+        assert_eq!(job.target_kind, None);
+        assert_eq!(job.import_state, None);
+
+        store
+            .set_download_target(&job.id, "movie", "edition-1")
+            .await
+            .unwrap();
+        store
+            .set_download_import(&job.id, ImportState::Failed, Some("no match"))
+            .await
+            .unwrap();
+        let got = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(got.target_kind.as_deref(), Some("movie"));
+        assert_eq!(got.target_ref.as_deref(), Some("edition-1"));
+        assert_eq!(got.import_state, Some(ImportState::Failed));
+        assert_eq!(got.import_error.as_deref(), Some("no match"));
+        assert_eq!(got.status, job.status);
+        assert_eq!(got.updated_at, job.updated_at);
+
+        // A later success clears the reason.
+        store
+            .set_download_import(&job.id, ImportState::Imported, Some("ignored"))
+            .await
+            .unwrap();
+        let got = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(got.import_state, Some(ImportState::Imported));
+        assert_eq!(got.import_error, None);
+
+        // A missing row is a no-op.
+        store
+            .set_download_target("nope", "movie", "x")
+            .await
+            .unwrap();
+        store
+            .set_download_import("nope", ImportState::Imported, None)
+            .await
+            .unwrap();
     }
 
     /// The downloads page's status filter runs in SQL now (SKADI-T-0494). It has

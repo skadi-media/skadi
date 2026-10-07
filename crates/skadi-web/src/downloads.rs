@@ -8,12 +8,14 @@
 //! [`state_counts`] add up to the "All" count. The row badges ([`row_badge`],
 //! SKADI-T-0687) come from the same state, so a badge always matches its chip;
 //! bulk select (SKADI-T-0688, [`Selection`], [`bulk_targets`]) keys off the
-//! row `id`.
+//! row `id`. The manual import of a finished transfer (SKADI-T-0689,
+//! [`import_action`], [`plan_view`], [`import_result`]) reads the row's
+//! `import` facts.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-use crate::api::Download;
+use crate::api::{Download, ImportOutcome, ImportPlan};
 
 /// The one state a row is in, for the chips and (later) the row badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -552,6 +554,216 @@ pub fn bulk_result_message(action: BulkAction, done: usize, failed: usize) -> Op
     (failed > 0).then(|| format!("{}: {failed} of {} failed.", action.label(), done + failed))
 }
 
+// ---------------------------------------------------------------------------
+// Manual import (SKADI-T-0689)
+// ---------------------------------------------------------------------------
+
+/// The import a finished row offers: a first one, or another try after the
+/// importer refused it. Both show the preview first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportAction {
+    Import,
+    Retry,
+}
+
+impl ImportAction {
+    /// The row button.
+    pub fn label(self) -> &'static str {
+        match self {
+            ImportAction::Import => "Import…",
+            ImportAction::Retry => "Retry import…",
+        }
+    }
+
+    /// The button under the preview that runs it.
+    pub fn confirm_label(self) -> &'static str {
+        match self {
+            ImportAction::Import => "Import",
+            ImportAction::Retry => "Retry import",
+        }
+    }
+}
+
+/// The import `d` offers to this `role`, if any. Only the admin may import
+/// (`POST /downloads/import[/preview]` is admin-only on the API), and only a
+/// row whose import failed (`Retry`) or that finished without one (`Import`).
+/// A row still in the hunter's hands (`pending`), already imported, or
+/// imported from this page in this session (`done_here`) offers none.
+pub fn import_action(
+    d: &Download,
+    role: Option<&str>,
+    done_here: &HashSet<String>,
+) -> Option<ImportAction> {
+    if role != Some("admin") || done_here.contains(&d.id) {
+        return None;
+    }
+    match d.import.as_ref()?.state.as_str() {
+        "failed" => Some(ImportAction::Retry),
+        "not_imported" => Some(ImportAction::Import),
+        _ => None,
+    }
+}
+
+/// The line under a row whose import failed: the importer's reason.
+pub fn import_note(d: &Download) -> Option<String> {
+    let facts = d.import.as_ref().filter(|f| f.state == "failed")?;
+    let reason = facts
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .unwrap_or("no reason given");
+    Some(format!("Import failed: {reason}"))
+}
+
+/// What one line of the preview says a file will do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanLineKind {
+    Place,
+    Replace,
+    Reject,
+}
+
+impl PlanLineKind {
+    /// The tag before the line.
+    pub fn label(self) -> &'static str {
+        match self {
+            PlanLineKind::Place => "place",
+            PlanLineKind::Replace => "replace",
+            PlanLineKind::Reject => "reject",
+        }
+    }
+}
+
+/// One line of the preview: a destination (place/replace, with the item it
+/// matched) or a rejected source file (with the reason).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanLine {
+    pub kind: PlanLineKind,
+    pub path: String,
+    /// The matched item (place/replace) or why the file was refused (reject).
+    pub detail: String,
+}
+
+/// The preview as the page shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanView {
+    pub lines: Vec<PlanLine>,
+    /// Something would be imported, so the confirm button is live.
+    pub can_import: bool,
+    /// Every file matched the item the transfer was grabbed for: the match is
+    /// unchanged. `false` for a pack, whose files match the items inside it.
+    pub same_target: bool,
+    pub summary: String,
+}
+
+fn files(n: usize) -> String {
+    if n == 1 {
+        "1 file".into()
+    } else {
+        format!("{n} files")
+    }
+}
+
+/// The page's reading of a preview, for the grab target `target`.
+pub fn plan_view(plan: &ImportPlan, target: &str) -> PlanView {
+    let mut lines: Vec<PlanLine> = plan
+        .would_import
+        .iter()
+        .map(|(aref, dest, action)| PlanLine {
+            kind: if action == "replace" {
+                PlanLineKind::Replace
+            } else {
+                PlanLineKind::Place
+            },
+            path: dest.clone(),
+            detail: aref.clone(),
+        })
+        .collect();
+    lines.extend(plan.would_reject.iter().map(|(path, reason)| PlanLine {
+        kind: PlanLineKind::Reject,
+        path: path.clone(),
+        detail: reason.clone(),
+    }));
+    let replace = lines
+        .iter()
+        .filter(|l| l.kind == PlanLineKind::Replace)
+        .count();
+    let place = plan.would_import.len() - replace;
+    let reject = plan.would_reject.len();
+    let can_import = !plan.would_import.is_empty();
+    let summary = if can_import {
+        let mut parts = Vec::new();
+        if place > 0 {
+            parts.push(format!("{} to place", files(place)));
+        }
+        if replace > 0 {
+            parts.push(format!("{} to replace", files(replace)));
+        }
+        if reject > 0 {
+            parts.push(format!("{reject} rejected"));
+        }
+        parts.join(", ")
+    } else if reject > 0 {
+        format!("Nothing to import: {} rejected.", files(reject))
+    } else {
+        "Nothing to import.".into()
+    };
+    PlanView {
+        same_target: can_import && plan.would_import.iter().all(|(a, _, _)| a == target),
+        lines,
+        can_import,
+        summary,
+    }
+}
+
+/// The extra question before an import that would replace library files;
+/// `None` when it places only new ones.
+pub fn import_confirm_message(plan: &ImportPlan) -> Option<String> {
+    let n = plan
+        .would_import
+        .iter()
+        .filter(|(_, _, a)| a == "replace")
+        .count();
+    (n > 0).then(|| {
+        format!(
+            "This import replaces {} already in the library. Continue?",
+            files(n)
+        )
+    })
+}
+
+/// What the import did, as one line: `(true, …)` when it placed or replaced
+/// something, `(false, …)` when it imported nothing.
+pub fn import_result(outcome: &ImportOutcome) -> (bool, String) {
+    let done = outcome.imported.len();
+    let replaced = outcome.replaced.len();
+    let refused: Vec<&(String, String)> = outcome
+        .rejected
+        .iter()
+        .chain(outcome.failed.iter())
+        .collect();
+    let first_reason = refused.first().map(|(_, r)| r.as_str());
+    if done == 0 && replaced == 0 {
+        return (
+            false,
+            match first_reason {
+                Some(r) => format!("Nothing imported: {r}"),
+                None => "Nothing imported.".into(),
+            },
+        );
+    }
+    let mut text = format!("Imported {}", files(done));
+    if replaced > 0 {
+        text.push_str(&format!(", replaced {replaced}"));
+    }
+    if let Some(r) = first_reason {
+        text.push_str(&format!("; {} not imported ({r})", refused.len()));
+    }
+    text.push('.');
+    (true, text)
+}
+
 /// The "Added" cell: a compact age (`5m`, `3h`, `2d`) from the seconds since
 /// the job was enqueued. Unknown (no `created_at`, unparsable) is `—`; a clock
 /// a little ahead of the daemon's is `now`.
@@ -591,6 +803,151 @@ mod tests {
             status: status.into(),
             ..Default::default()
         }
+    }
+
+    fn finished(id: &str, state: &str, error: Option<&str>) -> Download {
+        Download {
+            import: Some(crate::api::DownloadImport {
+                kind: "movie".into(),
+                acquirable_ref: "ed-1".into(),
+                path: "/dl/complete/Movie.mkv".into(),
+                state: state.into(),
+                error: error.map(str::to_owned),
+            }),
+            ..row(id, "seeding")
+        }
+    }
+
+    #[test]
+    fn only_the_admin_is_offered_an_import_and_only_where_it_is_due() {
+        let none = HashSet::new();
+        let failed = finished("f", "failed", Some("no match"));
+        let missed = finished("m", "not_imported", None);
+        let admin = Some("admin");
+        assert_eq!(
+            import_action(&failed, admin, &none),
+            Some(ImportAction::Retry)
+        );
+        assert_eq!(
+            import_action(&missed, admin, &none),
+            Some(ImportAction::Import)
+        );
+        // Not the importer's to retry yet, done, or no facts at all.
+        assert_eq!(
+            import_action(&finished("p", "pending", None), admin, &none),
+            None
+        );
+        assert_eq!(
+            import_action(&finished("i", "imported", None), admin, &none),
+            None
+        );
+        assert_eq!(import_action(&row("x", "seeding"), admin, &none), None);
+        // The API refuses the import routes to every other role, and an
+        // unresolved role is not a known admin.
+        for role in [Some("member"), Some("kid"), Some("contributor"), None] {
+            assert_eq!(import_action(&failed, role, &none), None, "{role:?}");
+        }
+        // Imported from the page this session: no second offer.
+        let done: HashSet<String> = ["f".to_string()].into();
+        assert_eq!(import_action(&failed, admin, &done), None);
+    }
+
+    #[test]
+    fn a_failed_import_shows_its_reason() {
+        assert_eq!(
+            import_note(&finished("f", "failed", Some("no match"))).as_deref(),
+            Some("Import failed: no match")
+        );
+        assert_eq!(
+            import_note(&finished("f", "failed", Some("  "))).as_deref(),
+            Some("Import failed: no reason given")
+        );
+        assert_eq!(import_note(&finished("m", "not_imported", None)), None);
+    }
+
+    fn plan(import: &[(&str, &str, &str)], reject: &[(&str, &str)]) -> ImportPlan {
+        ImportPlan {
+            would_import: import
+                .iter()
+                .map(|(a, d, x)| ((*a).into(), (*d).into(), (*x).into()))
+                .collect(),
+            would_reject: reject
+                .iter()
+                .map(|(p, r)| ((*p).into(), (*r).into()))
+                .collect(),
+            would_replace: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_preview_says_what_goes_where_and_whether_the_match_is_unchanged() {
+        let p = plan(
+            &[
+                ("ed-1", "/lib/Movie (2020)/Movie.mkv", "place"),
+                ("ed-1", "/lib/Movie (2020)/Movie.en.srt", "replace"),
+            ],
+            &[("/dl/complete/sample.mkv", "sample")],
+        );
+        let v = plan_view(&p, "ed-1");
+        assert!(v.can_import);
+        assert!(v.same_target);
+        assert_eq!(v.summary, "1 file to place, 1 file to replace, 1 rejected");
+        assert_eq!(v.lines.len(), 3);
+        assert_eq!(v.lines[1].kind, PlanLineKind::Replace);
+        assert_eq!(v.lines[2].kind, PlanLineKind::Reject);
+        assert_eq!(v.lines[2].detail, "sample");
+        // Matched another item than the grab.
+        assert!(!plan_view(&p, "ed-2").same_target);
+        // Nothing to import: the confirm button is off.
+        let none = plan_view(&plan(&[], &[("/dl/a.exe", "not media")]), "ed-1");
+        assert!(!none.can_import);
+        assert!(!none.same_target);
+        assert_eq!(none.summary, "Nothing to import: 1 file rejected.");
+        assert_eq!(
+            plan_view(&plan(&[], &[]), "ed-1").summary,
+            "Nothing to import."
+        );
+    }
+
+    #[test]
+    fn replacing_library_files_asks_first() {
+        assert_eq!(
+            import_confirm_message(&plan(&[("ed-1", "/lib/a.mkv", "place")], &[])),
+            None
+        );
+        assert_eq!(
+            import_confirm_message(&plan(&[("ed-1", "/lib/a.mkv", "replace")], &[])).as_deref(),
+            Some("This import replaces 1 file already in the library. Continue?")
+        );
+    }
+
+    #[test]
+    fn the_import_result_line_counts_what_landed_and_names_a_refusal() {
+        let ok = ImportOutcome {
+            imported: vec!["/lib/a.mkv".into(), "/lib/b.mkv".into()],
+            replaced: vec!["/lib/old.mkv".into()],
+            rejected: vec![("/dl/s.mkv".into(), "sample".into())],
+            failed: vec![],
+        };
+        assert_eq!(
+            import_result(&ok),
+            (
+                true,
+                "Imported 2 files, replaced 1; 1 not imported (sample).".into()
+            )
+        );
+        let nothing = ImportOutcome {
+            failed: vec![("/dl/a.mkv".into(), "disk full".into())],
+            ..Default::default()
+        };
+        assert_eq!(
+            import_result(&nothing),
+            (false, "Nothing imported: disk full".into())
+        );
+        assert_eq!(
+            import_result(&ImportOutcome::default()),
+            (false, "Nothing imported.".into())
+        );
     }
 
     fn sel(ids: &[&str]) -> Selection {

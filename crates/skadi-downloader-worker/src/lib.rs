@@ -2212,6 +2212,10 @@ mod tests {
             completed_at: None,
             lease_expires_at: None,
             client_state: None,
+            target_kind: None,
+            target_ref: None,
+            import_state: None,
+            import_error: None,
         };
         let jobs = vec![
             job("1", Some("AAAA"), DownloadJobStatus::Downloading),

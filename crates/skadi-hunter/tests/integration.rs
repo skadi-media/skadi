@@ -3430,3 +3430,207 @@ async fn replayed_duplicate_workflow_after_restart_snatches_exactly_once() {
     tracker.finish_adopted(&acquirable.0, Some("run-a"));
     assert!(!tracker.is_active(&acquirable.0));
 }
+
+// ---------------------------------------------------------------------------
+// SKADI-T-0689: the run tells the download row what it is for and how its
+// import went, so the Downloads page can offer a manual import of it.
+// ---------------------------------------------------------------------------
+
+/// A downloader backed by the real `downloads` queue: `add` enqueues a row (its
+/// `acquirable_ref` is the release title, as `DbDownloader` does) and completes
+/// it at once with the given files; the row id is the handle.
+struct QueueDownloader {
+    id: DownloaderId,
+    store: Store,
+    completed: Vec<std::path::PathBuf>,
+}
+
+#[async_trait]
+impl Downloader for QueueDownloader {
+    fn id(&self) -> DownloaderId {
+        self.id
+    }
+    fn protocol(&self) -> Protocol {
+        Protocol::Torrent
+    }
+    async fn test(&self) -> SkadiResult<()> {
+        Ok(())
+    }
+    async fn add(&self, r: &Release, c: &Category) -> SkadiResult<DownloadHandle> {
+        use skadi_store::DownloadJobRepo;
+        let job = self
+            .store
+            .enqueue(&skadi_store::NewDownloadJob {
+                acquirable_ref: r.title.clone(),
+                source: "magnet:?xt=urn:btih:queue".into(),
+                category: Some(format!("{}", c.0)),
+                incomplete_dir: None,
+                complete_dir: None,
+            })
+            .await?;
+        let files: Vec<String> = self
+            .completed
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        self.store.mark_complete(&job.id, &files).await?;
+        Ok(DownloadHandle {
+            native_id: job.id,
+            category: format!("{}", c.0),
+        })
+    }
+    async fn status(&self, _h: &DownloadHandle) -> SkadiResult<DownloadStatus> {
+        Ok(DownloadStatus::Completed {
+            files: self.completed.clone(),
+        })
+    }
+    async fn remove(&self, _: &DownloadHandle, _: bool) -> SkadiResult<()> {
+        Ok(())
+    }
+}
+
+/// A matcher that matches nothing: every file is rejected, so the import fails.
+struct MatchNothing;
+impl AcquirableMatcher for MatchNothing {
+    fn match_file(
+        &self,
+        _parsed: &skadi_quality::ParsedRelease,
+        _source: &Path,
+        _completed: &CompletedDownload,
+    ) -> Vec<AcquirableMatch> {
+        Vec::new()
+    }
+}
+
+/// Run one acquire of `ed-row` through a [`QueueDownloader`] with `importer`,
+/// and return the download row it left.
+async fn acquire_through_the_queue(
+    magnet: &str,
+    importer: Arc<dyn Importer>,
+) -> skadi_store::DownloadJob {
+    use skadi_store::DownloadJobRepo;
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("Movie.2020.1080p.BluRay.x264-GRP.mkv");
+    std::fs::write(&src, b"video").unwrap();
+    let skadi_url = format!("sqlite://{}", dir.path().join("skadi.db").display());
+    let store = skadi_store::Store::connect(&skadi_url).unwrap();
+    store.run_migrations().await.unwrap();
+
+    let defs = default_definitions();
+    let hi = defs.iter().find(|q| q.name == "Bluray-1080p").unwrap().id;
+    let profile = QualityProfile {
+        id: ProfileId::new(),
+        name: "queue".into(),
+        allowed: vec![hi],
+        cutoff: hi,
+        upgrade_allowed: false,
+        formats: vec![],
+        min_format_score: 0,
+    };
+    let title = "Movie.2020.1080p.BluRay.x264-GRP";
+    let release = Release {
+        indexer: IndexerId::new(),
+        title: title.into(),
+        fetch: ReleaseFetch::Magnet(magnet.into()),
+        size: 8_000_000_000,
+        published: Utc::now(),
+        seeders: Some(42),
+        categories: Vec::new(),
+        parsed: parse(title),
+    };
+    let services = Arc::new(HunterServices {
+        kind: skadi_core::MediaKind::Movie,
+        store: store.clone(),
+        status: Arc::new(InMemoryStatusSink::new()),
+        indexers: vec![Arc::new(OneShotIndexer {
+            id: IndexerId::new(),
+            release,
+            searches: std::sync::atomic::AtomicUsize::new(0),
+        })],
+        downloaders: vec![Arc::new(QueueDownloader {
+            id: DownloaderId::new(),
+            store: store.clone(),
+            completed: vec![src.clone()],
+        })],
+        importer,
+        importer_factory: None,
+        notifiers: vec![],
+        scoring: ScoringConfig {
+            definitions: defs,
+            profile: profile.clone(),
+            formats: vec![],
+            min_seeders: 0,
+            audiobook: None,
+        },
+    });
+    reset_services();
+    set_services(services);
+    let target = cloacina_target_for(&skadi_url).unwrap();
+    let runner = build_runner_for(&target).await.unwrap();
+    let seed = AcquireSeed {
+        acquirable: AcquirableRef("ed-row".into()),
+        request: SearchSpec {
+            trigger: Default::default(),
+            kind: MediaKind::Movie,
+            titles: vec!["Movie".into()],
+            year: Some(2020),
+            external_ids: ExternalIds::default(),
+            categories: vec![Category(2000)],
+            tv: None,
+            series: None,
+            tags: None,
+        },
+        profile: profile.id,
+        current_quality: None,
+        current_format_score: None,
+        current_unplayable: false,
+    };
+    let _ = start_acquire_2(&runner, seed).await.unwrap();
+    drain_tracker().await;
+    runner.shutdown().await.unwrap();
+
+    let rows = store.list_downloads().await.unwrap();
+    assert_eq!(rows.len(), 1, "one transfer enqueued: {rows:?}");
+    rows.into_iter().next().unwrap()
+}
+
+#[tokio::test]
+#[serial_test::serial(hunter_registry)]
+async fn a_grab_records_its_target_and_a_good_import_on_the_download_row() {
+    let library = tempfile::tempdir().unwrap();
+    let job = acquire_through_the_queue(
+        "magnet:?xt=urn:btih:rowok",
+        Arc::new(DefaultImporter::new(PlaceInDir::crediting(
+            library.path().to_path_buf(),
+            "ed-row",
+        ))),
+    )
+    .await;
+    // The row's own ref is the release title, not the item.
+    assert!(
+        job.acquirable_ref.starts_with("Movie.2020.1080p"),
+        "{}",
+        job.acquirable_ref
+    );
+    assert_eq!(job.target_kind.as_deref(), Some("movie"));
+    assert_eq!(job.target_ref.as_deref(), Some("ed-row"));
+    assert_eq!(job.import_state, Some(skadi_store::ImportState::Imported));
+    assert_eq!(job.import_error, None);
+}
+
+#[tokio::test]
+#[serial_test::serial(hunter_registry)]
+async fn a_rejected_import_is_recorded_as_failed_on_the_download_row() {
+    let job = acquire_through_the_queue(
+        "magnet:?xt=urn:btih:rowbad",
+        Arc::new(DefaultImporter::new(MatchNothing)),
+    )
+    .await;
+    assert_eq!(job.target_ref.as_deref(), Some("ed-row"));
+    assert_eq!(job.import_state, Some(skadi_store::ImportState::Failed));
+    assert!(
+        job.import_error.as_deref().is_some_and(|e| !e.is_empty()),
+        "the reason is kept: {:?}",
+        job.import_error
+    );
+}

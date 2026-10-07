@@ -46,7 +46,7 @@ pub use crypto::Cipher;
 pub use decision_history::{DecisionEntry, DecisionHistoryRepo};
 pub use diesel_dualdb::DualConnection;
 pub use downloads::{
-    DownloadJob, DownloadJobRepo, DownloadJobStatus, DownloadProgress, NewDownloadJob,
+    DownloadJob, DownloadJobRepo, DownloadJobStatus, DownloadProgress, ImportState, NewDownloadJob,
 };
 pub use history::{HistoryCounts, HistoryEntry, HistoryQuery, HistoryRepo};
 pub use import_lists::{ImportList, ImportListExclusion, ImportListRepo};

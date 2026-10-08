@@ -9,7 +9,7 @@
 # enqueues jobs, the worker claims them and writes progress back (SKADI-T-0086).
 [package]
 name = "skadi-downloader-worker"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"

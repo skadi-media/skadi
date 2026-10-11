@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -30,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -46,6 +48,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.skadi.core.Movie
 import com.skadi.core.Series
+
+/**
+ * Opens the Settings screen (SKADI-T-0721). Set by `Paired` around the tabs;
+ * `null` elsewhere, and then the bar has no gear.
+ */
+val LocalOpenSettings = staticCompositionLocalOf<(() -> Unit)?> { null }
 
 /**
  * Shared screen chrome (SKADI-T-0577).
@@ -150,6 +158,14 @@ fun SkadiTopBar(
                 }
             }
             actions()
+            // Top-level screens only: a screen with a back arrow is a step
+            // down, and Settings is one tap away from where it came from.
+            val openSettings = LocalOpenSettings.current
+            if (onBack == null && openSettings != null) {
+                IconButton(onClick = openSettings) {
+                    Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                }
+            }
         },
     )
 }

@@ -7,23 +7,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.skadi.core.Health
 import com.skadi.core.HealthCheck
@@ -129,7 +122,6 @@ fun ServerScreen(baseUrl: String, token: String?, onBack: () -> Unit) {
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Section("App")
-                ThemeRow()
                 Line("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
                 Line(
                     "Offered",
@@ -170,31 +162,5 @@ private fun Line(label: String, value: String, bad: Boolean = false, warn: Boole
             },
             modifier = Modifier.weight(0.62f),
         )
-    }
-}
-
-/**
- * The theme choice (SKADI-T-0721). The app has no settings screen; this
- * panel's App section is where its settings live. A tap saves at once and
- * MainActivity redraws in the new theme.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ThemeRow() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val current by Settings.theme(context).collectAsState(initial = null)
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text("Theme", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
-            val modes = SkadiThemeMode.entries
-            modes.forEachIndexed { i, mode ->
-                SegmentedButton(
-                    selected = mode == current,
-                    onClick = { scope.launch { Settings.saveTheme(context.applicationContext, mode) } },
-                    shape = SegmentedButtonDefaults.itemShape(index = i, count = modes.size),
-                ) { Text(mode.label, maxLines = 1) }
-            }
-        }
     }
 }

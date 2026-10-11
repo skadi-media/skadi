@@ -245,6 +245,9 @@ private fun Paired(baseUrl: String, token: String) {
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var changingPassword by rememberSaveable { mutableStateOf(false) }
     var showServer by rememberSaveable { mutableStateOf(false) }
+    // Settings (SKADI-T-0721): the gear on every tab's top bar, for every role.
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    val openSettings = { showSettings = true }
     // A show another tab asked the TV tab to open (SKADI-T-0608).
     var tvRequest by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val openSeries: (String, Int?) -> Unit = { sid, season ->
@@ -305,6 +308,11 @@ private fun Paired(baseUrl: String, token: String) {
         PlayerScreen(fid = fid, onBack = { playingFid = null })
         return
     }
+    if (showSettings) {
+        BackHandler { showSettings = false }
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
     if (showStorage) {
         BackHandler { showStorage = false }
         StorageScreen(onBack = { showStorage = false })
@@ -317,12 +325,14 @@ private fun Paired(baseUrl: String, token: String) {
     }
     if (showDownloads) {
         BackHandler { showDownloads = false }
-        DownloadsScreen(
-            baseUrl = baseUrl,
-            token = token,
-            onWanted = { showWanted = true },
-            onServer = { showServer = true },
-        )
+        CompositionLocalProvider(LocalOpenSettings provides openSettings) {
+            DownloadsScreen(
+                baseUrl = baseUrl,
+                token = token,
+                onWanted = { showWanted = true },
+                onServer = { showServer = true },
+            )
+        }
         return
     }
     if (changingPassword) {
@@ -401,37 +411,39 @@ private fun Paired(baseUrl: String, token: String) {
         },
     ) { inset ->
         Box(modifier = Modifier.fillMaxSize().padding(inset)) {
-            tabState.SaveableStateProvider(tab.name) {
-                when (tab) {
-                    Tab.Home -> HomeScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        isAdmin = admin,
-                        onOpenDownloads = { showDownloads = true },
-                        onManageStorage = { showStorage = true },
-                        onChangePassword = { changingPassword = true },
-                        onSignOut = unpair,
-                        onPlayVideo = { url, title, key -> playingVideo = Triple(url, title, key) },
-                        onPlayBook = { playingFid = it },
-                        onOpenSeries = { sid, season -> openSeries(sid, season) },
-                    )
-                    Tab.Audiobooks -> LibraryScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { playingFid = it },
-                    )
-                    Tab.Movies -> MoviesScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
-                    )
-                    Tab.Tv -> TvScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
-                        request = tvRequest,
-                        onRequestConsumed = { tvRequest = null },
-                    )
+            CompositionLocalProvider(LocalOpenSettings provides openSettings) {
+                tabState.SaveableStateProvider(tab.name) {
+                    when (tab) {
+                        Tab.Home -> HomeScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            isAdmin = admin,
+                            onOpenDownloads = { showDownloads = true },
+                            onManageStorage = { showStorage = true },
+                            onChangePassword = { changingPassword = true },
+                            onSignOut = unpair,
+                            onPlayVideo = { url, title, key -> playingVideo = Triple(url, title, key) },
+                            onPlayBook = { playingFid = it },
+                            onOpenSeries = { sid, season -> openSeries(sid, season) },
+                        )
+                        Tab.Audiobooks -> LibraryScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { playingFid = it },
+                        )
+                        Tab.Movies -> MoviesScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
+                        )
+                        Tab.Tv -> TvScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
+                            request = tvRequest,
+                            onRequestConsumed = { tvRequest = null },
+                        )
+                    }
                 }
             }
         }

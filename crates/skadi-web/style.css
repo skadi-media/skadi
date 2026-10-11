@@ -74,19 +74,7 @@ a { color: var(--ice); text-decoration: none; }
 }
 .daemon-line > span:not(.health-dot) { overflow: hidden; text-overflow: ellipsis; }
 .daemon-line .faint { color: var(--faint); }
-.add-media {
-  flex: none;
-  background: var(--ice);
-  color: var(--on-accent);
-  border: 1px solid var(--ice);
-  border-radius: 9px;
-  font-weight: 600;
-  font-size: 13px;
-  padding: 6px 12px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.add-media:hover { background: var(--ice-5); border-color: var(--ice-5); }
+.add-media { flex: none; }
 @media (max-width: 520px) {
   /* A phone shows only the health dot; the words would push the button off.
      They stay for screen readers. */
@@ -1939,28 +1927,13 @@ p.genres.muted {
 .pair-link-row { display: flex; gap: 0.4rem; align-items: center; width: 100%; }
 .pair-link { flex: 1; min-width: 0; font-size: 0.72rem; word-break: break-all; color: var(--muted); }
 
-/* Sign-in page (SKADI-T-0621) */
-.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
-.login-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 1.5rem;
-  width: min(360px, 100%);
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.login-title { margin: 0; font-size: 1.6rem; color: var(--ice); }
-.login-card .muted { margin: 0 0 0.4rem; font-size: 0.85rem; }
-.login-card .field input { width: 100%; box-sizing: border-box; }
-.login-submit { margin-top: 0.4rem; }
-.nav-account { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); padding: 0 0.2rem; }
-.nav-account button { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 0; font-size: 0.8rem; }
-.nav-account button:hover { color: var(--bad); }
-.pw-form { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--border); border-radius: 8px; margin-top: 0.4rem; }
-.pw-form .field > label { font-size: 0.75rem; }
-.pw-form input { width: 100%; box-sizing: border-box; }
+/* Sign-in page (SKADI-T-0621): Aurora's CenterScreen + AuthCard and fields
+   (SKADI-T-0719); the form stacks them. */
+.login-form, .pw-form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.login-form p, .pw-form p { margin: 0; }
+.login-submit { width: 100%; margin-top: 0.2rem; }
+.nav-account { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); padding: 0 0.2rem; }
+.nav-account > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* Section strips (SKADI-T-0627): one sidebar entry per area, links per page. */
 .subnav { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; }
@@ -2084,47 +2057,9 @@ p.genres.muted {
 .dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
 .dl-row-compact .dl-actions button.dl-qmove:disabled { opacity: 0.35; cursor: default; }
 
-/* In-app confirm dialog (SKADI-T-0694), in place of window.confirm(). */
-.confirm-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: var(--scrim);
-}
-.confirm-dialog {
-  width: min(28rem, 100%);
-  background: var(--panel);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-  padding: 1.1rem 1.2rem 1rem;
-  box-shadow: var(--shadow-lg);
-  font-family: var(--font-sans);
-}
-.confirm-title {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--fg-bright);
-}
-.confirm-body {
-  margin: 0 0 1rem;
-  font-size: 0.88rem;
-  line-height: 1.45;
-  color: var(--fg-2);
-  white-space: pre-line;
-}
-.confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-.confirm-dialog button:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
-.confirm-dialog button.confirm-ok.danger {
-  color: var(--bad);
-  border-color: color-mix(in srgb, var(--bad) 50%, transparent);
-}
-.confirm-dialog button.confirm-ok.danger:hover { background: var(--bad-bg); }
+/* The confirm dialog is Aurora's ConfirmDialog (SKADI-T-0719); the body
+   keeps its line breaks. */
+.confirm-body { margin: 0; line-height: 1.45; color: var(--fg-2); white-space: pre-line; }
 
 /* Library toolbar (SKADI-T-0695): one component over the movie, TV and
    audiobook walls. The controls row keeps the old filter-bar layout; the
@@ -2281,10 +2216,11 @@ p.genres.muted {
   .skeleton .sk-block, .skeleton .sk-line { animation: none; background: var(--control); }
 }
 
-/* A failed list load and its Retry button (SKADI-T-0698). */
-.load-error {
+/* A failed list load and its Retry button (SKADI-T-0698): an Aurora Alert
+   (SKADI-T-0719). */
+.load-error { margin: 0.2rem 0 0.8rem; }
+.load-error-row {
   display: flex; align-items: center; justify-content: space-between; gap: 0.8rem;
-  margin: 0.2rem 0 0.8rem;
   overflow-wrap: anywhere;
 }
 .load-error-retry { flex: 0 0 auto; }

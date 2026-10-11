@@ -5,6 +5,7 @@
 //! fires with Ctrl / Cmd / Alt held, while the focus is in a text field, or
 //! while a confirm dialog is open.
 
+use aurora_leptos::components::Modal;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -64,47 +65,20 @@ fn focus_search() -> bool {
     true
 }
 
-fn active_element() -> Option<web_sys::HtmlElement> {
-    document()
-        .active_element()
-        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-}
-
-/// The shortcut handler and the `?` dialog. Mount once.
+/// The shortcut handler and the `?` dialog, an Aurora `Modal`
+/// (SKADI-T-0719): it traps Tab, closes on Esc, the scrim or its × button
+/// ("Close"), and gives focus back to the opener. Mount once.
 #[component]
 pub fn ShortcutsHost() -> impl IntoView {
     let open = RwSignal::new(false);
-    // Focus goes back to where it was when the list closes.
-    let opener = StoredValue::new_local(None::<web_sys::HtmlElement>);
-    let close_ref = NodeRef::<leptos::html::Button>::new();
-
-    let close = move || {
-        open.set(false);
-        if let Some(el) = opener.get_value() {
-            let _ = el.focus();
-        }
-    };
 
     let keys = window_event_listener(leptos::ev::keydown, move |ev| {
+        // The open list handles its own keys (Aurora's Modal).
         if open.get_untracked() {
-            match ev.key().as_str() {
-                "Escape" => {
-                    ev.prevent_default();
-                    close();
-                }
-                // The list has one control; Tab stays on it.
-                "Tab" => {
-                    ev.prevent_default();
-                    if let Some(b) = close_ref.get_untracked() {
-                        let _ = b.focus();
-                    }
-                }
-                _ => {}
-            }
             return;
         }
         let dialog_open = document()
-            .query_selector(".confirm-dialog")
+            .query_selector(".cl-modal-overlay")
             .ok()
             .flatten()
             .is_some();
@@ -117,7 +91,6 @@ pub fn ShortcutsHost() -> impl IntoView {
             }
             Some(Shortcut::Help) => {
                 ev.prevent_default();
-                opener.set_value(active_element());
                 open.set(true);
             }
             None => {}
@@ -125,49 +98,23 @@ pub fn ShortcutsHost() -> impl IntoView {
     });
     on_cleanup(move || keys.remove());
 
-    // First focus on the Close button once the list is in the DOM.
-    Effect::new(move |_| {
-        if open.get()
-            && let Some(b) = close_ref.get()
-        {
-            let _ = b.focus();
-        }
-    });
-
-    move || {
-        open.get().then(|| {
-            let rows = SHORTCUTS
-                .iter()
-                .map(|(k, what)| {
-                    view! {
-                        <div class="shortcut-row">
-                            <dt><kbd>{*k}</kbd></dt>
-                            <dd>{*what}</dd>
-                        </div>
-                    }
-                })
-                .collect_view();
-            view! {
-                <div class="confirm-backdrop"
-                    on:click=move |ev| {
-                        if ev.target() == ev.current_target() {
-                            close();
-                        }
-                    }>
-                    <div class="confirm-dialog shortcuts-dialog" id=HELP_ID role="dialog"
-                        aria-modal="true" aria-labelledby="shortcuts-title">
-                        <h2 id="shortcuts-title" class="confirm-title">"Keyboard shortcuts"</h2>
-                        <dl class="shortcut-list">{rows}</dl>
-                        <div class="confirm-actions">
-                            <button type="button" class="confirm-ok primary" node_ref=close_ref
-                                on:click=move |_| close()>
-                                "Close"
-                            </button>
-                        </div>
+    let rows = move || {
+        SHORTCUTS
+            .iter()
+            .map(|(k, what)| {
+                view! {
+                    <div class="shortcut-row">
+                        <dt><kbd>{*k}</kbd></dt>
+                        <dd>{*what}</dd>
                     </div>
-                </div>
-            }
-        })
+                }
+            })
+            .collect_view()
+    };
+    view! {
+        <Modal open=open title="Keyboard shortcuts" size="sm">
+            <dl class="shortcut-list" id=HELP_ID>{rows()}</dl>
+        </Modal>
     }
 }
 

@@ -5,7 +5,10 @@
 //! ([`AppFrame`], SKADI-T-0697). Split out of `main.rs` into the lib so the
 //! bin stays a thin mount point.
 
-use aurora_leptos::components::{AppShell, SideNav, SideNavGroup, SideNavLink};
+use aurora_leptos::components::{
+    AppShell, AuthCard, Button, CenterScreen, Modal, PasswordInput, SideNav, SideNavGroup,
+    SideNavLink, TextInput,
+};
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -81,29 +84,35 @@ fn LoginPage() -> impl IntoView {
         });
     };
 
+    use wasm_bindgen::JsCast;
+    // The name field takes the focus on arrival (Aurora's TextInput has no
+    // autofocus attribute).
+    Effect::new(move |_| {
+        if let Some(el) = document()
+            .get_element_by_id("login-user")
+            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = el.focus();
+        }
+    });
+
+    // Aurora's sign-in frame and fields (SKADI-T-0719).
     view! {
-        <div class="login-shell">
-            <form class="login-card" on:submit=move |ev| { ev.prevent_default(); submit() }>
-                <h1 class="login-title">"Skadi"</h1>
-                <p class="muted">"Sign in to your household account."</p>
-                <div class="field">
-                    <label for="login-user">"Name"</label>
-                    <input id="login-user" r#type="text" autocomplete="username" autofocus
-                        prop:value=move || username.get()
-                        on:input=move |ev| username.set(event_target_value(&ev))/>
-                </div>
-                <div class="field">
-                    <label for="login-pass">"Password"</label>
-                    <input id="login-pass" r#type="password" autocomplete="current-password"
-                        prop:value=move || password.get()
-                        on:input=move |ev| password.set(event_target_value(&ev))/>
-                </div>
-                {move || error.get().map(|e| view! { <p class="bad" role="alert">{e}</p> })}
-                <button class="login-submit" r#type="submit" disabled=move || busy.get()>
-                    {move || if busy.get() { "Signing in…" } else { "Sign in" }}
-                </button>
-            </form>
-        </div>
+        <CenterScreen>
+            <AuthCard title="Skadi" sub="Sign in to your household account."
+                brand=Box::new(|| view! { <Snowflake/> }.into_any())>
+                <form class="login-form" on:submit=move |ev| { ev.prevent_default(); submit() }>
+                    <TextInput label="Name" id="login-user" value=username
+                        autocomplete="username" spellcheck=false/>
+                    <PasswordInput label="Password" id="login-pass" value=password
+                        autocomplete="current-password"/>
+                    {move || error.get().map(|e| view! { <p class="bad" role="alert">{e}</p> })}
+                    <Button button_type="submit" loading=busy class:login-submit=true>
+                        {move || if busy.get() { "Signing in…" } else { "Sign in" }}
+                    </Button>
+                </form>
+            </AuthCard>
+        </CenterScreen>
     }
 }
 
@@ -373,9 +382,7 @@ fn TopBarTools() -> impl IntoView {
         <div class="topbar-tools">
             <HealthBadge/>
             {move || can_contribute().then(|| view! {
-                <button class="add-media" on:click=move |_| go_add.run(())>
-                    "+ Add media"
-                </button>
+                <Button on_click=go_add class:add-media=true>"+ Add media"</Button>
             })}
         </div>
     }
@@ -403,16 +410,25 @@ fn AccountStrip() -> impl IntoView {
                 <div class="nav-account">
                     <span title=m.role.clone()>{m.name.clone()}</span>
                     {signed_in.then(|| view! {
-                        <button on:click=move |_| changing.update(|c| *c = !*c)>"Password"</button>
-                        <button on:click=move |_| {
-                            leptos::task::spawn_local(async move {
-                                crate::api::logout().await;
-                                let _ = window().location().reload();
-                            });
-                        }>"Sign out"</button>
+                        <Button variant="subtle" size="xs"
+                            on_click=Callback::new(move |()| changing.set(true))>
+                            "Password"
+                        </Button>
+                        <Button variant="subtle" size="xs" bad=true
+                            on_click=Callback::new(move |()| {
+                                leptos::task::spawn_local(async move {
+                                    crate::api::logout().await;
+                                    let _ = window().location().reload();
+                                });
+                            })>
+                            "Sign out"
+                        </Button>
                     })}
                 </div>
-                {move || changing.get().then(|| view! { <ChangePassword on_done=move || changing.set(false)/> })}
+                // Aurora's Modal (SKADI-T-0719); the form starts fresh each time.
+                <Modal open=changing title="Change password" size="sm">
+                    {move || changing.get().then(|| view! { <ChangePassword on_done=move || changing.set(false)/> })}
+                </Modal>
             }
         })
     }
@@ -471,32 +487,23 @@ where
             {move || if done.get() {
                 view! {
                     <p class="ok">"Password changed. Your other devices have been signed out."</p>
-                    <button r#type="button" on:click=move |_| on_done()>"Close"</button>
+                    <div class="form-actions">
+                        <Button variant="default" button_type="button"
+                            on_click=Callback::new(move |()| on_done())>"Close"</Button>
+                    </div>
                 }.into_any()
             } else {
                 view! {
-                    <div class="field">
-                        <label>"Current password"</label>
-                        <input r#type="password" autocomplete="current-password"
-                            prop:value=move || current.get()
-                            on:input=move |ev| current.set(event_target_value(&ev))/>
-                    </div>
-                    <div class="field">
-                        <label>"New password"</label>
-                        <input r#type="password" autocomplete="new-password"
-                            prop:value=move || next.get()
-                            on:input=move |ev| next.set(event_target_value(&ev))/>
-                    </div>
-                    <div class="field">
-                        <label>"New password again"</label>
-                        <input r#type="password" autocomplete="new-password"
-                            prop:value=move || confirm.get()
-                            on:input=move |ev| confirm.set(event_target_value(&ev))/>
-                    </div>
-                    {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+                    <PasswordInput label="Current password" value=current
+                        autocomplete="current-password"/>
+                    <PasswordInput label="New password" value=next autocomplete="new-password"/>
+                    <PasswordInput label="New password again" value=confirm
+                        autocomplete="new-password"/>
+                    {move || error.get().map(|e| view! { <p class="bad" role="alert">{e}</p> })}
                     <div class="form-actions">
-                        <button r#type="submit" disabled=move || busy.get()>"Change it"</button>
-                        <button r#type="button" on:click=move |_| on_done()>"Cancel"</button>
+                        <Button button_type="submit" loading=busy>"Change it"</Button>
+                        <Button variant="default" button_type="button"
+                            on_click=Callback::new(move |()| on_done())>"Cancel"</Button>
                     </div>
                 }.into_any()
             }}

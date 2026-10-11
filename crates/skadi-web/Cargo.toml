@@ -61,6 +61,9 @@ web-sys = { version = "0.3", features = [
     "HtmlAnchorElement", "DomTokenList",
     # The scroll-lock DOM test reads the computed overflow.
     "CssStyleDeclaration",
+    # Aurora dialogs close on a press that starts on the scrim (SKADI-T-0719):
+    # the DOM tests send mousedown, mouseup and click.
+    "MouseEvent", "MouseEventInit",
 ] }
 console_error_panic_hook = "0.1"
 # Aurora, Colliery's Leptos design system (SKADI-T-0717): tokens, stylesheet,

@@ -542,6 +542,25 @@ fn key(target: &HtmlElement, key: &str, shift: bool) {
     target.dispatch_event(&ev).unwrap();
 }
 
+/// The Cancel and the confirm button of the open dialog (Aurora's footer).
+fn confirm_buttons(host: &HtmlElement) -> (HtmlElement, HtmlElement) {
+    let list = host.query_selector_all(".cl-modal__footer button").unwrap();
+    assert_eq!(list.length(), 2, "Cancel and confirm");
+    let b = |i| list.item(i).unwrap().dyn_into::<HtmlElement>().unwrap();
+    (b(0), b(1))
+}
+
+/// A real click on the scrim: Aurora closes on a press that starts there.
+fn press(target: &HtmlElement) {
+    let init = web_sys::MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    for kind in ["mousedown", "mouseup", "click"] {
+        let ev = web_sys::MouseEvent::new_with_mouse_event_init_dict(kind, &init).unwrap();
+        target.dispatch_event(&ev).unwrap();
+    }
+}
+
 #[wasm_bindgen_test]
 async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
     use skadi_web::confirm::ConfirmSpec;
@@ -549,11 +568,10 @@ async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
         .confirm_label("Delete");
     let (host, trigger, answer, _handle) = ask("confirm-trigger-ok", spec).await;
 
-    let dialog = find(&host, ".confirm-dialog");
-    assert_eq!(dialog.get_attribute("role").as_deref(), Some("alertdialog"));
+    let dialog = find(&host, "[role=dialog]");
     assert_eq!(dialog.get_attribute("aria-modal").as_deref(), Some("true"));
     assert_eq!(
-        find(&host, ".confirm-title").text_content().as_deref(),
+        dialog.get_attribute("aria-label").as_deref(),
         Some("Delete the movie?")
     );
     assert!(
@@ -562,18 +580,17 @@ async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
             .unwrap()
             .contains("Dune and its files go.")
     );
-    let ok = find(&host, ".confirm-ok");
-    assert!(ok.class_list().contains("danger"));
+    let (cancel, ok) = confirm_buttons(&host);
+    assert!(ok.class_list().contains("cl-btn--bad"));
     assert_eq!(ok.text_content().as_deref(), Some("Delete"));
-    // Destructive: the first focus is on Cancel, so a stray Enter cancels.
-    let cancel = find(&host, ".confirm-cancel");
+    // The first focus is on Cancel, so a stray Enter cancels.
     assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
     assert_eq!(answer.get(), None, "answered before a click");
 
     ok.click();
     settle_dom().await;
     assert_eq!(answer.get(), Some(true));
-    assert_eq!(count(&host, ".confirm-dialog"), 0, "dialog stayed open");
+    assert_eq!(count(&host, "[role=dialog]"), 0, "dialog stayed open");
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
 }
 
@@ -583,48 +600,48 @@ async fn confirm_dialog_cancel_button_and_esc_resolve_false() {
     // The Cancel button.
     let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
     let (host, trigger, answer, handle) = ask("confirm-trigger-cancel", spec).await;
-    find(&host, ".confirm-cancel").click();
+    confirm_buttons(&host).0.click();
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
-    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(count(&host, "[role=dialog]"), 0);
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
     drop(handle);
 
     // Esc, pressed inside the dialog.
     let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
     let (host, trigger, answer, _handle) = ask("confirm-trigger-esc", spec).await;
-    key(&find(&host, ".confirm-dialog"), "Escape", false);
+    key(&find(&host, "[role=dialog]"), "Escape", false);
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
-    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(count(&host, "[role=dialog]"), 0);
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
 }
 
 #[wasm_bindgen_test]
 async fn confirm_dialog_traps_tab_and_a_backdrop_click_cancels() {
     use skadi_web::confirm::ConfirmSpec;
-    // Not destructive: the first focus is on the confirm button.
     let spec = ConfirmSpec::new("Grab a season pack?", "It satisfies every episode.");
     let (host, _trigger, answer, _handle) = ask("confirm-trigger-tab", spec).await;
-    let ok = find(&host, ".confirm-ok");
-    let cancel = find(&host, ".confirm-cancel");
-    assert!(ok.class_list().contains("primary"));
-    assert_eq!(active_element().as_ref(), Some(ok.as_ref()));
+    let (cancel, ok) = confirm_buttons(&host);
+    let close = find(&host, ".cl-modal__close");
+    assert!(!ok.class_list().contains("cl-btn--bad"), "not danger");
+    assert_eq!(ok.text_content().as_deref(), Some("Continue"));
+    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
 
-    // Tab from the last button wraps to the first, Shift+Tab back again.
+    // Tab from the last control wraps to the first (the × button), and
+    // Shift+Tab back again.
+    ok.focus().unwrap();
     key(&ok, "Tab", false);
-    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
-    key(&cancel, "Tab", true);
+    assert_eq!(active_element().as_ref(), Some(close.as_ref()));
+    key(&close, "Tab", true);
     assert_eq!(active_element().as_ref(), Some(ok.as_ref()));
-    key(&ok, "Tab", true);
-    assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
     assert_eq!(answer.get(), None);
 
     // A click on the dialog itself does nothing; one on the backdrop cancels.
-    find(&host, ".confirm-body").click();
+    press(&find(&host, ".confirm-body"));
     settle_dom().await;
     assert_eq!(answer.get(), None);
-    find(&host, ".confirm-backdrop").click();
+    press(&find(&host, ".cl-modal-overlay"));
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
 }
@@ -852,24 +869,18 @@ async fn bulk_delete_names_the_count_and_asks_once() {
 
     button_with_text(&host, "Delete + files").click();
     settle_dom().await;
-    assert_eq!(count(&host, ".confirm-dialog"), 1, "one question");
+    assert_eq!(count(&host, "[role=dialog]"), 1, "one question");
+    let dialog = find(&host, "[role=dialog]");
     assert_eq!(
-        find(&host, ".confirm-title").text_content().as_deref(),
+        dialog.get_attribute("aria-label").as_deref(),
         Some("Delete 3 movies?")
     );
-    assert!(
-        find(&host, ".confirm-dialog")
-            .text_content()
-            .unwrap()
-            .contains("deleted from disk")
-    );
-    assert_eq!(
-        find(&host, ".confirm-ok").text_content().as_deref(),
-        Some("Delete 3")
-    );
-    find(&host, ".confirm-cancel").click();
+    assert!(dialog.text_content().unwrap().contains("deleted from disk"));
+    let (cancel, ok) = confirm_buttons(&host);
+    assert_eq!(ok.text_content().as_deref(), Some("Delete 3"));
+    cancel.click();
     settle_dom().await;
-    assert_eq!(count(&host, ".confirm-dialog"), 0);
+    assert_eq!(count(&host, "[role=dialog]"), 0);
     assert_eq!(done.get_untracked(), 0, "a cancelled delete sends nothing");
     assert_eq!(sel.ids.get_untracked().len(), 4, "the selection is kept");
 }
@@ -1886,14 +1897,22 @@ async fn question_mark_lists_the_shortcuts_and_esc_gives_focus_back() {
     opener.focus().unwrap();
     key_mod(opener.as_ref(), "?", false);
     settle_dom().await;
-    let dialog = find(&host, &format!("#{}", skadi_web::shortcuts::HELP_ID));
-    assert_eq!(attr(&dialog, "role").as_deref(), Some("dialog"));
+    let dialog = find(&host, "[role=dialog]");
     assert_eq!(attr(&dialog, "aria-modal").as_deref(), Some("true"));
+    assert_eq!(
+        attr(&dialog, "aria-label").as_deref(),
+        Some("Keyboard shortcuts")
+    );
+    assert_eq!(
+        count(&dialog, &format!("#{}", skadi_web::shortcuts::HELP_ID)),
+        1
+    );
     let text = dialog.text_content().unwrap();
     for (k, _) in skadi_web::shortcuts::SHORTCUTS {
         assert!(text.contains(k), "the list names {k}");
     }
     let close = find(&dialog, "button");
+    assert_eq!(attr(&close, "aria-label").as_deref(), Some("Close"));
     assert!(is_active(&close), "Close has the first focus");
     // Tab stays in the dialog.
     key(&close, "Tab", false);

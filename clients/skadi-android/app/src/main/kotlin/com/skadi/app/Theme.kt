@@ -13,8 +13,24 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-/** The app theme. [System] follows the phone's dark mode. */
-enum class SkadiThemeMode { System, Light, Dark, Hyper }
+/**
+ * The app theme. [System] follows the phone's dark mode.
+ *
+ * [key] is what [Settings] stores (SKADI-T-0721): stable, so renaming an
+ * entry does not lose anyone's choice.
+ */
+enum class SkadiThemeMode(val key: String, val label: String) {
+    System("system", "System"),
+    Light("light", "Light"),
+    Dark("dark", "Dark"),
+    Hyper("hyper", "Hyper"),
+    ;
+
+    companion object {
+        /** A stored key back to a mode. Nothing stored, or an unknown key, is [System]. */
+        fun fromKey(key: String?): SkadiThemeMode = entries.firstOrNull { it.key == key } ?: System
+    }
+}
 
 /**
  * Aurora colour tokens, by their Aurora names.

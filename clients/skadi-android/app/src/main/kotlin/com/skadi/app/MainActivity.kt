@@ -75,7 +75,13 @@ class MainActivity : ComponentActivity() {
             android.content.IntentFilter(Pip.ACTION),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        setContent { SkadiTheme(SkadiThemeMode.System) { Root() } }
+        setContent {
+            // The stored theme (SKADI-T-0721). Nothing is drawn until DataStore
+            // answers, so a stored Light never opens as Dark for a frame; Root
+            // waits on the same read for the server anyway.
+            val theme by Settings.theme(applicationContext).collectAsState(initial = null)
+            theme?.let { SkadiTheme(it) { Root() } }
+        }
     }
 
     private val pipReceiver = object : android.content.BroadcastReceiver() {

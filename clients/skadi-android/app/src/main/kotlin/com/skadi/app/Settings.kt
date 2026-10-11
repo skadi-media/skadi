@@ -7,7 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** Paired-server persistence (SKADI-T-0341): base URL + token, nothing else. */
+/** App settings (SKADI-T-0341): the paired server, its role, and the theme. */
 val Context.dataStore by preferencesDataStore(name = "skadi")
 
 object Settings {
@@ -16,6 +16,9 @@ object Settings {
     // Who the token is (SKADI-T-0614): `admin` | `member` | `kid`, from `/me`.
     // Cached so a cold start draws the right bar before the network answers.
     private val ROLE = stringPreferencesKey("role")
+    // The theme (SKADI-T-0721): a [SkadiThemeMode.key]. A choice of the
+    // phone, not of the pairing, so unpairing keeps it.
+    private val THEME = stringPreferencesKey("theme")
 
     data class Server(val baseUrl: String, val token: String)
 
@@ -40,7 +43,19 @@ object Settings {
         context.dataStore.edit { p -> p[ROLE] = role }
     }
 
+    fun theme(context: Context): Flow<SkadiThemeMode> =
+        context.dataStore.data.map { p -> SkadiThemeMode.fromKey(p[THEME]) }
+
+    suspend fun saveTheme(context: Context, mode: SkadiThemeMode) {
+        context.dataStore.edit { p -> p[THEME] = mode.key }
+    }
+
+    /** Forget the pairing. The theme stays. */
     suspend fun clear(context: Context) {
-        context.dataStore.edit { p -> p.clear() }
+        context.dataStore.edit { p ->
+            val theme = p[THEME]
+            p.clear()
+            theme?.let { p[THEME] = it }
+        }
     }
 }

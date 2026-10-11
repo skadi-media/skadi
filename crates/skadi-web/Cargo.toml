@@ -18,8 +18,8 @@ description = "Leptos CSR web UI for the Skadi daemon"
 publish = false
 
 [dependencies]
-leptos = { version = "0.7", features = ["csr"] }
-leptos_router = { version = "0.7" }
+leptos = { version = "0.8", features = ["csr"] }
+leptos_router = { version = "0.8" }
 gloo-timers = { version = "0.3", features = ["futures"] }
 gloo-net = { version = "0.6", features = ["http"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -65,6 +65,11 @@ export async function whenClicks(page: Page, label: string | RegExp) {
   await page.getByRole("button", { name: label }).first().click();
 }
 
+/** When the operator picks the theme <label> on a Settings page (SKADI-T-0720) */
+export async function whenPicksTheme(page: Page, label: string) {
+  await themeToggle(page).getByRole("button", { name: label, exact: true }).click();
+}
+
 // ----------------------------------------------------------------- Then ----
 
 /** Then the sidebar shows a link <name> */
@@ -93,4 +98,33 @@ export async function thenHealthBadge(page: Page, name: string, status: "ok" | "
 /** Then the page does not show an error dialog */
 export async function thenNoErrorDialog(page: Page) {
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+}
+
+/** Aurora's theme toggle on a Settings page (SKADI-T-0720). */
+export function themeToggle(page: Page) {
+  return page.getByRole("group", { name: "Theme" });
+}
+
+/** Then the theme toggle offers <labels>, in order, and marks <marked> only */
+export async function thenThemeToggle(page: Page, labels: string[], marked: string) {
+  const buttons = themeToggle(page).getByRole("button");
+  await expect(buttons).toHaveText(labels);
+  for (const label of labels) {
+    await expect(themeToggle(page).getByRole("button", { name: label, exact: true })).toHaveAttribute(
+      "aria-pressed",
+      label === marked ? "true" : "false",
+    );
+  }
+}
+
+/** Then <html> carries data-theme <theme>, or none for null (System) */
+export async function thenDataTheme(page: Page, theme: string | null) {
+  const html = page.locator("html");
+  if (theme === null) await expect(html).not.toHaveAttribute("data-theme", /.*/);
+  else await expect(html).toHaveAttribute("data-theme", theme);
+}
+
+/** The page background now, as the browser computes it */
+export async function pageBackground(page: Page): Promise<string> {
+  return page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 }

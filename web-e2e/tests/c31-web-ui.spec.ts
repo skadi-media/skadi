@@ -73,6 +73,50 @@ test.describe("C31 settings.feature", () => {
     await expect(page.locator(".fail, .error, .warn, .health-dot.fail").first()).toBeVisible({ timeout: 20_000 });
   });
 
+  test("@passing the theme choice changes the page at once and holds after a reload", async ({ page }) => {
+    // SKADI-T-0720. A fresh browser context: nothing stored, so System.
+    await steps.whenOpens(page, "/indexers");
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+    await steps.thenDataTheme(page, null);
+
+    const backgrounds: Record<string, string> = {};
+    for (const [label, theme] of [
+      ["Light", "light"],
+      ["Dark", "dark"],
+      ["Hyper", "hyper"],
+    ] as const) {
+      await steps.whenPicksTheme(page, label);
+      await steps.thenDataTheme(page, theme);
+      await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], label);
+      backgrounds[theme] = await steps.pageBackground(page);
+      await page.reload();
+      await steps.thenDataTheme(page, theme);
+      await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], label);
+    }
+    expect(new Set(Object.values(backgrounds)).size, JSON.stringify(backgrounds)).toBe(3);
+
+    // The stored choice is on <html> before the app runs: the init script in
+    // index.html sets it, not the wasm.
+    await page.route("**/*.wasm", (r) => r.abort());
+    await page.reload();
+    await steps.thenDataTheme(page, "hyper");
+    await page.unroute("**/*.wasm");
+
+    // System clears the stored choice; the page follows the operating system.
+    await page.reload();
+    await steps.whenPicksTheme(page, "System");
+    await steps.thenDataTheme(page, null);
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+    expect(await page.evaluate(() => localStorage.getItem("aurora-theme"))).toBeNull();
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await expect.poll(() => steps.pageBackground(page)).toBe(backgrounds[scheme]);
+    }
+    await page.reload();
+    await steps.thenDataTheme(page, null);
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+  });
+
   test.fixme("@passing a quality profile is created from the form and listed (selectors unverified on this host)", async () => {});
   test.fixme("@gap settings changes show a reloading-providers confirmation", async () => {});
 });

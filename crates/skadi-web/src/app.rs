@@ -109,6 +109,10 @@ fn LoginPage() -> impl IntoView {
 
 #[component]
 pub fn App() -> impl IntoView {
+    // The theme state, once at the root (SKADI-T-0720): the toggle on the
+    // Settings pages reads it. The init script in index.html has already set
+    // the stored choice on <html>.
+    aurora_leptos::theme::provide_theme();
     // Provided once at the shell so any view can request a sidebar refresh.
     provide_context(DomainsVersion(RwSignal::new(0)));
 

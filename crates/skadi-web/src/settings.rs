@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use aurora_leptos::theme::ThemeToggle;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde_json::{Map, Value};
@@ -22,6 +23,22 @@ use serde_json::{Map, Value};
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
 use crate::loading::{ListLoad, LoadError, Skeleton, SkeletonKind};
+
+/// The theme choice (SKADI-T-0720): Aurora's Light / Dark / Hyper / System
+/// toggle, under the Settings strip on every Settings page. Aurora stores the
+/// choice in this browser under the key the init script in `index.html`
+/// reads, so a reload paints the chosen theme at once. No choice stored means
+/// System: the page follows the operating system.
+#[component]
+pub fn ThemeSection() -> impl IntoView {
+    view! {
+        <div class="settings-theme">
+            <span class="settings-theme-label" aria-hidden="true">"Theme"</span>
+            <ThemeToggle hyper=true/>
+            <span class="settings-theme-note">"Kept in this browser."</span>
+        </div>
+    }
+}
 
 /// The NotificationKind values a webhook can subscribe to (serde snake_case in
 /// skadi-notify). Kept in sync with `NotificationKind`.

@@ -28,6 +28,17 @@ Feature: C31 settings pages
     And clicks "Test" for "dead"
     Then the row for "dead" shows a failure message
 
+  @C31 @passing @SKADI-T-0720
+  Scenario: the theme choice changes the page at once and holds after a reload
+    When the operator opens "/indexers"
+    Then the theme toggle offers "Light", "Dark", "Hyper" and "System", and marks "System"
+    And <html> has no data-theme
+    When the operator picks "Light", "Dark" and "Hyper" in turn
+    Then <html> has that data-theme and the toggle marks it, before and after a reload
+    And the stored choice is on <html> before the app runs
+    When the operator picks "System"
+    Then <html> has no data-theme, nothing is stored, and the page follows the operating system
+
   @C31 @gap
   Scenario: settings changes show a "reloading providers" confirmation
     Given the harness daemon with the movies domain enabled

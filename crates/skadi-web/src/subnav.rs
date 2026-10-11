@@ -89,9 +89,12 @@ pub fn visible(role: Option<&str>, sections: &'static [Section]) -> Vec<Section>
     }
 }
 
+/// The title of the Settings strip.
+const SETTINGS_TITLE: &str = "Settings";
+
 /// Every strip, in the order they are searched.
 const TABLES: &[(&str, &[Section])] = &[
-    ("Settings", SETTINGS_SECTIONS),
+    (SETTINGS_TITLE, SETTINGS_SECTIONS),
     ("Activity", ACTIVITY_SECTIONS),
 ];
 
@@ -113,20 +116,30 @@ pub fn table_for(path: &str) -> Option<(&'static str, &'static [Section])> {
         .map(|(title, sections)| (*title, *sections))
 }
 
+/// Whether the page at `path` shows the theme choice: every Settings page
+/// does (SKADI-T-0720).
+pub fn shows_theme(path: &str) -> bool {
+    table_for(path).is_some_and(|(title, _)| title == SETTINGS_TITLE)
+}
+
 /// Render the section strip for whatever page is on screen, marking it.
 #[component]
 pub fn SubNav() -> impl IntoView {
     let location = use_location();
     let role = use_context::<RoleCtx>();
     move || {
-        let Some((title, sections)) = table_for(&location.pathname.get()) else {
+        let path = location.pathname.get();
+        let Some((title, sections)) = table_for(&path) else {
             return ().into_any();
         };
         let role = role.and_then(|r| r.0.get());
         let shown = visible(role.as_deref(), sections);
+        // The theme choice sits under the Settings strip on every Settings
+        // page (SKADI-T-0720), also where the strip itself is not drawn.
+        let theme = shows_theme(&path).then(|| view! { <crate::settings::ThemeSection/> });
         // One reachable page is not a section; drawing a strip of one is noise.
         if shown.len() < 2 {
-            return ().into_any();
+            return theme.into_any();
         }
         let links = shown
             .into_iter()
@@ -146,6 +159,7 @@ pub fn SubNav() -> impl IntoView {
                 <span class="subnav-title">{title}</span>
                 <nav class="subnav-links">{links}</nav>
             </div>
+            {theme}
         }
         .into_any()
     }
@@ -253,6 +267,16 @@ mod tests {
             for (href, _) in *sections {
                 assert_eq!(table_for(href).map(|(t, _)| t), Some(*title), "{href}");
             }
+        }
+    }
+
+    #[test]
+    fn every_settings_page_shows_the_theme_choice() {
+        for (href, _) in SETTINGS_SECTIONS {
+            assert!(shows_theme(href), "{href}");
+        }
+        for path in ["/", "/movies", "/activity", "/wanted", "/upload", "/add"] {
+            assert!(!shows_theme(path), "{path}");
         }
     }
 

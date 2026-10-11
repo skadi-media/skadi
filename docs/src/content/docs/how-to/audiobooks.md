@@ -1,4 +1,7 @@
-# Audiobooks
+---
+title: Audiobooks
+description: Enable the audiobooks domain, add indexers and books, and import a library.
+---
 
 Skadi's audiobooks domain is a full vertical alongside movies: an
 **Author → Series → Book** library, keyless metadata from
@@ -113,4 +116,3 @@ Already have audiobooks on disk? Use **library import**
 Once added, a book's Audnexus-sourced fields are refreshed on a schedule (behind
 a per-provider circuit breaker, so a failing upstream isn't hammered). Your
 user-controlled fields (monitored state, profile, root) are preserved.
-

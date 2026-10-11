@@ -1,4 +1,7 @@
-# Operations runbook (deploy stack)
+---
+title: Operations runbook (deploy stack)
+description: Run, upgrade, roll back and recover the Docker Compose deploy stack.
+---
 
 The production appliance is the Docker Compose stack under
 [`deploy/`](https://github.com/skadi-media/skadi/tree/main/deploy); its README

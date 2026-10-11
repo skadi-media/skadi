@@ -1,6 +1,6 @@
 //! Media kinds and the acquisition state machine.
 //!
-//! [`AcquisitionStatus`] tracks where an [`Acquirable`](crate) is in its journey
+//! [`AcquisitionStatus`] tracks where an [`crate::Acquirable`] is in its journey
 //! from wanted to imported. Per the foundation design decision (2026-05-26), the
 //! `Imported` variant stores a [`QualityId`] plus a numeric score rather than a
 //! rich `Quality` value — the `Quality` type lives in `skadi-quality`, which

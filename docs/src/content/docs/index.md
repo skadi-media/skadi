@@ -1,4 +1,7 @@
-# Skadi
+---
+title: Skadi
+description: A unified, Rust-native replacement for the *arr stack.
+---
 
 A unified, Rust-native replacement for the *arr stack
 
@@ -11,4 +14,4 @@ skadi --help
 
 ## Development
 
-See the [Getting Started](getting-started/installation.md) guide.
+See the [Getting Started](tutorials/installation/) guide.

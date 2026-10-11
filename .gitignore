@@ -47,8 +47,7 @@ lcov.info
 # Metis ephemeral state
 .metis/
 
-# Documentation build output
-/site/
+# Documentation build output: docs/.gitignore (SKADI-T-0715)
 
 # Environment
 .env

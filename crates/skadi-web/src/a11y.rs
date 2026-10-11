@@ -96,17 +96,16 @@ mod tests {
         css[start..open].trim()
     }
 
-    /// Keyboard focus is always visible: one global `:focus-visible` ring from
-    /// the token, and no bare `outline: none` left on a focusable element.
+    /// Keyboard focus is always visible: one global `:focus-visible` ring in
+    /// Aurora's ice, and no bare `outline: none` left on a focusable element.
     /// The two kept are paired with a ring elsewhere (the search bar's
     /// `:focus-within`) or are not a Tab stop (`<main>`, the skip target).
     #[test]
     fn style_css_keeps_a_visible_focus_ring() {
         let css = include_str!("../style.css");
-        assert!(css.contains("--focus-ring: 2px solid var(--ice);"));
         assert!(
             css.contains(
-                "\n:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }"
+                "\n:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }"
             ),
             "the global ring rule"
         );
@@ -124,7 +123,10 @@ mod tests {
         }
     }
 
-    /// Text tones meet WCAG AA (4.5:1) on every surface they sit on.
+    /// Skadi's text tones meet WCAG AA (4.5:1) on every surface they sit on,
+    /// in each Aurora theme (SKADI-T-0700; the tokens are Aurora's since
+    /// SKADI-T-0717). Light and dark are the two halves of tokens.css'
+    /// `light-dark()`; hyper is hyper.css.
     #[test]
     fn faint_text_tokens_meet_aa_contrast() {
         fn lum(hex: &str) -> f64 {
@@ -142,23 +144,36 @@ mod tests {
             let (x, y) = (lum(a), lum(b));
             (x.max(y) + 0.05) / (x.min(y) + 0.05)
         }
-        let css = include_str!("../style.css");
-        let token = |name: &str| {
-            let at = css
-                .find(&format!("  --{name}: #"))
-                .unwrap_or_else(|| panic!("--{name}"));
-            let start = at + name.len() + 6;
-            &css[start..start + 7]
-        };
-        for fg in ["muted", "faint"] {
-            for bg in ["bg", "sidebar", "panel", "panel-2", "inset", "control"] {
-                let r = ratio(token(fg), token(bg));
-                assert!(r >= 4.5, "--{fg} on --{bg} is {r:.2}:1");
+        /// The value of `--name` in `css`: the text after `--name: ` up to `;`.
+        fn value<'a>(css: &'a str, name: &str) -> &'a str {
+            let key = format!("  --{name}: ");
+            let at = css.find(&key).unwrap_or_else(|| panic!("--{name}"));
+            let rest = &css[at + key.len()..];
+            &rest[..rest.find(';').unwrap()]
+        }
+        /// The colour of `--name` in `theme`.
+        fn token(theme: &str, name: &str) -> String {
+            let pair = || value(aurora_leptos::TOKENS_CSS, name);
+            match theme {
+                "light" => {
+                    let start = "light-dark(".len();
+                    pair()[start..start + 7].to_string()
+                }
+                "dark" => {
+                    let v = pair();
+                    let comma = v.find(", ").unwrap();
+                    v[comma + 2..comma + 9].to_string()
+                }
+                _ => value(aurora_leptos::HYPER_CSS, name)[..7].to_string(),
             }
         }
-        for bg in ["bg", "sidebar", "panel", "panel-2", "inset"] {
-            let r = ratio(token("fainter"), token(bg));
-            assert!(r >= 4.5, "--fainter on --{bg} is {r:.2}:1");
+        for theme in ["light", "dark", "hyper"] {
+            for fg in ["muted", "faint"] {
+                for bg in ["bg", "sidebar", "panel", "panel-2", "inset", "control"] {
+                    let r = ratio(&token(theme, fg), &token(theme, bg));
+                    assert!(r >= 4.5, "{theme}: --{fg} on --{bg} is {r:.2}:1");
+                }
+            }
         }
     }
 }

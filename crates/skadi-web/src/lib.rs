@@ -43,7 +43,7 @@ pub mod subnav;
 pub mod system;
 pub mod upload;
 
-pub use app::{App, AppFrame, DownloadersPage, IndexersPage, MAIN_ID, NAV_ID, SCROLL_LOCK_CLASS};
+pub use app::{App, AppFrame, DownloadersPage, IndexersPage, MAIN_ID, NAV_ID, nav_active};
 
 /// Genre facet over a wall (SKADI-T-0605): each genre with how many items
 /// carry it, most common first then by name — one chip per entry. A genre

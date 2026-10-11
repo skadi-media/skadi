@@ -3115,3 +3115,63 @@ mod library_select {
         assert_eq!(r.requested, 2);
     }
 }
+
+// --- Aurora theme and frame (SKADI-T-0717) ----------------------------------
+
+/// index.html carries Aurora's `THEME_INIT_SCRIPT` verbatim, before the
+/// stylesheets, so the first paint has the stored theme.
+#[wasm_bindgen_test]
+fn index_html_runs_the_aurora_theme_init_script() {
+    const INDEX_HTML: &str = include_str!("../index.html");
+    let inline = format!("<script>{}</script>", aurora_leptos::THEME_INIT_SCRIPT);
+    let script = INDEX_HTML
+        .find(&inline)
+        .expect("index.html must carry aurora_leptos::THEME_INIT_SCRIPT verbatim");
+    let css = INDEX_HTML
+        .find("<link data-trunk rel=\"css\"")
+        .expect("stylesheet link");
+    assert!(
+        script < css,
+        "the init script must come before the stylesheets"
+    );
+    assert!(INDEX_HTML.contains(r#"<meta name="color-scheme" content="light dark" />"#));
+    // Aurora first, then hyper (it overrides Aurora's tokens), then Skadi's.
+    let aurora = INDEX_HTML.find("generated/aurora.css").expect("aurora.css");
+    let hyper = INDEX_HTML.find("generated/hyper.css").expect("hyper.css");
+    let skadi = INDEX_HTML.find("href=\"style.css\"").expect("style.css");
+    assert!(aurora < hyper && hyper < skadi, "stylesheet order");
+}
+
+/// style.css holds no token block: the colours are Aurora's.
+#[wasm_bindgen_test]
+fn style_css_defines_no_tokens_of_its_own() {
+    let css = include_str!("../style.css");
+    assert!(!css.contains(":root {"), "a :root block in style.css");
+    for line in css.lines() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("--") else {
+            continue;
+        };
+        let name_end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .unwrap_or(rest.len());
+        assert!(
+            !rest[name_end..].starts_with(':'),
+            "a custom property defined in style.css: {t}"
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn nav_active_matches_the_area_of_the_path() {
+    use skadi_web::nav_active;
+    assert!(nav_active("/", "/"));
+    assert!(!nav_active("/", "/movies"));
+    assert!(nav_active("/movies", "/movies"));
+    assert!(nav_active("/movies", "/movies/"));
+    assert!(nav_active("/movies", "/movies/42"));
+    assert!(nav_active("/movies", "/movies/import"));
+    assert!(!nav_active("/movies", "/moviesx"));
+    assert!(!nav_active("/tv", "/movies"));
+    assert!(!nav_active("/indexers", "/downloaders"));
+}

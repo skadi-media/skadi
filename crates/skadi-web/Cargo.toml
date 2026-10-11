@@ -57,8 +57,23 @@ web-sys = { version = "0.3", features = [
     "EventInit",
     # Responsive shell DOM test (SKADI-T-0697): where the closed drawer sits.
     "DomRect",
+    # Aurora frame (SKADI-T-0717): the skip link finds the AppShell after it.
+    "HtmlAnchorElement", "DomTokenList",
+    # The scroll-lock DOM test reads the computed overflow.
+    "CssStyleDeclaration",
 ] }
 console_error_panic_hook = "0.1"
+# Aurora, Colliery's Leptos design system (SKADI-T-0717): tokens, stylesheet,
+# frame (AppShell + SideNav) and the light / dark / hyper themes. The library is
+# imported as `aurora_leptos`. The stylesheet is linked at build time from the
+# files that `aurora-css/` writes (see Trunk.toml).
+colliery-io-aurora = "0.5.0"
+
+# A workspace of its own, so the `aurora-css/` helper shares this Cargo.lock and
+# so writes the stylesheet of the same Aurora version the app links
+# (SKADI-T-0717). `cargo build` here still builds only skadi-web.
+[workspace]
+members = ["aurora-css"]
 
 [dev-dependencies]
 # Web UI test pyramid (SKADI-T-0118/T-0119): run logic + component tests as real

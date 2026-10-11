@@ -1,58 +1,17 @@
-/* Skadi design system — "cold Nordic" (SKADI-I-0035, from the design handoff).
-   Token-first: surfaces are slate, accents are an ice/teal/violet aurora + a gold
-   "owned/cutoff" accent. Type is IBM Plex Sans (UI) + Plex Mono (numbers/paths). */
-:root {
-  /* surfaces */
-  --bg: #0e1116;
-  --sidebar: #12161c;
-  --panel: #161a21;
-  --panel-2: #13171e;
-  --inset: #0a0c10;
-  --control: #1b2129;
-  /* borders */
-  --border: #232a34;
-  --border-soft: #1d232c;
-  --border-fainter: #15191f;
-  --border-control: #2a3340;
-  /* text */
-  --fg: #e6e9ee;
-  --fg-bright: #f1f4f8;
-  --fg-2: #c3cbd5;
-  --muted: #8b95a3;
-  --faint: #808a98; /* was #5b6573; lifted to 4.5:1 on --control (SKADI-T-0700) */
-  --fainter: #7a8492; /* was #4a525e; 4.5:1 on --panel (SKADI-T-0700) */
-  /* accents + semantic */
-  --ice: #7fb2ff;
-  --brand-stroke: #8fbcff;
-  --teal: #5fd0c5;
-  --violet: #9d8cff;
-  --gold: #d8a657;
-  --ok: #4bd07f;
-  --warn: #d8a657;
-  --bad: #f06464;
-  /* back-compat alias: existing rules use var(--accent) */
-  --accent: var(--ice);
-  /* tinted accent fills */
-  --ice-tint: rgba(127, 178, 255, 0.13);
-  --ice-tint-soft: rgba(127, 178, 255, 0.08);
-  /* gradients */
-  --aurora: linear-gradient(90deg, #5fd0c5, #7fb2ff, #9d8cff);
-  --progress: linear-gradient(90deg, #5fd0c5, #7fb2ff);
-  /* type */
-  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* radius */
-  --r-tile: 8px;
-  --r-card: 10px;
-  --r-pill: 20px;
-  /* keyboard focus ring (SKADI-T-0700): one ring for every focusable thing */
-  --focus-ring: 2px solid var(--ice);
-  --focus-offset: 2px;
-}
+/* Skadi's own classes (SKADI-I-0035), on Aurora's tokens (SKADI-T-0717).
+   Aurora 0.5 (colliery-io-aurora) owns the colours, the type, the radii and
+   the light / dark / hyper themes: its stylesheets load before this one (see
+   index.html), and this file holds no token block of its own. Skadi's old
+   names map to Aurora's: --warn is --gold, --accent is --ice, --ice-tint is
+   --ice-bg, --aurora / --progress are --aurora-3 / --aurora-2, --sans /
+   --mono are --font-sans / --font-mono, and --r-tile / --r-card / --r-pill
+   are --radius-md / --radius-panel / --radius-chip. Text that used Skadi's
+   --fainter (lifted to 4.5:1 in SKADI-T-0700) uses --faint: Aurora's
+   --fainter is for large text and decoration only (3:1). */
 * { box-sizing: border-box; }
 /* Keyboard focus is always visible (SKADI-T-0700). Do not drop the outline
    of a focusable element: style its :focus-visible instead. */
-:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
+:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
 /* Text fields in a search bar: the bar shows the ring, not the bare input. */
 .add-search:focus-within { border-color: var(--ice); box-shadow: 0 0 0 1px var(--ice); }
 /* A skip link for keyboard users: hidden until it has focus. */
@@ -69,7 +28,9 @@
 }
 body {
   margin: 0;
-  font-family: var(--sans);
+  /* Aurora's body is 14px; Skadi's pages are drawn at the browser's 16px. */
+  font-size: 1rem;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
@@ -78,10 +39,10 @@ body {
 /* Default link tone (specific classes — nav, cards, gear — override). */
 a { color: var(--ice); text-decoration: none; }
 /* Mono for numbers, paths, env vars, release titles, timestamps, technical labels. */
-.mono { font-family: var(--mono); }
+.mono { font-family: var(--font-mono); }
 .tnum { font-variant-numeric: tabular-nums; }
 .u-label {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.09em;
   font-size: 10px;
@@ -89,100 +50,53 @@ a { color: var(--ice); text-decoration: none; }
   color: var(--muted);
 }
 
-/* Cold thin scrollbars (9px, slate thumb, transparent track). */
-* { scrollbar-width: thin; scrollbar-color: #283039 transparent; }
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: #283039; border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #313b47; }
-::-webkit-scrollbar-track { background: transparent; }
-.app { display: flex; min-height: 100vh; max-height: 100vh; }
-/* App shell sidebar (SKADI-I-0035): 228px fixed, slate, flex column. */
-.nav {
-  width: 228px;
-  flex: none;
-  background: var(--sidebar);
-  padding: 18px 14px;
-  border-right: 1px solid var(--border-soft);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.nav .brand { display: flex; align-items: center; gap: 0.5rem; padding: 0 0.4rem; }
+/* The frame is Aurora's AppShell + SideNav (SKADI-T-0717): the top bar, the
+   sidebar, the drawer under 768px, the nav links and their counts are
+   Aurora's, and so are the scrollbars. Skadi adds the brand, the top-bar
+   tools and the sidebar footer. */
 .brand-mark { flex: none; }
 .brand-name { font-size: 16px; font-weight: 600; color: var(--fg-bright); }
+/* Top bar, right: daemon health and the primary "+ Add media". */
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.9rem;
+  min-width: 0;
+}
 .daemon-line {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: 0;
   font-size: 11px;
-  padding: 0.4rem 0.4rem 0;
-  margin-bottom: 0.9rem;
+  white-space: nowrap;
 }
+.daemon-line > span:not(.health-dot) { overflow: hidden; text-overflow: ellipsis; }
 .daemon-line .faint { color: var(--faint); }
-/* Full-width primary "+ Add media". */
 .add-media {
-  width: 100%;
+  flex: none;
   background: var(--ice);
-  color: #0b0d10;
-  border: none;
+  color: var(--on-accent);
+  border: 1px solid var(--ice);
   border-radius: 9px;
   font-weight: 600;
   font-size: 13px;
-  padding: 10px;
-  margin-bottom: 1rem;
+  padding: 6px 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
-.add-media:hover { background: #93bdff; }
-
-.nav-main { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
-.nav a {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 0.4rem 0.5rem;
-  border-radius: 7px;
-  font-size: 0.92rem;
-  box-shadow: inset 2px 0 0 transparent;
+.add-media:hover { background: var(--ice-5); border-color: var(--ice-5); }
+@media (max-width: 520px) {
+  /* A phone shows only the health dot; the words would push the button off.
+     They stay for screen readers. */
+  .daemon-line > span:not(.health-dot) {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
 }
-.nav a .nav-label { flex: 1; }
-.nav a .nav-count { font-size: 11px; color: var(--faint); }
-.nav a:hover { background: rgba(127, 178, 255, 0.06); color: var(--fg-2); }
-/* leptos_router adds aria-current="page" to the active link. */
-.nav a[aria-current] {
-  background: var(--ice-tint);
-  color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--ice);
-}
-.nav a[aria-current] .nav-count { color: var(--muted); }
-/* 2px square domain dots: ice (movies), teal (audiobooks). */
-.nav-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
-.nav-dot.ice { background: var(--ice); }
-.nav-dot.teal { background: var(--teal); }
-.nav-dot.gold { background: var(--gold); }
-.nav-dot.muted { background: var(--faint); }
-
-.nav-group { margin-top: 1.1rem; }
-.nav-group-label {
-  display: block;
-  font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
-  padding: 0 0.5rem;
-  margin-bottom: 0.35rem;
-}
-/* Footer: root-folder usage bars, pinned to the bottom. */
-.nav-footer {
-  margin-top: auto;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--border-soft);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
+/* Sidebar footer: who is signed in, then root-folder usage bars. */
+.nav-footer { display: flex; flex-direction: column; gap: 0.5rem; }
 .storage-row-head {
   display: flex;
   justify-content: space-between;
@@ -199,14 +113,17 @@ a { color: var(--ice); text-decoration: none; }
 .storage-track { height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; }
 .storage-fill { height: 100%; background: var(--ice); border-radius: 3px; }
 /* Severity thresholds (SKADI-T-0347): capacity should read as warning/danger. */
-.storage-fill.warn { background: var(--warn); }
+.storage-fill.warn { background: var(--gold); }
 .storage-fill.bad { background: var(--bad); }
-.storage-pct.warn { color: var(--warn); }
+.storage-pct.warn { color: var(--gold); }
 .storage-pct.bad { color: var(--bad); }
-.main { flex: 1; min-width: 0; padding: 22px 28px; overflow-y: auto; }
-/* Cap content to a comfortable measure and center it, so wide viewports don't
+/* Aurora's <main> carries Skadi's `main` class and id (AppFrame). Cap the
+   content to a comfortable measure and center it, so wide viewports don't
    strand everything in the top-left corner (SKADI-T-0144). */
 .main > * { max-width: 1180px; margin-inline: auto; }
+/* Workaround, Aurora defect: tokens.css gives `#main` `height: 100%` (a page
+   id it assumes), which would clamp Skadi's <main id="main"> to the grid row. */
+#main { height: auto; }
 
 /* Page header row: title + an action (gear / back link). */
 .page-head {
@@ -237,7 +154,7 @@ a.gear {
   border: 1px solid var(--border-control);
   border-radius: 8px;
 }
-a.gear:hover { background: #222b35; color: var(--fg); }
+a.gear:hover { background: var(--control-hover); color: var(--fg); }
 .page-head-actions { display: flex; align-items: center; gap: 0.6rem; }
 a.btn-link {
   color: var(--fg-2);
@@ -248,7 +165,7 @@ a.btn-link {
   border: 1px solid var(--border-control);
   border-radius: 8px;
 }
-a.btn-link:hover { background: #222b35; color: var(--fg); }
+a.btn-link:hover { background: var(--control-hover); color: var(--fg); }
 /* Activity + history (SKADI-T-0082). */
 .activity-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .activity-row {
@@ -263,7 +180,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   width: 0.8rem;
   height: 0.8rem;
   border: 2px solid var(--border-control);
-  border-top-color: var(--accent);
+  border-top-color: var(--ice);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -282,7 +199,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0.6rem;
-  background: var(--ice-tint-soft);
+  background: var(--ice-bg);
   border-bottom: 1px solid var(--border-soft);
 }
 .stage-name { color: var(--muted); }
@@ -295,7 +212,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
 .stage-items .activity-row { border: none; padding: 0.2rem 0.1rem; }
 .stage-doing { font-size: 0.8rem; color: var(--muted); }
 .stage-when { margin-left: auto; font-size: 0.75rem; }
-.stage-idle { color: var(--fainter); font-size: 0.8rem; padding: 0.15rem 0.1rem; }
+.stage-idle { color: var(--faint); font-size: 0.8rem; padding: 0.15rem 0.1rem; }
 .badge.ok { background: rgba(75, 208, 127, 0.13); color: var(--ok); }
 .badge.upgrade { background: rgba(157, 140, 255, 0.15); color: var(--violet); }
 
@@ -336,18 +253,18 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   aspect-ratio: 2 / 3;
   border-radius: 8px;
   overflow: hidden;
-  background: linear-gradient(165deg, #1c2532, #0f141b);
+  background: linear-gradient(165deg, var(--panel-2), var(--inset));
   border: 1px solid var(--border);
 }
 .poster-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.poster-tile:hover .poster-img { border-color: var(--accent); }
+.poster-tile:hover .poster-img { border-color: var(--ice); }
 /* Missing (known-but-unowned) tile: greyed + dashed, clickable to add. */
 .poster-tile.missing { cursor: pointer; }
 .poster-tile.missing .poster-img { border-style: dashed; border-color: var(--border-control); }
 .poster-tile.missing .poster-img img { filter: grayscale(1) brightness(0.5); }
 .poster-tile.missing .poster-ph { opacity: 0.55; }
 .poster-tile.missing .poster-title { color: var(--muted); }
-.poster-tile.missing:hover .poster-img { border-color: var(--accent); border-style: solid; }
+.poster-tile.missing:hover .poster-img { border-color: var(--ice); border-style: solid; }
 .poster-tile.missing:hover .poster-img img { filter: grayscale(0) brightness(0.85); }
 .poster-add {
   position: absolute;
@@ -360,7 +277,7 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   color: rgba(255, 255, 255, 0.7);
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
-.poster-tile.missing:hover .poster-add { color: var(--accent); }
+.poster-tile.missing:hover .poster-add { color: var(--ice); }
 .poster-ph {
   display: flex;
   align-items: center;
@@ -382,9 +299,9 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
 }
 .status-dot.ok { background: var(--ok); }
-.status-dot.pending { background: var(--accent); }
-.status-dot.warn { background: var(--warn); }
-.status-dot.muted { background: #5a6470; }
+.status-dot.pending { background: var(--ice); }
+.status-dot.warn { background: var(--gold); }
+.status-dot.muted { background: var(--fainter); }
 .status-dot.bad { background: var(--bad); }
 /* Inline status dot for list rows (provider/downloader health) — unlike
    `.status-dot` it sits in the flow, not absolutely in a poster corner. */
@@ -396,10 +313,10 @@ a.btn-link:hover { background: #222b35; color: var(--fg); }
   border-radius: 50%;
 }
 .health-dot.ok { background: var(--ok); }
-.health-dot.pending { background: var(--accent); }
-.health-dot.warn { background: var(--warn); }
+.health-dot.pending { background: var(--ice); }
+.health-dot.warn { background: var(--gold); }
 .health-dot.bad { background: var(--bad); }
-.health-dot.muted { background: #5a6470; }
+.health-dot.muted { background: var(--fainter); }
 .poster-meta { display: flex; flex-direction: column; margin-top: 0.4rem; }
 .poster-title { font-size: 0.85rem; line-height: 1.2; }
 .poster-meta .muted { font-size: 0.78rem; }
@@ -489,7 +406,7 @@ details.manual-grab .releases-magnet { margin-top: 0.4rem; }
 .import-table td.folder .tv-series { display: block; overflow: hidden; text-overflow: ellipsis; }
 .import-table td.folder .tv-epcode {
   display: block;
-  font-family: var(--mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.74rem;
   color: var(--muted);
 }
@@ -508,33 +425,33 @@ button {
   padding: 0.4rem 0.75rem;
   cursor: pointer;
   font-size: 0.85rem;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   transition: background 0.12s, border-color 0.12s;
 }
-button:hover { background: #222b35; }
+button:hover { background: var(--control-hover); }
 button:disabled { opacity: 0.5; cursor: default; }
-button.danger { border-color: #5a2b2b; }
-button.danger:hover { background: #4a2222; }
+button.danger { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+button.danger:hover { background: var(--bad-bg); }
 button.secondary { background: transparent; }
 /* Primary call-to-action — ice fill, dark ink (Add / Grab / Continue). */
 button.primary, .btn-primary {
   background: var(--ice);
-  color: #0b0d10;
+  color: var(--on-accent);
   border: 1px solid var(--ice);
   border-radius: 9px;
   font-weight: 600;
 }
-button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #93bdff; }
+button.primary:hover, .btn-primary:hover { background: var(--ice-5); border-color: var(--ice-5); }
 
 /* Shared primitives (SKADI-I-0035). */
 .tag {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 8px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 2px 5px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--inset);
   color: var(--fg-2);
 }
 .tag.film { color: var(--ice); }
@@ -546,7 +463,7 @@ button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #9
   gap: 0.35rem;
   font-size: 11px;
   padding: 0.15rem 0.6rem;
-  border-radius: var(--r-pill);
+  border-radius: var(--radius-chip);
   background: var(--control);
   border: 1px solid var(--border-control);
   color: var(--fg-2);
@@ -555,7 +472,7 @@ button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #9
   font-size: 10.5px;
   padding: 0.1rem 0.45rem;
   border-radius: 5px;
-  background: var(--ice-tint);
+  background: var(--ice-bg);
   color: var(--ice);
 }
 /* Toggle switch (38×22 track, 18px knob; on = accent). */
@@ -564,7 +481,7 @@ button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #9
   width: 38px;
   height: 22px;
   flex: none;
-  border: none;
+  border: 1px solid var(--border-control);
   border-radius: 12px;
   background: var(--control);
   cursor: pointer;
@@ -574,16 +491,17 @@ button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #9
 .switch::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 1px;
+  left: 1px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--fg-2);
   transition: transform 0.15s;
 }
-.switch.on { background: var(--ice); }
-.switch.on.teal { background: var(--teal); }
+.switch.on { background: var(--ice); border-color: var(--ice); }
+.switch.on::after { background: var(--on-accent); }
+.switch.on.teal { background: var(--teal); border-color: var(--teal); }
 .switch.on::after { transform: translateX(16px); }
 
 .provider-section { margin-bottom: 2rem; }
@@ -614,7 +532,7 @@ button.primary:hover, .btn-primary:hover { background: #93bdff; border-color: #9
 /* A card that is itself a link (e.g. an author card) shouldn't read as blue
    underlined link text — inherit colour, lift on hover like other card-links. */
 a.card { color: inherit; text-decoration: none; transition: border-color 0.12s, background 0.12s; }
-a.card:hover { border-color: var(--border-control); background: #20252e; }
+a.card:hover { border-color: var(--border-control); background: var(--control-hover); }
 .card-main { grid-area: main; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .card-main .summary { font-size: 0.85rem; }
 .card-actions { grid-area: actions; display: flex; gap: 0.4rem; }
@@ -622,8 +540,8 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
 .card-test:empty { display: none; }
 .badge {
   font-size: 0.7rem;
-  background: var(--ice-tint);
-  color: var(--accent);
+  background: var(--ice-bg);
+  color: var(--ice);
   border-radius: 10px;
   padding: 0.1rem 0.5rem;
 }
@@ -639,7 +557,7 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
   margin-top: 0.6rem;
   padding: 0.5rem 0.7rem;
   border-radius: 6px;
-  background: var(--ice-tint);
+  background: var(--ice-bg);
   border: 1px solid var(--border);
   font-size: 0.85rem;
 }
@@ -648,11 +566,11 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
 .quality-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .quality-chip { font-size: 0.72rem; }
 .quality-chip.is-cutoff {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--ice);
+  color: var(--ice);
 }
 .cutoff-mark {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-style: normal;
   font-size: 8px;
   letter-spacing: 0.06em;
@@ -671,8 +589,8 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
   border-left: 2px solid var(--border-control);
 }
 .notice.warn {
-  color: var(--warn);
-  border-left-color: var(--warn);
+  color: var(--gold);
+  border-left-color: var(--gold);
   background: rgba(216, 166, 87, 0.1);
 }
 .notice strong { color: inherit; }
@@ -694,7 +612,7 @@ a.card:hover { border-color: var(--border-control); background: #20252e; }
   color: var(--fg);
   padding: 0.45rem 0.55rem;
   font-size: 0.9rem;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
 }
 .field input:focus, .field select:focus { border-color: var(--ice); }
 .checks { display: flex; flex-wrap: wrap; gap: 0.75rem; }
@@ -702,7 +620,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .form-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .ok { color: var(--ok); }
 .bad { color: var(--bad); }
-.pending { color: var(--accent); }
+.pending { color: var(--ice); }
 
 /* Movies (SKADI-T-0069) */
 .movie-card { grid-template-areas: "main actions" "overview overview" "editions editions"; }
@@ -787,7 +705,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 }
 .bar-fill { height: 100%; }
 .bar-fill.ok { background: var(--ok); }
-.bar-fill.pending { background: var(--accent); }
+.bar-fill.pending { background: var(--ice); }
 .bar-fill.bad { background: var(--bad); }
 .domain-card {
   padding: 0.6rem 0.75rem;
@@ -796,7 +714,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   border-radius: 6px;
 }
 a.domain-card { display: block; color: inherit; text-decoration: none; transition: border-color 0.12s, background 0.12s; }
-a.domain-card:hover { border-color: var(--border-control); background: #20252e; }
+a.domain-card:hover { border-color: var(--border-control); background: var(--control-hover); }
 .domain-head { display: flex; justify-content: space-between; margin-bottom: 0.4rem; }
 .domain-stats { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.82rem; }
 
@@ -860,7 +778,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .import-picker-search .path-field { flex: 1; }
 .import-picker-results { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.4rem; max-height: 16rem; overflow-y: auto; }
 .import-picker-result { display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left; padding: 0.3rem 0.5rem; }
-.import-picker-result:hover { border-color: var(--accent); }
+.import-picker-result:hover { border-color: var(--ice); }
 .import-picker-result .picker-title { flex: 1; }
 /* Cover art in a search result (SKADI-T-0319): the thing that actually
    disambiguates two items sharing a title and year. Fixed box so a missing or
@@ -873,7 +791,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .ep-empty { color: var(--faint); }
 /* Manual picker for files that didn't auto-map. */
 .unmapped { border-top: 1px dashed var(--border); padding-top: 0.3rem; margin-top: 0.2rem; }
-.unmapped-head strong { color: var(--accent); font-size: 0.82rem; }
+.unmapped-head strong { color: var(--ice); font-size: 0.82rem; }
 .unmapped-row select { margin-left: 0.4rem; flex: none; }
 .unmapped-row.resolved { opacity: 0.5; }
 /* Extras: bonus content — informational, never a warning (SKADI-T-0329). */
@@ -902,7 +820,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   background: var(--inset);
   border: 1px solid var(--border);
   border-radius: 4px;
-  color: #c2c9d2;
+  color: var(--fg-2);
 }
 .copy-btn { flex: 0 0 auto; font-size: 0.78rem; padding: 0.25rem 0.6rem; }
 
@@ -937,7 +855,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   font-size: 0.82rem;
   cursor: pointer;
 }
-.fs-entry:hover { background: var(--ice-tint); }
+.fs-entry:hover { background: var(--ice-bg); }
 .fs-up { color: var(--muted); }
 
 /* Audiobook "search by title" hits (SKADI-T-0151). */
@@ -999,7 +917,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   cursor: pointer;
 }
 .watch-btn:hover { background: var(--border); color: var(--fg); }
-.watch-btn.on { background: var(--ice-tint); color: var(--fg); border-color: var(--border-control); }
+.watch-btn.on { background: var(--ice-bg); color: var(--fg); border-color: var(--border-control); }
 .section-head-actions { display: flex; align-items: center; gap: 0.6rem; }
 /* Downloads page = the torrent worker's front-end (SKADI-T-0166 / T-0170) */
 .worker-strip { display: flex; align-items: center; gap: 0.45rem; margin: 0.1rem 0 1.1rem; line-height: 1.35; }
@@ -1096,15 +1014,15 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .filter-chip {
   display: flex; align-items: center; gap: 0.4rem;
   background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
-  border-radius: var(--r-pill); padding: 0.3rem 0.85rem; font-size: 13px; cursor: pointer;
+  border-radius: var(--radius-chip); padding: 0.3rem 0.85rem; font-size: 13px; cursor: pointer;
 }
 .filter-chip:hover { border-color: var(--border-control); }
-.filter-chip.active { background: var(--ice); color: #0b0d10; border-color: var(--ice); font-weight: 600; }
+.filter-chip.active { background: var(--ice); color: var(--on-accent); border-color: var(--ice); font-weight: 600; }
 .chip-count { font-size: 11px; opacity: 0.85; }
 .lib-filter-input {
   width: 230px; background: var(--panel); border: 1px solid var(--border);
   border-radius: 9px; color: var(--fg); padding: 0.45rem 0.7rem; font-size: 13px;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
 }
 .lib-filter-input:focus { border-color: var(--ice); }
 
@@ -1131,7 +1049,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .cluster-chevron { font-size: 10px; color: var(--muted); width: 0.8rem; }
 .lib-cluster-head .chip-count {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--r-pill); padding: 0.05rem 0.5rem; color: var(--muted);
+  border-radius: var(--radius-chip); padding: 0.05rem 0.5rem; color: var(--muted);
 }
 .lib-cluster .poster-grid { margin: 0.2rem 0 0.9rem; }
 /* Author → series sub-groups: smaller, muted headings separating the runs. */
@@ -1157,7 +1075,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .diag-fact { display: contents; }
 .diag-k { color: var(--muted); }
 .diag-v { color: var(--fg-2); min-width: 0; overflow-wrap: anywhere; }
-.diag-v.warn { color: var(--warn); }
+.diag-v.warn { color: var(--gold); }
 
 .diag-bars { display: flex; flex-direction: column; gap: 0.25rem; }
 .diag-bar-row {
@@ -1176,8 +1094,8 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 }
 .diag-bar-fill { display: block; height: 100%; background: var(--ice); }
 /* The busiest gate leads the list — flag it as the one to act on. */
-.diag-bar-row:first-child .diag-bar-fill { background: var(--warn); }
-.diag-bar-n { color: var(--fainter); text-align: right; }
+.diag-bar-row:first-child .diag-bar-fill { background: var(--gold); }
+.diag-bar-n { color: var(--faint); text-align: right; }
 
 @media (max-width: 640px) {
   .diag-facts { grid-template-columns: 1fr; gap: 0 0; }
@@ -1199,9 +1117,9 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   background: var(--panel); border: 1px solid var(--border-soft); border-radius: 7px;
 }
 .hist-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.hist-dot.ok { background: #3fb950; }
-.hist-dot.pending { background: #d29922; }
-.hist-dot.bad { background: #f85149; }
+.hist-dot.ok { background: var(--ok); }
+.hist-dot.pending { background: var(--gold); }
+.hist-dot.bad { background: var(--bad); }
 .hist-event {
   flex: 0 0 64px; text-transform: uppercase; letter-spacing: 0.03em;
   font-size: 10px; color: var(--muted);
@@ -1219,7 +1137,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   flex: 0 0 auto; background: none; border: 1px solid var(--border-control);
   color: var(--muted); border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 11px; cursor: pointer;
 }
-.hist-bl:hover { border-color: #f85149; color: #f85149; }
+.hist-bl:hover { border-color: var(--bad); color: var(--bad); }
 .hist-toggle { width: 1rem; }
 .episode-wrap { display: flex; flex-direction: column; }
 .episode-wrap .history-panel { margin: 0.1rem 0 0.6rem 1.5rem; }
@@ -1235,7 +1153,9 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .tile-tag {
   position: absolute; top: 8px; left: 8px;
   font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase;
-  padding: 2px 5px; border-radius: 3px; background: rgba(0, 0, 0, 0.45); color: var(--fg-2);
+  padding: 2px 5px; border-radius: 3px; color: var(--tooltip-fg);
+  /* Over a cover in every theme: the tooltip pair is dark in light too. */
+  background: color-mix(in srgb, var(--tooltip-bg) 75%, transparent);
 }
 .status-dot.owned { background: var(--ok); }
 .status-dot.dl { background: var(--ice); }
@@ -1263,7 +1183,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .mini-btn {
   flex: 1 1 auto; font-family: inherit; font-size: 10px; font-weight: 600;
   padding: 3px 6px; border-radius: 5px; cursor: pointer;
-  background: var(--gold); color: #14181f; border: 1px solid var(--gold);
+  background: var(--gold); color: var(--on-status); border: 1px solid var(--gold);
 }
 .mini-btn:hover { filter: brightness(1.12); }
 .mini-btn.ghost { background: transparent; color: var(--fg-2); border-color: var(--border-control); }
@@ -1279,7 +1199,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .add-search-icon { color: var(--ice); font-size: 16px; }
 .add-search-input {
   flex: 1; background: transparent; border: none; color: var(--fg);
-  font-size: 15px; outline: none; font-family: var(--sans);
+  font-size: 15px; outline: none; font-family: var(--font-sans);
 }
 .add-search-input::placeholder { color: var(--faint); }
 /* Domain selector — a dark pill that reads as part of the search bar, not the
@@ -1290,7 +1210,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   background-color: var(--panel-2); color: var(--fg);
   border: 1px solid var(--border-soft); border-radius: 8px;
   padding: 7px 30px 7px 12px; margin-right: 0.2rem;
-  font-size: 13px; font-weight: 500; font-family: var(--sans); line-height: 1.1;
+  font-size: 13px; font-weight: 500; font-family: var(--font-sans); line-height: 1.1;
   cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237f8b9e' stroke-width='1.6' stroke-linecap='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 10px center;
@@ -1347,13 +1267,13 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .hunt-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hunt-pct { color: var(--ice); font-size: 13px; font-weight: 600; }
 .hunt-bar { height: 6px; background: var(--control); border-radius: 3px; overflow: hidden; margin: 0.55rem 0 0.45rem; }
-.hunt-bar-fill { height: 100%; background: var(--aurora); border-radius: 3px; }
+.hunt-bar-fill { height: 100%; background: var(--aurora-3); border-radius: 3px; }
 .hunt-meta { font-size: 11px; color: var(--muted); }
 .hunt-empty { border: 1px dashed var(--border-control); border-radius: 10px; padding: 1.4rem; text-align: center; color: var(--faint); font-size: 13px; }
 
 .rollups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 0.9rem; }
 .rollup { display: block; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 10px; padding: 0.8rem 0.9rem; text-decoration: none; color: inherit; transition: border-color 0.12s, background 0.12s; }
-.rollup:hover { border-color: var(--border-control); background: #181d25; }
+.rollup:hover { border-color: var(--border-control); background: var(--control-hover); }
 .rollup-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
 .rollup-head strong { font-size: 13px; }
 .rollup-stats { font-size: 11px; color: var(--muted); }
@@ -1369,7 +1289,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .event-log-label { display: block; margin-bottom: 0.7rem; color: var(--faint); }
 .event-log-lines { display: flex; flex-direction: column; gap: 0.15rem; }
 .log-line { display: flex; gap: 0.7rem; font-size: 12px; line-height: 1.55; }
-.log-time { color: var(--fainter); flex: none; }
+.log-time { color: var(--faint); flex: none; }
 .log-stage { color: var(--faint); flex: none; min-width: 5.5rem; }
 .log-ev { flex: none; min-width: 8rem; }
 .log-text { color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1390,7 +1310,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .run-row.bad { border-left-color: var(--bad); }
 .run-row.open { background: var(--panel-2); }
 .run-line { display: flex; align-items: baseline; gap: 0.7rem; font-size: 12px; line-height: 1.55; min-width: 0; }
-.run-time { color: var(--fainter); flex: none; min-width: 5.5rem; }
+.run-time { color: var(--faint); flex: none; min-width: 5.5rem; }
 .run-ev { flex: none; min-width: 7.5rem; }
 .run-text { color: var(--fg-2); min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-row.open .run-text { white-space: normal; overflow: visible; }
@@ -1399,7 +1319,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 /* Live transfer numbers on a Downloading row. */
 .run-progress { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 11px; color: var(--muted); }
 .run-bar { display: inline-block; width: 90px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
-.run-bar-fill { display: block; height: 100%; background: var(--progress); }
+.run-bar-fill { display: block; height: 100%; background: var(--aurora-2); }
 .log-facts:empty { display: none; }
 .log-fact {
   font-size: 11px;
@@ -1413,9 +1333,9 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.log-fact.warn { color: var(--warn); border-color: var(--warn); }
+.log-fact.warn { color: var(--gold); border-color: var(--gold); }
 .log-fact-label {
-  color: var(--fainter);
+  color: var(--faint);
   text-transform: uppercase;
   font-size: 8px;
   letter-spacing: 0.06em;
@@ -1437,7 +1357,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .add-results { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 1.3rem; }
 .add-status { margin-top: 1.3rem; }
 .add-row { display: flex; align-items: flex-start; gap: 0.9rem; background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 11px; padding: 13px 15px; }
-.add-poster { width: 46px; height: 69px; flex: none; border-radius: 5px; object-fit: cover; background: linear-gradient(165deg, #1c2532, #0f141b); }
+.add-poster { width: 46px; height: 69px; flex: none; border-radius: 5px; object-fit: cover; background: linear-gradient(165deg, var(--panel-2), var(--inset)); }
 .add-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .add-info-head { display: flex; align-items: center; gap: 0.5rem; }
 .add-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1530,9 +1450,9 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .drawer-close:hover { color: var(--fg); }
 .drawer-head { margin-bottom: 1.1rem; padding-right: 2.5rem; }
 .drawer-head-tags { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
-.status-pill { font-size: 11px; padding: 0.15rem 0.6rem; border-radius: var(--r-pill); }
+.status-pill { font-size: 11px; padding: 0.15rem 0.6rem; border-radius: var(--radius-chip); }
 .status-pill.ok { background: rgba(75, 208, 127, 0.13); color: var(--ok); }
-.status-pill.ice { background: var(--ice-tint); color: var(--ice); }
+.status-pill.ice { background: var(--ice-bg); color: var(--ice); }
 .status-pill.gold { background: rgba(216, 166, 87, 0.13); color: var(--gold); }
 .drawer-title { margin: 0; font-size: 19px; font-weight: 600; }
 .drawer-sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 12px; }
@@ -1540,7 +1460,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .drawer-callout strong { font-size: 13px; }
 .drawer-callout span { font-size: 12px; color: var(--muted); }
 .drawer-callout.ok { background: rgba(75, 208, 127, 0.08); border: 1px solid rgba(75, 208, 127, 0.2); }
-.drawer-callout.ice { background: var(--ice-tint-soft); border: 1px solid var(--ice-tint); }
+.drawer-callout.ice { background: var(--ice-bg); border: 1px solid var(--ice-bg); }
 .drawer-callout.gold { background: rgba(216, 166, 87, 0.08); border: 1px solid rgba(216, 166, 87, 0.22); }
 .drawer-callout.gold strong { color: var(--gold); }
 .drawer-search { width: 100%; padding: 0.6rem; }
@@ -1559,7 +1479,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 
 /* Audiobook tiles: teal spine + book cover gradient (SKADI-T-0253). */
 .poster-tile.book .poster-img { box-shadow: inset 4px 0 0 var(--teal); }
-.book-cover { background: linear-gradient(135deg, #1a2630, #0f1620); }
+.book-cover { background: linear-gradient(135deg, var(--panel-2), var(--inset)); }
 /* Audiobook art is ~square — a square tile shows the whole cover instead of
    edge-cropping it inside a 2:3 poster frame (SKADI-T-0348). */
 .poster-tile.book .poster-img { aspect-ratio: 1; }
@@ -1574,10 +1494,10 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .setup-tag { color: var(--faint); font-size: 11px; }
 .setup-stepper { display: flex; align-items: center; gap: 0.4rem; flex: 1; }
 .step { display: flex; align-items: center; gap: 0.4rem; opacity: 0.5; }
-.step-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--control); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-family: var(--mono); flex: none; }
+.step-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--control); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-family: var(--font-mono); flex: none; }
 .step-label { font-size: 12px; color: var(--muted); }
 .step.current { opacity: 1; }
-.step.current .step-dot { background: var(--ice); color: #0b0d10; }
+.step.current .step-dot { background: var(--ice); color: var(--on-accent); }
 .step.done { opacity: 1; }
 .step.done .step-dot { background: rgba(75, 208, 127, 0.15); color: var(--ok); }
 .step.done .step-label, .step.current .step-label { color: var(--fg-2); }
@@ -1596,12 +1516,12 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .setup-help { color: var(--faint); font-size: 12px; margin: 0 0 1rem; line-height: 1.5; }
 .setup-domains { display: flex; flex-direction: column; gap: 0.7rem; }
 .setup-domain { display: flex; align-items: center; gap: 0.8rem; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 1rem; cursor: pointer; color: var(--fg); }
-.setup-domain.on { border-color: var(--ice); background: var(--ice-tint-soft); }
+.setup-domain.on { border-color: var(--ice); background: var(--ice-bg); }
 .setup-domain-text { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
 .setup-domain-text strong { font-size: 14px; }
 .setup-domain-text span { font-size: 11px; color: var(--faint); }
 .setup-check { color: var(--ice); font-weight: 700; }
-.setup-input { width: 100%; background: var(--panel); border: 1px solid var(--border-control); border-radius: 10px; color: var(--fg); padding: 0.7rem 0.9rem; font-size: 14px; margin-bottom: 0.7rem; font-family: var(--sans); }
+.setup-input { width: 100%; background: var(--panel); border: 1px solid var(--border-control); border-radius: 10px; color: var(--fg); padding: 0.7rem 0.9rem; font-size: 14px; margin-bottom: 0.7rem; font-family: var(--font-sans); }
 .setup-input:focus { border-color: var(--ice); }
 .setup-downloader { background: rgba(95, 208, 197, 0.07); border: 1px solid rgba(95, 208, 197, 0.25); border-radius: 11px; padding: 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .setup-downloader strong { color: var(--teal); }
@@ -1613,11 +1533,11 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 /* --- Native Cardigann add-tracker catalog (SKADI-T-0261) --- */
 .catalog-add { margin: 0.4rem 0 0.9rem; }
 .catalog-add-btn {
-  background: var(--ice-tint); color: var(--ice);
+  background: var(--ice-bg); color: var(--ice);
   border: 1px dashed var(--border-control); border-radius: 9px;
   padding: 0.5rem 0.9rem; font-size: 0.85rem; cursor: pointer;
 }
-.catalog-add-btn:hover { background: var(--ice-tint); border-color: var(--ice); }
+.catalog-add-btn:hover { background: var(--ice-bg); border-color: var(--ice); }
 .catalog-panel {
   margin-top: 0.6rem; background: var(--panel-2);
   border: 1px solid var(--border); border-radius: 11px; padding: 0.8rem;
@@ -1637,13 +1557,13 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
   background: var(--panel); border: 1px solid var(--border-soft); border-radius: 9px;
   padding: 0.5rem 0.65rem; cursor: pointer; color: var(--fg);
 }
-.catalog-item:hover { border-color: var(--ice); background: var(--ice-tint-soft); }
+.catalog-item:hover { border-color: var(--ice); background: var(--ice-bg); }
 .catalog-name { flex: 1; font-size: 0.85rem; font-weight: 600; }
 .catalog-meta { font-size: 11px; color: var(--muted); }
 .catalog-form-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
-.pill.privacy-public { color: #6fcf97; }
-.pill.privacy-private { color: #eb8a8a; }
-.pill.privacy-semi-private { color: #e2b659; }
+.pill.privacy-public { color: var(--ok-fg); }
+.pill.privacy-private { color: var(--bad-fg); }
+.pill.privacy-semi-private { color: var(--gold-fg); }
 @media (max-width: 720px) { .catalog-list { grid-template-columns: 1fr; } }
 
 /* Downloads control surface — engine status + honest empty state (SKADI-I-0041). */
@@ -1675,7 +1595,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .dl-row-compact .dl-size { text-align: right; }
 .dl-row-compact .dl-progress { display: flex; align-items: center; gap: 0.35rem; }
 .dl-row-compact .dl-bar { flex: 1; height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; }
-.dl-row-compact .dl-bar-fill { height: 100%; background: var(--aurora); border-radius: 3px; }
+.dl-row-compact .dl-bar-fill { height: 100%; background: var(--aurora-3); border-radius: 3px; }
 .dl-row-compact .dl-pct { flex: none; width: 32px; text-align: right; font-size: 0.75rem; }
 .dl-row-compact .dl-down, .dl-row-compact .dl-up, .dl-row-compact .dl-peers, .dl-row-compact .dl-eta { text-align: right; color: var(--muted); white-space: nowrap; }
 .dl-row-compact .dl-down.active { color: var(--ice); }
@@ -1743,15 +1663,15 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .player-cover-ph { display: flex; align-items: center; justify-content: center; background: var(--panel); color: var(--muted); padding: 1rem; }
 .player-title { margin: 0.4rem 0 0; font-size: 1.15rem; line-height: 1.3; }
 .player-byline, .player-series { margin: 0; font-size: 0.85rem; }
-.player-chapter { min-height: 1.1em; margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--accent); }
+.player-chapter { min-height: 1.1em; margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--ice); }
 .player-dl { position: relative; width: 100%; height: 1.4rem; background: var(--panel); border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.player-dl-bar { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--accent) 30%, transparent); transition: width 0.3s; }
+.player-dl-bar { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--ice) 30%, transparent); transition: width 0.3s; }
 .player-dl span { position: relative; font-size: 0.75rem; }
-.player-scrub { width: 100%; accent-color: var(--accent); }
+.player-scrub { width: 100%; accent-color: var(--ice); }
 .player-clock { display: flex; justify-content: space-between; width: 100%; font-size: 0.78rem; }
 .player-controls { display: flex; align-items: center; justify-content: center; gap: 0.7rem; margin-top: 0.3rem; }
 .player-btn { min-width: 3rem; min-height: 3rem; font-size: 1.15rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
-.player-play { min-width: 4.2rem; min-height: 4.2rem; font-size: 1.7rem; background: var(--accent); color: var(--bg); border: none; }
+.player-play { min-width: 4.2rem; min-height: 4.2rem; font-size: 1.7rem; background: var(--ice); color: var(--bg); border: none; }
 .player-play:hover { filter: brightness(1.1); }
 .player-sub { display: flex; align-items: center; gap: 0.8rem; margin-top: 0.4rem; }
 .player-btn-sm { min-height: 2.2rem; padding: 0 0.8rem; border-radius: 999px; font-size: 0.85rem; }
@@ -1759,7 +1679,7 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
 .player-drawer { width: 100%; max-height: 40vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
 .player-ch { display: flex; justify-content: space-between; gap: 0.8rem; width: 100%; padding: 0.55rem 0.6rem; background: none; border: none; border-radius: 6px; text-align: left; cursor: pointer; }
 .player-ch:hover { background: var(--panel); }
-.player-ch.current { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.player-ch.current { background: color-mix(in srgb, var(--ice) 14%, transparent); }
 .player-ch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .listen-link { font-weight: 600; }
 
@@ -1815,11 +1735,11 @@ a.domain-card:hover { border-color: var(--border-control); background: #20252e; 
    here instead of as full-height empty panels. */
 .stage-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
 .stage-pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.7rem; border-radius: 999px; background: var(--panel); border: 1px solid var(--border-soft); color: var(--muted); }
-.stage-pill.active { border-color: var(--accent); color: var(--fg); }
-.stage-pill.active .mono { color: var(--accent); font-weight: 600; }
+.stage-pill.active { border-color: var(--ice); color: var(--fg); }
+.stage-pill.active .mono { color: var(--ice); font-weight: 600; }
 /* Indexer rollup card on the dashboard (SKADI-T-0348). */
 a.indexer-rollup { text-decoration: none; }
-a.indexer-rollup:hover { border-color: var(--accent); }
+a.indexer-rollup:hover { border-color: var(--ice); }
 
 /* Listen page: two labeled paths (app vs web player) — SKADI-T-0349. */
 .listen-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.6rem 0 1.2rem; }
@@ -1834,7 +1754,7 @@ a.indexer-rollup:hover { border-color: var(--accent); }
 
 /* Indexer health rollup chip on the Overview (SKADI-T-0348). */
 a.health-rollup { text-decoration: none; color: inherit; }
-a.health-rollup:hover { border-color: var(--accent); }
+a.health-rollup:hover { border-color: var(--ice); }
 
 /* Rotated-token banner (SKADI-T-0474). Spans the shell above the sidebar so it
    is visible on every route — a stale token breaks all of them, not one. */
@@ -1842,14 +1762,14 @@ a.health-rollup:hover { border-color: var(--accent); }
   grid-column: 1 / -1;
   padding: 0.75rem 1rem;
   background: var(--bad);
-  color: #fff;
+  color: var(--on-status);
   display: flex;
   gap: 0.75rem;
   align-items: center;
   justify-content: center;
 }
 .auth-banner button {
-  background: #fff;
+  background: var(--panel);
   color: var(--bad);
   border: 0;
   border-radius: 4px;
@@ -1866,7 +1786,7 @@ a.health-rollup:hover { border-color: var(--accent); }
    the key is actually set. Every row used to carry both buttons at rest —
    two per field, forty on the page. */
 .config-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.7rem; padding: 0.3rem 0; }
-.config-key { font-family: var(--mono); font-size: 12px; color: var(--fg-2); flex: 0 0 220px; display: flex; align-items: center; gap: 0.4rem; }
+.config-key { font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); flex: 0 0 220px; display: flex; align-items: center; gap: 0.4rem; }
 .config-row input[type="text"], .config-row input[type="number"] { flex: 1 1 200px; min-width: 0; }
 .config-row .row-actions { display: flex; align-items: center; gap: 0.4rem; }
 .config-row .muted { flex: 1 1 100%; font-size: 12px; margin: 0; }
@@ -1920,7 +1840,7 @@ a.health-rollup:hover { border-color: var(--accent); }
 .watch-nav .watch-next { color: var(--fg); border-color: var(--border-control); }
 .watch-video { display: block; width: 100%; max-height: 78vh; background: #000; border-radius: 10px; }
 .watch-note { padding: 0.55rem 0.9rem; border-radius: 8px; margin-bottom: 0.8rem; font-size: 13px; line-height: 1.45; }
-.watch-note.warn { background: rgba(216, 166, 87, 0.12); color: var(--warn); }
+.watch-note.warn { background: rgba(216, 166, 87, 0.12); color: var(--gold); }
 .watch-note.bad { background: rgba(240, 100, 100, 0.12); color: var(--bad); }
 .watch-meta { color: var(--faint); font-size: 11.5px; margin: 0.5rem 0 0; }
 
@@ -1931,11 +1851,11 @@ a.health-rollup:hover { border-color: var(--accent); }
 .wanted-row .spacer { flex: 1; }
 .wanted-eds { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
 .wanted-ed {
-  font-family: var(--mono); font-size: 11px; padding: 0.1rem 0.4rem; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11px; padding: 0.1rem 0.4rem; border-radius: 4px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer;
 }
 .wanted-ed.bad { color: var(--bad); border-color: rgba(255, 107, 107, 0.35); }
-.wanted-ed.pending { color: var(--accent); }
+.wanted-ed.pending { color: var(--ice); }
 .wanted-ed.open, .wanted-ed:hover { border-color: var(--ice); color: var(--fg-bright); }
 .wanted-more { font-size: 11px; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 0.3rem; }
 .wanted-more:hover { color: var(--fg); }
@@ -1962,7 +1882,7 @@ a.health-rollup:hover { border-color: var(--accent); }
     padding: 0.2rem 0.6rem;
 }
 p.genres.muted {
-    color: var(--muted, #8a93a6);
+    color: var(--muted);
     font-size: 0.92em;
     margin: 0.25rem 0 0.5rem;
 }
@@ -1970,12 +1890,12 @@ p.genres.muted {
 /* Content rating (SKADI-T-0610): a small bordered label above the genres line. */
 .rating-chip {
     display: inline-block;
-    border: 1px solid var(--muted, #8a93a6);
+    border: 1px solid var(--muted);
     border-radius: 3px;
     padding: 0 0.35rem;
     font-size: 0.75em;
     letter-spacing: 0.04em;
-    color: var(--muted, #8a93a6);
+    color: var(--muted);
     margin: 0.25rem 0 0;
 }
 
@@ -2040,7 +1960,7 @@ p.genres.muted {
 .subnav-link:hover { color: var(--fg); background: var(--control); }
 /* Marked the same way the sidebar marks its current entry, so "you are here"
    reads identically in both navigations. */
-.subnav-link.is-here { color: var(--fg); background: var(--ice-tint); box-shadow: inset 0 -2px 0 var(--ice); }
+.subnav-link.is-here { color: var(--fg); background: var(--ice-bg); box-shadow: inset 0 -2px 0 var(--ice); }
 
 /* Settings → System (SKADI-T-0684): status facts, check / task / log tables.
    Same chrome as the releases table; tones from the semantic tokens. */
@@ -2074,7 +1994,7 @@ p.genres.muted {
 .check-level { font-size: 0.72rem; color: var(--fg-2); }
 .check-id, .task-what { font-size: 0.72rem; }
 .check-remedy { color: var(--fg-2); }
-.check-row.sev-warn .check-remedy { color: var(--warn); }
+.check-row.sev-warn .check-remedy { color: var(--gold); }
 .check-row.sev-bad .check-remedy { color: var(--bad); }
 .log-table { font-size: 0.75rem; }
 .log-table td { padding: 0.2rem 0.5rem; }
@@ -2082,7 +2002,7 @@ p.genres.muted {
 .log-target { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .log-level { font-size: 0.7rem; }
 .log-level.bad { color: var(--bad); }
-.log-level.warn { color: var(--warn); }
+.log-level.warn { color: var(--gold); }
 .log-level.muted { color: var(--faint); }
 
 /* Downloads: state filter chips, "Added" column, Seeding sort bar (SKADI-T-0686). */
@@ -2099,10 +2019,10 @@ p.genres.muted {
 /* Downloads row badges and tints (SKADI-T-0687). `.badge.warn` / `.badge.bad`
    use the same levels as `.status-dot` / `.health-dot`. An errored row is
    tinted and shows its message; a stalled row gets a warn edge. */
-.badge.warn { background: rgba(216, 166, 87, 0.15); color: var(--warn); }
+.badge.warn { background: rgba(216, 166, 87, 0.15); color: var(--gold); }
 .badge.bad { background: rgba(240, 100, 100, 0.15); color: var(--bad); }
 .dl-badge { margin-right: 0.4rem; font-weight: 600; }
-.dl-row-compact.st-stalled, .seed-row.st-stalled { box-shadow: inset 2px 0 0 var(--warn); }
+.dl-row-compact.st-stalled, .seed-row.st-stalled { box-shadow: inset 2px 0 0 var(--gold); }
 .dl-row-compact.st-errored, .seed-row.st-errored { background: rgba(240, 100, 100, 0.07); box-shadow: inset 2px 0 0 var(--bad); }
 .dl-row-compact.st-errored:hover, .seed-row.st-errored:hover { background: rgba(240, 100, 100, 0.11); }
 .dl-row-compact .dl-error { white-space: normal; overflow-wrap: anywhere; }
@@ -2134,7 +2054,7 @@ p.genres.muted {
 .seed-plan li .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .seed-plan-kind { font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
 .seed-plan-kind.place { color: var(--ok); }
-.seed-plan-kind.replace { color: var(--warn); }
+.seed-plan-kind.replace { color: var(--gold); }
 .seed-plan-kind.reject { color: var(--bad); }
 .seed-import-panel .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
 /* Activity row actions (SKADI-T-0691): admin-only buttons at the row's end;
@@ -2158,17 +2078,17 @@ p.genres.muted {
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: rgba(10, 12, 16, 0.72);
+  background: var(--scrim);
 }
 .confirm-dialog {
   width: min(28rem, 100%);
   background: var(--panel);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: var(--r-card);
+  border-radius: var(--radius-panel);
   padding: 1.1rem 1.2rem 1rem;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  font-family: var(--sans);
+  font-family: var(--font-sans);
 }
 .confirm-title {
   margin: 0 0 0.5rem;
@@ -2184,12 +2104,12 @@ p.genres.muted {
   white-space: pre-line;
 }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-.confirm-dialog button:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
+.confirm-dialog button:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
 .confirm-dialog button.confirm-ok.danger {
   color: var(--bad);
   border-color: rgba(240, 100, 100, 0.5);
 }
-.confirm-dialog button.confirm-ok.danger:hover { background: #4a2222; }
+.confirm-dialog button.confirm-ok.danger:hover { background: var(--bad-bg); }
 
 /* Library toolbar (SKADI-T-0695): one component over the movie, TV and
    audiobook walls. The controls row keeps the old filter-bar layout; the
@@ -2202,7 +2122,7 @@ p.genres.muted {
 .lib-sort { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
 .lib-sort-key {
   background: var(--panel); border: 1px solid var(--border); color: var(--fg);
-  border-radius: 9px; padding: 0.4rem 0.55rem; font-size: 13px; font-family: var(--sans);
+  border-radius: 9px; padding: 0.4rem 0.55rem; font-size: 13px; font-family: var(--font-sans);
 }
 .lib-sort-key:focus { border-color: var(--ice); }
 .lib-sort-dir {
@@ -2220,7 +2140,7 @@ p.genres.muted {
 .lib-toolbar-bulk button {
   background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
   border-radius: 9px; padding: 0.35rem 0.7rem; font-size: 13px; cursor: pointer;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
 }
 .lib-toolbar-bulk button:hover:not(:disabled) { border-color: var(--border-control); color: var(--fg); }
 .lib-toolbar-bulk button:disabled { opacity: 0.45; cursor: default; }
@@ -2231,7 +2151,7 @@ p.genres.muted {
 .bulk-msg.ok { color: var(--fg-2); }
 .bulk-msg.bad { color: var(--bad); }
 .poster-tile.selecting { cursor: pointer; }
-.poster-tile.selected .poster-img { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.poster-tile.selected .poster-img { border-color: var(--ice); box-shadow: 0 0 0 2px var(--ice); }
 .poster-tile.unmonitored .poster-img img,
 .poster-tile.unmonitored .poster-img .poster-ph { opacity: 0.5; }
 .tile-check {
@@ -2240,78 +2160,15 @@ p.genres.muted {
   background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 13px; line-height: 17px;
   text-align: center;
 }
-.tile-check.on { background: var(--accent); border-color: var(--accent); color: #0b0f14; }
+.tile-check.on { background: var(--ice); border-color: var(--ice); color: var(--on-accent); }
 
-/* --- Responsive shell (SKADI-T-0697) ---------------------------------------
-   One signal drives it: `.app.nav-open`, set by the menu button (AppFrame in
-   app.rs). Wide screens never see the top bar or the scrim. */
-.topbar, .nav-scrim { display: none; }
-.menu-btn {
-  width: 38px;
-  height: 34px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid var(--border-control);
-  border-radius: 8px;
-  color: var(--fg-2);
-  cursor: pointer;
-}
-.menu-btn:hover { background: var(--control); }
-.menu-btn:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
-/* Three bars: the span is the middle one, its shadows the outer two. */
-.menu-icon {
-  width: 16px;
-  height: 2px;
-  border-radius: 1px;
-  background: currentColor;
-  box-shadow: 0 -5px 0 currentColor, 0 5px 0 currentColor;
-}
-.topbar-brand { display: inline-flex; align-items: center; gap: 0.5rem; }
-@media (max-width: 720px) {
-  .app { display: block; min-height: 100vh; max-height: none; }
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    height: 50px;
-    padding: 0 12px;
-    background: var(--sidebar);
-    border-bottom: 1px solid var(--border-soft);
-  }
-  .nav {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 40;
-    width: min(280px, 85vw);
-    overflow-y: auto;
-    border-right: 1px solid var(--border-soft);
-    transform: translateX(-100%);
-    /* Hidden, not just moved: a closed drawer's links take no Tab stop. */
-    visibility: hidden;
-    transition: transform 0.18s ease, visibility 0.18s;
-  }
-  .app.nav-open .nav { transform: none; visibility: visible; box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45); }
-  .app.nav-open .nav-scrim {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    background: rgba(5, 7, 10, 0.6);
-  }
-  /* .main keeps overflow-x: hidden from the phone block above as a last net;
-     the DOM test measures its scrollWidth, which that does not hide. */
-  .main { max-height: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .nav { transition: none; }
+/* --- Responsive shell (SKADI-T-0697; Aurora's AppShell since SKADI-T-0717) ---
+   Under 768px Aurora's sidebar is a drawer behind the top bar's menu button.
+   The open drawer locks the page scroll under it, so a swipe scrolls the
+   drawer and not the page. */
+@media (max-width: 768px) {
+  html:has(.cl-appshell--nav-open),
+  html:has(.cl-appshell--nav-open) body { overflow: hidden; }
 }
 
 /* Narrow tables become stacked cards, one "label  value" line per cell; the
@@ -2328,7 +2185,7 @@ p.genres.muted {
   .import-table thead, .releases-table thead, .system-table thead { display: none; }
   .history-table tr, .import-table tr, .releases-table tr, .system-table tr {
     border: 1px solid var(--border-soft);
-    border-radius: var(--r-card);
+    border-radius: var(--radius-panel);
     padding: 0.45rem 0.7rem;
     margin-bottom: 0.5rem;
   }
@@ -2348,7 +2205,7 @@ p.genres.muted {
     display: inline-block;
     min-width: 6.5rem;
     margin-right: 0.5rem;
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     font-size: 10px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2381,7 +2238,7 @@ p.genres.muted {
 .sk-line.sk-short { width: 45%; }
 .sk-line.sk-title { height: 0.9rem; width: 35%; }
 .sk-tile { display: flex; flex-direction: column; gap: 6px; }
-.sk-poster { aspect-ratio: 2 / 3; border-radius: var(--r-tile); border: 1px solid var(--border); }
+.sk-poster { aspect-ratio: 2 / 3; border-radius: var(--radius-md); border: 1px solid var(--border); }
 .sk-rows { display: flex; flex-direction: column; gap: 2px; }
 .sk-row {
   display: flex; align-items: center; gap: 0.8rem;
@@ -2396,7 +2253,7 @@ p.genres.muted {
   display: flex; flex-direction: column; gap: 0.5rem;
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);
-  border-radius: var(--r-card);
+  border-radius: var(--radius-panel);
   background: var(--panel);
 }
 @keyframes sk-shimmer {
@@ -2421,14 +2278,13 @@ p.genres.muted {
 .field .field-error { font-size: 12px; margin: 0; }
 .field input[aria-invalid="true"] { border-color: var(--bad); }
 .card-test .last-test { font-size: 12px; }
-.card-test .last-test.warn { color: var(--warn); }
+.card-test .last-test.warn { color: var(--gold); }
 .config-row .config-help { flex: 1 1 100%; }
 
 /* --- Accessibility (SKADI-T-0700) ------------------------------------------
    The skip link focuses <main> (tabindex=-1, not a Tab stop): no ring on the
-   whole page for that. The open drawer locks the page scroll under it. */
+   whole page for that. */
 .main:focus-visible { outline: none; }
-html.nav-lock, html.nav-lock body { overflow: hidden; }
 /* A link inside running text must not rely on colour alone. */
 p > a:not([class]) { text-decoration: underline; text-underline-offset: 2px; }
 /* A sort header is a button that looks like header text. */
@@ -2442,9 +2298,9 @@ p > a:not([class]) { text-decoration: underline; text-underline-offset: 2px; }
 .shortcut-row dt, .shortcut-row dd { margin: 0; }
 .shortcut-row dd { color: var(--fg-2); font-size: 13px; }
 kbd {
-  font-family: var(--mono); font-size: 12px; color: var(--fg-bright);
+  font-family: var(--font-mono); font-size: 12px; color: var(--fg-bright);
   background: var(--control); border: 1px solid var(--border-control);
   border-radius: 4px; padding: 1px 6px;
 }
-.poster-tile:focus-visible { outline-offset: 3px; border-radius: var(--r-tile); }
-.poster-tile:focus-visible .poster-img { border-color: var(--accent); }
+.poster-tile:focus-visible { outline-offset: 3px; border-radius: var(--radius-md); }
+.poster-tile:focus-visible .poster-img { border-color: var(--ice); }

@@ -1,9 +1,12 @@
-//! The app shell: persistent left sidebar (brand + health, then Home / Domains
-//! / System groups) over a routed main area (SKADI-T-0071). Under 720px the
-//! sidebar is an off-canvas drawer behind a menu button ([`AppFrame`],
-//! SKADI-T-0697). Split out of `main.rs` into the lib so the bin stays a thin
-//! mount point.
+//! The app shell: a top bar (brand, daemon health, "+ Add media") and a
+//! persistent left sidebar (Home / Library / Settings groups) over a routed
+//! main area (SKADI-T-0071). The frame is Aurora's `AppShell` + `SideNav`
+//! (SKADI-T-0717); under 768px the sidebar is a drawer behind a menu button
+//! ([`AppFrame`], SKADI-T-0697). Split out of `main.rs` into the lib so the
+//! bin stays a thin mount point.
 
+use aurora_leptos::components::{AppShell, SideNav, SideNavGroup, SideNavLink};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::{A, Route, Router, Routes};
@@ -187,20 +190,11 @@ fn Shell() -> impl IntoView {
     }
 }
 
-/// The `id` of the sidebar `<nav>`; the menu button's `aria-controls`.
+/// The `id` of the sidebar `<nav>` (Aurora's `SideNav`).
 pub const NAV_ID: &str = "app-nav";
 
 /// The `id` of the routed `<main>`; the skip link's target (SKADI-T-0700).
 pub const MAIN_ID: &str = "main";
-
-/// The class on `<html>` that stops the page scrolling behind the open drawer.
-pub const SCROLL_LOCK_CLASS: &str = "nav-lock";
-
-fn set_scroll_lock(on: bool) {
-    if let Some(root) = document().document_element() {
-        let _ = root.class_list().toggle_with_force(SCROLL_LOCK_CLASS, on);
-    }
-}
 
 /// After a route change: focus `<main>`, unless the new page already put the
 /// focus inside it.
@@ -233,131 +227,152 @@ fn skip_to_main(ev: leptos::ev::MouseEvent) {
     }
 }
 
-/// Whether the narrow-screen drawer is open (SKADI-T-0697). Wide screens never
-/// set it: the menu button that does is hidden there.
-#[derive(Clone, Copy)]
-struct DrawerOpen(RwSignal<bool>);
+/// Whether a sidebar link is the current area: `/` only on `/`, any other
+/// link on its own path and the paths under it (`/movies` on `/movies/42`).
+/// The rule `leptos_router`'s `<A>` used before SKADI-T-0717.
+#[must_use]
+pub fn nav_active(href: &str, path: &str) -> bool {
+    let path = path
+        .strip_suffix('/')
+        .filter(|p| !p.is_empty())
+        .unwrap_or(path);
+    if href == "/" {
+        return path == "/";
+    }
+    path == href
+        || path
+            .strip_prefix(href)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
 
-/// The first thing a keyboard user can reach inside `root`.
-fn first_focusable(root: &web_sys::Element) -> Option<web_sys::HtmlElement> {
+/// Aurora's `AppShell`, found from the skip link just before it.
+fn shell_of(skip: &web_sys::HtmlAnchorElement) -> Option<web_sys::Element> {
+    skip.next_element_sibling()
+        .filter(|e| e.class_list().contains("cl-appshell"))
+}
+
+/// Closes Aurora's drawer if it is open.
+///
+/// Workaround, Aurora defect: `AppShell` keeps its open state to itself (no
+/// prop, no context), so a product cannot close the drawer when the route
+/// changes another way (a shortcut, a link in the page) or when the window
+/// grows. Its own menu button is the one switch, so press it.
+fn close_drawer(shell: &web_sys::Element) {
     use wasm_bindgen::JsCast;
-    root.query_selector("a[href], button:not([disabled]), input, select")
+    if !shell.class_list().contains("cl-appshell--nav-open") {
+        return;
+    }
+    if let Some(menu) = shell
+        .query_selector(":scope > .cl-appshell__header > .cl-appshell__menu")
         .ok()
         .flatten()
         .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        menu.click();
+    }
 }
 
-/// The shell's frame: a top bar with the menu button (narrow screens only),
-/// the sidebar, and the routed `<main>` (SKADI-T-0697).
+/// The shell's frame: Aurora's `AppShell` (SKADI-T-0717) with Skadi's brand
+/// and top-bar tools in its header, the [`Sidebar`] as its `SideNav`, and the
+/// routed pages in its `<main>`.
 ///
-/// Under 720px the sidebar is an off-canvas drawer; `style.css` does all the
-/// layout from one signal, the `nav-open` class on `.app`. The drawer:
-/// - opens from a real `<button>` with `aria-expanded` / `aria-controls`, and
-///   focus moves to its first link;
-/// - closes on Esc (focus back on the menu button), on a click on the scrim,
-///   on any navigation, on a click on one of its links, and when the window
-///   grows past the breakpoint;
-/// - makes `<main>` `inert` while it is open, so Tab stays in the drawer.
+/// Aurora does the responsive part (SKADI-T-0697): under 768px the sidebar is
+/// a drawer behind the menu button, which has `aria-expanded` /
+/// `aria-controls`; focus moves to its first link, Tab stays inside it, and
+/// Esc, a click on the scrim or a click on a link closes it (Esc gives focus
+/// back to the menu button). Skadi adds:
+/// - a skip link before the frame, the first Tab stop (SKADI-T-0700);
+/// - the `main` id, class and `tabindex="-1"` on Aurora's `<main>`, so the
+///   skip link and a new page can focus it;
+/// - focus to `<main>` after a route change, and the drawer closed then and
+///   when the window grows past the breakpoint;
+/// - the page scroll locked under the open drawer (in `style.css`).
 ///
 /// Must sit inside a `<Router>` (it watches the location).
 #[component]
 pub fn AppFrame(children: Children) -> impl IntoView {
-    let open = RwSignal::new(false);
-    provide_context(DrawerOpen(open));
-    let menu_ref = NodeRef::<leptos::html::Button>::new();
+    let skip_ref = NodeRef::<leptos::html::A>::new();
 
-    // Close on navigation (the first run only records the path).
+    // Workaround, Aurora defect: `AppShell` takes no id, class or tabindex
+    // for its `<main>`, and the skip link, the focus-after-navigation and the
+    // tests all need one. Set them once the frame is in the page.
+    Effect::new(move |_| {
+        let Some(shell) = skip_ref.get().as_ref().and_then(shell_of) else {
+            return;
+        };
+        if let Some(main) = shell.query_selector(":scope > main").ok().flatten() {
+            main.set_id(MAIN_ID);
+            let _ = main.set_attribute("tabindex", "-1");
+            let _ = main.class_list().add_1("main");
+        }
+    });
+
+    // A new page closes the drawer and takes the keyboard focus to <main>
+    // (SKADI-T-0700): the link that was used stays in the sidebar, or is gone
+    // with the old page, and Tab would start again from the top. The first
+    // run only records the path.
     let location = leptos_router::hooks::use_location();
-    // A new page also takes the keyboard focus to <main> (SKADI-T-0700): the
-    // link that was used stays in the sidebar, or is gone with the old page,
-    // and Tab would start again from the top.
     Effect::new(move |prev: Option<String>| {
         let path = location.pathname.get();
         if prev.is_some_and(|p| p != path) {
-            open.set(false);
+            if let Some(shell) = skip_ref.get_untracked().as_ref().and_then(shell_of) {
+                close_drawer(&shell);
+            }
             request_animation_frame(focus_main_after_navigation);
         }
         path
     });
-
-    // Focus into the drawer once it is open. After a frame: the drawer is
-    // `visibility: hidden` until the class lands, and a hidden link takes no
-    // focus.
-    Effect::new(move |was: Option<bool>| {
-        let now = open.get();
-        if now && was == Some(false) {
-            request_animation_frame(move || {
-                let nav = document().get_element_by_id(NAV_ID);
-                if let Some(target) = nav.as_ref().and_then(first_focusable) {
-                    let _ = target.focus();
-                }
-            });
-        }
-        now
-    });
-
-    let close_to_menu = move || {
-        open.set(false);
-        if let Some(b) = menu_ref.get_untracked() {
-            let _ = b.focus();
-        }
-    };
-    let keys = window_event_listener(leptos::ev::keydown, move |ev| {
-        // A confirm dialog above the drawer takes its own Esc.
-        let dialog_open = document()
-            .query_selector(".confirm-dialog")
-            .ok()
-            .flatten()
-            .is_some();
-        if ev.key() == "Escape" && open.get_untracked() && !dialog_open {
-            ev.prevent_default();
-            close_to_menu();
-        }
-    });
-    on_cleanup(move || keys.remove());
     let resize = window_event_listener(leptos::ev::resize, move |_| {
         let wide = window()
             .inner_width()
             .ok()
             .and_then(|w| w.as_f64())
-            .is_some_and(|w| w > 720.0);
-        if wide && open.get_untracked() {
-            open.set(false);
+            .is_some_and(|w| w > 768.0);
+        if wide && let Some(shell) = skip_ref.get_untracked().as_ref().and_then(shell_of) {
+            close_drawer(&shell);
         }
     });
     on_cleanup(move || resize.remove());
 
-    // Lock the page behind the open drawer, so a swipe scrolls the drawer and
-    // not the page under the scrim (SKADI-T-0700).
-    Effect::new(move |_| set_scroll_lock(open.get()));
-    on_cleanup(|| set_scroll_lock(false));
-
     view! {
-        <div class="app" class:nav-open=move || open.get()>
-            <a class="skip-link" href=format!("#{MAIN_ID}") on:click=skip_to_main>"Skip to content"</a>
-            <header class="topbar">
-                <button
-                    type="button"
-                    class="menu-btn"
-                    node_ref=menu_ref
-                    aria-label="Menu"
-                    aria-controls=NAV_ID
-                    aria-expanded=move || if open.get() { "true" } else { "false" }
-                    on:click=move |_| open.update(|o| *o = !*o)
-                >
-                    <span class="menu-icon" aria-hidden="true"></span>
-                </button>
-                <span class="topbar-brand">
-                    <Snowflake/>
-                    <span class="brand-name">"Skadi"</span>
-                </span>
-            </header>
-            <div class="nav-scrim" aria-hidden="true" on:click=move |_| close_to_menu()></div>
-            <Sidebar/>
+        <a class="skip-link" node_ref=skip_ref href=format!("#{MAIN_ID}") on:click=skip_to_main>
+            "Skip to content"
+        </a>
+        <AppShell
+            brand=std::sync::Arc::new(|| view! { <Snowflake/><span class="brand-name">"Skadi"</span> }.into_any())
+            header=Box::new(|| view! { <TopBarTools/> }.into_any())
+            navbar=Box::new(|| view! { <Sidebar/> }.into_any())
+        >
             <crate::shortcuts::ShortcutsHost/>
-            <main class="main" id=MAIN_ID tabindex="-1" inert=move || open.get()>
-                {children()}
-            </main>
+            {children()}
+        </AppShell>
+    }
+}
+
+/// The right of the top bar: the daemon's health and, for an account that
+/// may add, the primary "+ Add media".
+#[component]
+fn TopBarTools() -> impl IntoView {
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let can_contribute = move || {
+        matches!(
+            role_ctx.and_then(|r| r.get()).as_deref(),
+            Some("admin") | Some("contributor")
+        )
+    };
+    // A `Callback` rather than a bare closure: the button renders inside a
+    // reactive closure, and a plain closure that moves `navigate` would make
+    // the enclosing view `FnOnce`.
+    let navigate = use_navigate();
+    let go_add = Callback::new(move |()| navigate("/add", Default::default()));
+    view! {
+        <div class="topbar-tools">
+            <HealthBadge/>
+            {move || can_contribute().then(|| view! {
+                <button class="add-media" on:click=move |_| go_add.run(())>
+                    "+ Add media"
+                </button>
+            })}
         </div>
     }
 }
@@ -496,9 +511,9 @@ fn domain_nav(kind: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// The persistent left navigation: brand + health, then grouped sections. The
-/// Domains group lists only **enabled** domains (from `/domains`), so it agrees
-/// with the dashboard — a disabled domain is enabled under Config → Domains,
+/// The persistent left navigation: grouped sections, then who is signed in
+/// and the root-folder usage. The Library group lists only **enabled** domains
+/// (from `/domains`), so it agrees with the dashboard — a disabled domain is enabled under Config → Domains,
 /// after which its link appears (SKADI-T-0143 follow-up).
 #[component]
 fn Sidebar() -> impl IntoView {
@@ -551,6 +566,11 @@ fn Sidebar() -> impl IntoView {
         });
     });
 
+    let location = leptos_router::hooks::use_location();
+    let active = move |href: &'static str| {
+        Signal::derive(move || nav_active(href, &location.pathname.get()))
+    };
+
     let library_links = move || {
         let enabled: Vec<_> = domains.get().into_iter().filter(|d| d.enabled).collect();
         if enabled.is_empty() {
@@ -560,30 +580,27 @@ fn Sidebar() -> impl IntoView {
             .into_iter()
             .filter_map(|d| {
                 let (label, href) = domain_nav(&d.kind)?;
-                let (dot, count) = match d.kind.as_str() {
-                    "movie" => ("ice", movie_count.get()),
-                    "series" => ("gold", series_count.get()),
-                    "audiobook" => ("teal", book_count.get()),
-                    _ => ("muted", None),
+                // The square marker per domain: ice (movies), gold (TV),
+                // teal (audiobooks).
+                let (marker, count) = match d.kind.as_str() {
+                    "movie" => (token::ICE, movie_count),
+                    "series" => (token::GOLD, series_count),
+                    "audiobook" => (token::TEAL, book_count),
+                    _ => (token::MUTED, RwSignal::new(None)),
                 };
                 Some(view! {
-                    <A href=href>
-                        <span class=format!("nav-dot {dot}")></span>
-                        <span class="nav-label">{label}</span>
-                        <span class="nav-count mono">
-                            {count.map(|c| c.to_string()).unwrap_or_default()}
-                        </span>
-                    </A>
+                    <SideNavLink
+                        href=href
+                        active=active(href)
+                        marker=marker
+                        count=Signal::derive(move || count.get())
+                    >
+                        {label}
+                    </SideNavLink>
                 })
             })
             .collect_view();
-        view! {
-            <div class="nav-group">
-                <span class="nav-group-label">"Library"</span>
-                {links}
-            </div>
-        }
-        .into_any()
+        view! { <SideNavGroup label="Library">{links}</SideNavGroup> }.into_any()
     };
 
     let storage = move || {
@@ -625,75 +642,51 @@ fn Sidebar() -> impl IntoView {
             .collect_view()
     };
 
-    // A `Callback` rather than a bare closure: the Add button now renders
-    // inside a reactive closure, and a plain closure that moves `navigate`
-    // would make the enclosing view `FnOnce`.
-    let navigate = use_navigate();
-    let go_add = Callback::new(move |()| navigate("/add", Default::default()));
-    let drawer = use_context::<DrawerOpen>();
-
     // Which areas this account can actually reach (SKADI-T-0627). The API has
     // gated these since SKADI-T-0625, but the sidebar offered them to everyone
     // and let the 403 do the talking. Four links is little enough that a dead
     // one is conspicuous, so ask first. The role comes from the shell, which
     // sits above the router and so can hand the same answer to the section
     // strips on the pages.
-
+    //
+    // Aurora's SideNav (SKADI-T-0717). The `nav` class and the id are the
+    // hooks the tests use. A click on a link closes the narrow drawer
+    // (Aurora's AppShell does that).
     view! {
-        <nav
-            class="nav"
+        <SideNav
+            label="Main"
+            footer=Box::new(move || view! {
+                <div class="nav-footer">
+                    <AccountStrip/>
+                    {storage}
+                </div>
+            }.into_any())
+            {..}
             id=NAV_ID
-            aria-label="Main"
-            // A link to the page already shown changes no path, so close on
-            // the click itself too (SKADI-T-0697).
-            on:click=move |ev| {
-                use wasm_bindgen::JsCast;
-                let on_link = ev
-                    .target()
-                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-                    .and_then(|e| e.closest("a[href]").ok().flatten())
-                    .is_some();
-                if on_link && let Some(DrawerOpen(open)) = drawer {
-                    open.set(false);
-                }
-            }
+            class:nav=true
         >
-            <div class="brand">
-                <Snowflake/>
-                <span class="brand-name">"Skadi"</span>
-            </div>
-            <HealthBadge/>
-            {move || can_contribute().then(|| view! {
-                <button class="add-media" on:click=move |_| go_add.run(())>
-                    "+ Add media"
-                </button>
-            })}
-
-            <div class="nav-main">
-                // One entry per *area*, not per page (SKADI-T-0627). Wanted and
-                // the running hunts share an Activity strip; everything that
-                // configures skadi sits behind Settings — each as a section
-                // strip on the page itself, so deep links still work.
-                <A href="/"><span class="nav-label">"Overview"</span></A>
+            // One entry per *area*, not per page (SKADI-T-0627). Wanted and
+            // the running hunts share an Activity strip; everything that
+            // configures skadi sits behind Settings — each as a section
+            // strip on the page itself, so deep links still work.
+            <SideNavGroup>
+                <SideNavLink href="/" active=active("/")>"Overview"</SideNavLink>
                 // A contributor can see what is still missing but not the
                 // hunter's internals, so their Activity link is Wanted.
                 {move || is_admin().then(|| view! {
-                    <A href="/activity"><span class="nav-label">"Activity"</span></A>
+                    <SideNavLink href="/activity" active=active("/activity")>"Activity"</SideNavLink>
                 })}
                 {move || (!is_admin() && can_contribute()).then(|| view! {
-                    <A href="/wanted"><span class="nav-label">"Wanted"</span></A>
+                    <SideNavLink href="/wanted" active=active("/wanted")>"Wanted"</SideNavLink>
                 })}
-                {library_links}
-                {move || is_admin().then(|| view! {
-                    <A href="/indexers"><span class="nav-label">"Settings"</span></A>
-                })}
-            </div>
-
-            <div class="nav-footer">
-                <AccountStrip/>
-                {storage}
-            </div>
-        </nav>
+            </SideNavGroup>
+            {library_links}
+            {move || is_admin().then(|| view! {
+                <SideNavGroup>
+                    <SideNavLink href="/indexers" active=active("/indexers")>"Settings"</SideNavLink>
+                </SideNavGroup>
+            })}
+        </SideNav>
     }
 }
 

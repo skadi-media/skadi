@@ -891,6 +891,12 @@ async fn next_frame() {
     settle_dom().await;
 }
 
+/// The frame is Aurora's AppShell (SKADI-T-0717); these are its hooks.
+const SHELL: &str = ".cl-appshell";
+const MENU: &str = "button.cl-appshell__menu";
+const SCRIM: &str = ".cl-appshell__scrim";
+const OPEN: &str = "cl-appshell--nav-open";
+
 #[wasm_bindgen_test]
 async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
     let host = host();
@@ -898,24 +904,30 @@ async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
         view! { <Router><AppFrame><p class="page">"Page"</p></AppFrame></Router> }
     });
     settle_dom().await;
-    let menu = find(&host, "button.menu-btn");
-    let app = find(&host, ".app");
+    let menu = find(&host, MENU);
+    let app = find(&host, SHELL);
     let main = find(&host, "main.main");
-    let nav = find(&host, &format!("nav#{NAV_ID}"));
-    assert_eq!(attr(&menu, "aria-controls").as_deref(), Some(NAV_ID));
+    let nav = find(&host, &format!("nav#{NAV_ID}.nav"));
+    // The menu button controls the drawer that holds the sidebar.
+    let drawer_id = attr(&menu, "aria-controls").expect("aria-controls");
+    let drawer = find(&host, &format!("#{drawer_id}"));
+    assert!(drawer.contains(Some(&nav)), "the drawer holds the sidebar");
     assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
     assert_eq!(attr(&menu, "aria-label").as_deref(), Some("Menu"));
     assert_eq!(attr(&menu, "type").as_deref(), Some("button"));
-    assert!(!app.class_list().contains("nav-open"));
-    assert!(attr(&main, "inert").is_none());
+    assert!(!app.class_list().contains(OPEN));
+    assert!(
+        main.contains(Some(&find(&host, "p.page"))),
+        "the page is in <main>"
+    );
 
-    // Open: the one signal flips, main goes inert, focus lands in the drawer.
+    // Open: focus lands in the drawer.
     menu.focus().unwrap();
     menu.click();
     next_frame().await;
+    next_frame().await;
     assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("true"));
-    assert!(app.class_list().contains("nav-open"));
-    assert!(attr(&main, "inert").is_some(), "main is inert while open");
+    assert!(app.class_list().contains(OPEN));
     let active = active_element().expect("something has focus");
     assert!(
         nav.contains(Some(&active)),
@@ -931,8 +943,7 @@ async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
     );
     settle_dom().await;
     assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
-    assert!(!app.class_list().contains("nav-open"));
-    assert!(attr(&main, "inert").is_none());
+    assert!(!app.class_list().contains(OPEN));
     let back = active_element().expect("focus");
     let menu_el: &web_sys::Element = menu.as_ref();
     assert!(back == *menu_el, "focus is back on the menu button");
@@ -945,10 +956,10 @@ async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
     // The scrim closes it too.
     menu.click();
     settle_dom().await;
-    assert!(app.class_list().contains("nav-open"));
-    find(&host, ".nav-scrim").click();
+    assert!(app.class_list().contains(OPEN));
+    find(&host, SCRIM).click();
     settle_dom().await;
-    assert!(!app.class_list().contains("nav-open"), "scrim click closes");
+    assert!(!app.class_list().contains(OPEN), "scrim click closes");
 
     // So does picking a link, even the page already shown.
     menu.click();
@@ -956,13 +967,14 @@ async fn drawer_opens_from_a_real_button_and_esc_hands_focus_back() {
     let link = find(&host, &format!("#{NAV_ID} a[href]"));
     link.click();
     settle_dom().await;
-    assert!(!app.class_list().contains("nav-open"), "a nav link closes");
+    assert!(!app.class_list().contains(OPEN), "a nav link closes");
     assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
     host.remove();
 }
 
-/// An iframe `width` px wide holding the real `style.css`, so its `@media`
-/// rules see a `width` viewport; returns the iframe and its `<body>`.
+/// An iframe `width` px wide holding Aurora's stylesheet and the real
+/// `style.css`, as index.html links them, so their `@media` rules see a
+/// `width` viewport; returns the iframe and its `<body>`.
 async fn narrow_frame(width: u32) -> (HtmlElement, HtmlElement) {
     let frame = document()
         .create_element("iframe")
@@ -973,7 +985,8 @@ async fn narrow_frame(width: u32) -> (HtmlElement, HtmlElement) {
         .set_attribute("style", &format!("width:{width}px;height:900px;border:0"))
         .unwrap();
     let srcdoc = format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>{}</style></head><body></body></html>",
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>{}</style><style>{}</style></head><body></body></html>",
+        aurora_leptos::AURORA_CSS,
         include_str!("../style.css")
     );
     frame.set_attribute("srcdoc", &srcdoc).unwrap();
@@ -1170,8 +1183,8 @@ async fn nothing_scrolls_sideways_at_375px_and_the_drawer_is_off_canvas() {
         overflow(&root)
     );
     for sel in [
-        ".app",
-        ".topbar",
+        SHELL,
+        ".cl-appshell__header",
         "main.main",
         ".history-table",
         ".import-table",
@@ -1195,7 +1208,7 @@ async fn nothing_scrolls_sideways_at_375px_and_the_drawer_is_off_canvas() {
         nav.get_bounding_client_rect().right() <= 0.0,
         "closed drawer is off-canvas"
     );
-    let menu: web_sys::Element = root.query_selector(".menu-btn").unwrap().unwrap();
+    let menu: web_sys::Element = root.query_selector(MENU).unwrap().unwrap();
     assert!(menu.client_width() > 0, "the menu button is shown");
     // Hidden, not only moved: a closed drawer's link takes no focus.
     let link: HtmlElement = nav
@@ -1213,9 +1226,11 @@ async fn nothing_scrolls_sideways_at_375px_and_the_drawer_is_off_canvas() {
     frame.remove();
 }
 
+/// Aurora's drawer takes over at 768px and below; 769px is the narrowest
+/// width with the sidebar in the flow (SKADI-T-0717; 720px before).
 #[wasm_bindgen_test]
-async fn nothing_scrolls_sideways_at_768px_beside_the_sidebar() {
-    let (frame, handle) = mount_wide_content(768).await;
+async fn nothing_scrolls_sideways_at_769px_beside_the_sidebar() {
+    let (frame, handle) = mount_wide_content(769).await;
     let doc: Document = js_sys::Reflect::get(&frame, &"contentDocument".into())
         .unwrap()
         .unchecked_into();
@@ -1226,21 +1241,21 @@ async fn nothing_scrolls_sideways_at_768px_beside_the_sidebar() {
         overflow(&root)
     );
     for sel in [
-        ".app",
+        SHELL,
         "main.main",
         ".history-table",
         ".import-table",
         ".releases-table",
         ".system-table",
     ] {
-        assert_fits(&root, sel, 768);
+        assert_fits(&root, sel, 769);
     }
     // Wide layout: the sidebar is in the flow, the menu button is not.
     let nav: web_sys::Element = root.query_selector(&format!("#{NAV_ID}")).unwrap().unwrap();
     assert!(nav.get_bounding_client_rect().left() >= 0.0);
-    assert!(nav.client_width() > 0, "the sidebar shows at 768px");
-    let menu: web_sys::Element = root.query_selector(".menu-btn").unwrap().unwrap();
-    assert_eq!(menu.client_width(), 0, "no menu button at 768px");
+    assert!(nav.client_width() > 0, "the sidebar shows at 769px");
+    let menu: web_sys::Element = root.query_selector(MENU).unwrap().unwrap();
+    assert_eq!(menu.client_width(), 0, "no menu button at 769px");
     drop(handle);
     frame.remove();
 }
@@ -1737,7 +1752,7 @@ async fn a_provider_form_refuses_a_blank_required_field_before_it_saves() {
 // UI in web-e2e/tests/a11y.spec.ts (with axe-core). These tests pin the pieces
 // that pass relies on, one per step where a step has a mountable piece.
 
-use skadi_web::{MAIN_ID, SCROLL_LOCK_CLASS};
+use skadi_web::MAIN_ID;
 
 fn key_mod(target: &web_sys::EventTarget, key: &str, ctrl: bool) -> bool {
     let init = web_sys::KeyboardEventInit::new();
@@ -1799,34 +1814,44 @@ async fn the_skip_link_is_the_first_stop_and_moves_focus_to_main() {
     );
 }
 
+/// The open drawer locks the page scroll (a `:has()` rule in style.css on
+/// Aurora's open class, SKADI-T-0717), and nothing is left locked after.
 #[wasm_bindgen_test]
 async fn the_open_drawer_locks_the_page_scroll_and_unmount_releases_it() {
-    let root = document().document_element().unwrap();
-    let host = host();
-    let handle = mount_frame(&host);
+    let (frame, body) = narrow_frame(375).await;
+    let doc: Document = js_sys::Reflect::get(&frame, &"contentDocument".into())
+        .unwrap()
+        .unchecked_into();
+    let view = doc.default_view().expect("the frame's window");
+    let overflow = |el: &web_sys::Element| {
+        view.get_computed_style(el)
+            .unwrap()
+            .unwrap()
+            .get_property_value("overflow")
+            .unwrap()
+    };
+    let handle = mount_to(body.clone(), || {
+        view! { <Router><AppFrame><p class="page">"Page"</p></AppFrame></Router> }
+    });
     settle_dom().await;
-    let menu = find(&host, "button.menu-btn");
-    assert!(!root.class_list().contains(SCROLL_LOCK_CLASS));
+    let menu: HtmlElement = body.query_selector(MENU).unwrap().unwrap().unchecked_into();
+    assert_ne!(overflow(&body), "hidden");
     menu.click();
     settle_dom().await;
-    assert!(
-        root.class_list().contains(SCROLL_LOCK_CLASS),
-        "open drawer locks the page"
-    );
+    assert_eq!(overflow(&body), "hidden", "open drawer locks the page");
     menu.click();
     settle_dom().await;
-    assert!(
-        !root.class_list().contains(SCROLL_LOCK_CLASS),
-        "closed drawer unlocks it"
-    );
+    assert_ne!(overflow(&body), "hidden", "closed drawer unlocks it");
     menu.click();
     settle_dom().await;
     drop(handle);
     settle_dom().await;
-    assert!(
-        !root.class_list().contains(SCROLL_LOCK_CLASS),
+    assert_ne!(
+        overflow(&body),
+        "hidden",
         "unmount never leaves the page locked"
     );
+    frame.remove();
 }
 
 #[wasm_bindgen_test]

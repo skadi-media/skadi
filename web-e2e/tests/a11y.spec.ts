@@ -296,11 +296,14 @@ test.describe("C31 a11y: axe on the main pages", () => {
     await page.goto("/");
     await settled(page);
     await page.getByRole("button", { name: "Menu" }).click();
-    await expect(page.locator("html")).toHaveClass(/nav-lock/);
+    // Aurora's AppShell marks the open drawer; style.css locks the page on it
+    // (SKADI-T-0717).
+    await expect(page.locator(".cl-appshell")).toHaveClass(/cl-appshell--nav-open/);
     expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await audit(page, "/ (drawer open, 375px)");
     await page.keyboard.press("Escape");
-    await expect(page.locator("html")).not.toHaveClass(/nav-lock/);
+    await expect(page.locator(".cl-appshell")).not.toHaveClass(/cl-appshell--nav-open/);
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe("hidden");
   });
 });
 

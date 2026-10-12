@@ -9,11 +9,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use aurora_leptos::components::{Alert, Button, Card, PageHeader, Pill, Select, Switch, TextInput};
+use aurora_leptos::components::{
+    Alert, Button, Card, DetailList, Empty, FeedList, FeedRow, KeyValue, Loading, PageHeader, Pill,
+    Segment, SegmentedBar, Select, Switch, Table, TextInput,
+};
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 use serde_json::{Value, json};
 
@@ -27,7 +29,7 @@ use crate::library_toolbar::{
     stored_sort,
 };
 use crate::loading::{ListLoad, SkeletonKind};
-use crate::ui::{LevelDot, mirror};
+use crate::ui::{FilterChip, LevelDot, mirror, tone};
 
 /// The movie wall's status chips (SKADI-T-0245).
 pub const MOVIE_CHIPS: &[(&str, &str)] = &[
@@ -124,15 +126,10 @@ pub fn MoviesPage() -> impl IntoView {
                 let is_active = active.as_deref() == Some(name.as_str());
                 let pick = name.clone();
                 view! {
-                    <button
-                        class=if is_active { "filter-chip active" } else { "filter-chip" }
-                        on:click=move |_| genre_filter.update(|g| {
+                    <FilterChip label=name.clone() count=n.to_string() active=is_active
+                        on_click=Callback::new(move |()| genre_filter.update(|g| {
                             if g.as_deref() == Some(pick.as_str()) { *g = None } else { *g = Some(pick.clone()) }
-                        })
-                    >
-                        {name.clone()}
-                        <span class="chip-count mono">{n}</span>
-                    </button>
+                        }))/>
                 }
             })
             .collect_view()
@@ -147,8 +144,10 @@ pub fn MoviesPage() -> impl IntoView {
                 </div>
                 <div class="lib-head-right">
                     {move || is_admin().then(|| view! {
-                        <A href="/movies/import" attr:class="btn-link" attr:title="Import existing media in place">"Import"</A>
-                        <A href="/movies/config" attr:class="gear" attr:title="Movies settings">"⚙"</A>
+                        <Button variant="default" size="xs" href="/movies/import"
+                            title="Import existing media in place">"Import"</Button>
+                        <Button variant="default" size="xs" href="/movies/config"
+                            title="Movies settings" aria_label="Movies settings">"⚙"</Button>
                     })}
                 </div>
             </div>
@@ -174,7 +173,9 @@ pub fn MoviesPage() -> impl IntoView {
                 })} }
             />
             {load.status(SkeletonKind::Posters, Callback::new(move |()| fetch()))}
-            {move || (load.is_loaded() && movies.get().is_empty()).then(|| view! { <p class="muted">"No movies yet — add one with + Add media."</p> })}
+            {move || (load.is_loaded() && movies.get().is_empty()).then(|| view! {
+                <Empty message="No movies yet." hint="Add one with + Add media."/>
+            })}
             <div class="poster-grid">{poster_tiles}</div>
         </section>
     }
@@ -374,7 +375,7 @@ pub fn MovieDetailPage() -> impl IntoView {
 
     let body = move || {
         let Some(m) = movie.get() else {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+            return view! { <Loading/> }.into_any();
         };
         let year = m.year.map(|y| format!(" ({y})")).unwrap_or_default();
         let monitored = m.monitored;
@@ -395,7 +396,7 @@ pub fn MovieDetailPage() -> impl IntoView {
 
         // Actions reconstructed per render (capture the current movie id).
         let mon_id = m.id.clone();
-        let toggle_monitor = move |_| {
+        let toggle_monitor = move |()| {
             let id = mon_id.clone();
             busy.set(true);
             spawn_local(async move {
@@ -407,7 +408,7 @@ pub fn MovieDetailPage() -> impl IntoView {
         let del_id = m.id.clone();
         let del_title = m.title.clone();
         let nav_del = nav.clone();
-        let on_delete = move |_| {
+        let on_delete = move |()| {
             let body =
                 format!("Delete \"{del_title}\" and its files from disk? This can't be undone.");
             let id = del_id.clone();
@@ -514,13 +515,14 @@ pub fn MovieDetailPage() -> impl IntoView {
                     <div class="edition-block">
                         <div class="edition-row">
                             <span class="muted">{kind_name}</span>
-                            <span class=cls>{label}{progress}</span>
+                            <Pill color=tone(cls)>{label}{progress}</Pill>
                             {watch_href.map(|h| view! {
-                                <A href=h attr:class="btn-link listen-link" attr:title="Play in this browser">"▶ Watch"</A>
+                                <Button variant="light" size="xs" href=h class:listen-link=true
+                                    title="Play in this browser">"▶ Watch"</Button>
                             })}
                             {save.map(|(href, name)| view! {
-                                <a href=href download=name class="btn-link"
-                                   title="Save this file to your computer">"⇩ Save"</a>
+                                <Button variant="default" size="xs" href=href attr:download=name
+                                    title="Save this file to your computer">"⇩ Save"</Button>
                             })}
                             <EditionActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
                             {acq_view}
@@ -551,12 +553,14 @@ pub fn MovieDetailPage() -> impl IntoView {
                     <div class="detail-info">
                         <h2>{m.title.clone()}<span class="muted">{year}</span></h2>
                         <div class="card-actions">
-                            <button on:click=toggle_monitor disabled=move || busy.get()>
+                            <Button variant="default" size="xs" disabled=busy
+                                on_click=Callback::new(toggle_monitor)>
                                 {if monitored { "Unmonitor" } else { "Monitor" }}
-                            </button>
-                            <button class="danger" on:click=on_delete disabled=move || busy.get()>"Delete"</button>
+                            </Button>
+                            <Button variant="default" size="xs" bad=true disabled=busy
+                                on_click=Callback::new(on_delete)>"Delete"</Button>
                         </div>
-{rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
+                        {rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
                         {genres.map(|g| view! { <p class="genres muted">{g}</p> })}
                         {overview.map(|o| view! { <p class="overview">{o}</p> })}
                         <div class="card-editions">{edition_rows}</div>
@@ -569,9 +573,9 @@ pub fn MovieDetailPage() -> impl IntoView {
 
     view! {
         <div class="page-head">
-            <A href="/movies" attr:class="btn-link">"← Library"</A>
+            <Button variant="subtle" size="xs" href="/movies">"← Library"</Button>
         </div>
-        {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+        {move || error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
         {body}
     }
 }
@@ -593,10 +597,8 @@ pub fn EditionActions(
     on_reset: Callback<()>,
 ) -> impl IntoView {
     view! {
-        <button on:click=move |_| on_acquire.run(())>"Acquire"</button>
-        <button class="secondary" on:click=move |_| on_reset.run(()) disabled=!resettable>
-            "Reset"
-        </button>
+        <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
+        <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
     }
 }
 
@@ -663,7 +665,9 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
         if rs.is_empty() {
             return view! { <p class="muted">"No history yet for this item."</p> }.into_any();
         }
-        rs.into_iter()
+        // Aurora's FeedList and FeedRow (SKADI-T-0719).
+        let items = rs
+            .into_iter()
             .map(|r| {
                 let cls = match r.event.as_str() {
                     "imported" => "ok",
@@ -678,31 +682,34 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
                     .unwrap_or_default();
                 let can_block = matches!(r.event.as_str(), "grabbed" | "imported");
                 let id = r.id.clone();
-                let when = r.at.get(..16).unwrap_or(&r.at).replace('T', " ");
+                // "3m ago", with the full time in a tooltip on the row text.
+                let when = aurora_leptos::components::parse_timestamp(&r.at)
+                    .map(|t| aurora_leptos::components::format_relative(js_sys::Date::now() - t))
+                    .unwrap_or_else(|| r.at.get(..16).unwrap_or(&r.at).replace('T', " "));
+                let detail_title = detail.clone();
+                let color = if cls == "pending" { token::GOLD } else { tone(cls) };
                 view! {
-                    <div class="hist-row">
-                        <span class=format!("hist-dot {cls}")></span>
-                        <span class="hist-event">{r.event.clone()}</span>
-                        <span class="hist-label">{r.label.clone()}</span>
-                        <span class="hist-detail mono">{detail}</span>
-                        <span class="hist-at mono">{when}</span>
-                        {can_block
-                            .then(move || {
-                                view! {
-                                    <button
-                                        class="hist-bl"
-                                        title="Blocklist this release and search for another"
-                                        on:click=move |_| on_blocklist.run(id.clone())
-                                    >
-                                        "⊘ replace"
-                                    </button>
-                                }
-                            })}
-                    </div>
+                    <FeedRow time=when dot=color subject=r.label.clone()
+                        status=r.event.clone() status_color=color>
+                        <span class="hist-text">
+                            <span class="hist-detail mono" title=detail_title>{detail}</span>
+                            {can_block
+                                .then(move || {
+                                    view! {
+                                        <Button variant="subtle" size="xs" bad=true
+                                            title="Blocklist this release and search for another"
+                                            on_click=Callback::new(move |()| on_blocklist.run(id.clone()))
+                                        >
+                                            "⊘ replace"
+                                        </Button>
+                                    }
+                                })}
+                        </span>
+                    </FeedRow>
                 }
             })
-            .collect_view()
-            .into_any()
+            .collect_view();
+        view! { <FeedList label="History">{items}</FeedList> }.into_any()
     };
 
     view! {
@@ -714,7 +721,7 @@ pub fn HistoryPanel(acquirable: String, #[prop(default = false)] open: bool) -> 
                 <h4>"History"</h4>
                 {move || {
                     let n = rows.get().len();
-                    (n > 0).then(|| view! { <span class="chip-count mono">{n}</span> })
+                    (n > 0).then(|| view! { <Pill color=token::MUTED>{n}</Pill> })
                 }}
                 {move || note.get().map(|n| view! { <span class="hist-note mono">{n}</span> })}
             </button>
@@ -779,27 +786,29 @@ pub fn DiagnosticsPanel(acquirable: String) -> impl IntoView {
         if total == 0 {
             return ().into_any();
         }
-        d.rejected
+        // Aurora's SegmentedBar (SKADI-T-0719): the busiest gate leads, in
+        // gold, as the one to act on.
+        const HUES: [&str; 5] = [
+            token::GOLD,
+            token::ICE,
+            token::VIOLET,
+            token::TEAL,
+            token::MUTED,
+        ];
+        let segments = d
+            .rejected
             .iter()
-            .map(|(gate, n)| {
-                let pct = (*n as f32 / total as f32 * 100.0).round();
-                view! {
-                    <div class="diag-bar-row">
-                        <span class="diag-bar-label mono">{gate.clone()}</span>
-                        <span class="diag-bar-track">
-                            <span class="diag-bar-fill" style=format!("width:{pct}%")></span>
-                        </span>
-                        <span class="diag-bar-n mono">{format!("{n} · {pct:.0}%")}</span>
-                    </div>
-                }
+            .enumerate()
+            .map(|(i, (gate, n))| {
+                Segment::new(gate.clone(), *n as f64, HUES[i.min(HUES.len() - 1)])
             })
-            .collect_view()
-            .into_any()
+            .collect::<Vec<_>>();
+        view! { <SegmentedBar segments=segments legend=true label="Rejected by gate"/> }.into_any()
     };
 
     let body = move || {
         let Some(d) = diag.get() else {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+            return view! { <Loading/> }.into_any();
         };
         let when = d
             .last_attempt
@@ -811,46 +820,31 @@ pub fn DiagnosticsPanel(acquirable: String) -> impl IntoView {
         let considered = d.considered;
         let failed = d.failed_attempts;
         let remedy = d.remedy;
+        // Aurora's DetailList and Alert (SKADI-T-0719).
         view! {
-            <div class="diag-facts">
-                <div class="diag-fact">
-                    <span class="diag-k">"Last attempt"</span>
-                    <span class="diag-v mono">{when}</span>
-                </div>
-                <div class="diag-fact">
-                    <span class="diag-k">"Candidates weighed"</span>
-                    <span class="diag-v mono">{considered.to_string()}</span>
-                </div>
+            <DetailList mono=true label_width="11rem">
+                <KeyValue label="Last attempt">{when}</KeyValue>
+                <KeyValue label="Candidates weighed">{considered.to_string()}</KeyValue>
                 {(failed > 0).then(|| view! {
-                    <div class="diag-fact">
-                        <span class="diag-k">"Attempts with no grab"</span>
-                        <span class="diag-v mono">{failed.to_string()}</span>
-                    </div>
+                    <KeyValue label="Attempts with no grab">{failed.to_string()}</KeyValue>
                 })}
-                {chosen.map(|t| view! {
-                    <div class="diag-fact">
-                        <span class="diag-k">"Chose"</span>
-                        <span class="diag-v mono">{t}</span>
-                    </div>
-                })}
+                {chosen.map(|t| view! { <KeyValue label="Chose">{t}</KeyValue> })}
                 {relevance.map(|r| {
                     let weak = r < 0.8;
-                    let cls = if weak { "diag-v mono warn" } else { "diag-v mono" };
                     let text = if weak {
                         format!("{r:.2} — weak, check this is the right title")
                     } else {
                         format!("{r:.2}")
                     };
                     view! {
-                        <div class="diag-fact">
-                            <span class="diag-k">"Title match"</span>
-                            <span class=cls>{text}</span>
-                        </div>
+                        <KeyValue label="Title match">
+                            <span class:warn=weak>{text}</span>
+                        </KeyValue>
                     }
                 })}
-            </div>
+            </DetailList>
             <div class="diag-bars">{bars}</div>
-            {remedy.map(|r| view! { <p class="notice">{r}</p> })}
+            {remedy.map(|r| view! { <Alert color=token::GOLD class:notice=true>{r}</Alert> })}
         }
         .into_any()
     };
@@ -869,7 +863,7 @@ pub fn DiagnosticsPanel(acquirable: String) -> impl IntoView {
                         {move || {
                             diag.get()
                                 .and_then(|d| d.top_gate().map(|(g, n, _)| format!("{n} {g}")))
-                                .map(|s| view! { <span class="chip-count mono">{s}</span> })
+                                .map(|s| view! { <Pill color=token::GOLD>{s}</Pill> })
                         }}
                     </button>
                     {move || (!collapsed.get()).then(body)}
@@ -931,7 +925,7 @@ pub fn ReleasesPanel(
             searching.set(false);
         });
     };
-    let on_search = move |_| run_search();
+    let on_search = Callback::new(move |()| run_search());
 
     // Actions, hoisted to Callbacks so the presentational `ReleasesTable` stays
     // pure (data + callbacks) and unit-mountable (SKADI-T-0119).
@@ -976,7 +970,7 @@ pub fn ReleasesPanel(
 
     // Manual acquisition: synthesize a release from the pasted magnet or .torrent
     // URL + grab it through the same pipeline (SKADI-I-0043).
-    let on_grab_link = move |_| {
+    let on_grab_link = move |()| {
         let (at, _) = ids.get_value();
         let l = link.get_untracked().trim().to_string();
         if l.is_empty() {
@@ -996,9 +990,9 @@ pub fn ReleasesPanel(
     view! {
         <div class="releases">
             <div class="releases-head">
-                <button class="secondary" on:click=on_search disabled=move || searching.get()>
+                <Button variant="default" size="xs" loading=searching on_click=on_search>
                     {move || if searching.get() { "Searching…" } else { "Search releases" }}
-                </button>
+                </Button>
                 // A live region, so the result of a grab is read out (SKADI-T-0700).
                 <span class="releases-note" role="status">
                     {move || note.get().map(|s| match s {
@@ -1019,23 +1013,18 @@ pub fn ReleasesPanel(
             >
                 <summary>"Grab manually with a magnet or .torrent URL"</summary>
             <div class="releases-magnet">
-                <input
-                    type="text"
-                    placeholder="magnet:?xt=… or https://…/release.torrent"
-                    aria-label="Magnet or .torrent URL"
-                    prop:value=move || link.get()
-                    on:input=move |ev| link.set(event_target_value(&ev))
-                />
-                <button
-                    class="secondary"
-                    on:click=on_grab_link
-                    disabled=move || link.get().trim().is_empty()
-                >
+                <div class="releases-magnet-field">
+                    <TextInput value=link mono=true spellcheck=false
+                        placeholder="magnet:?xt=… or https://…/release.torrent"
+                        aria_label="Magnet or .torrent URL"/>
+                </div>
+                <Button variant="default" on_click=Callback::new(on_grab_link)
+                    disabled=move || link.get().trim().is_empty()>
                     "Grab"
-                </button>
+                </Button>
             </div>
             </details>
-            {move || err.get().map(|e| view! { <p class="bad">{e}</p> })}
+            {move || err.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
             {move || (!rows.get().is_empty()).then(|| view! {
                 <ReleasesTable
                     candidates=rows.get()
@@ -1093,9 +1082,10 @@ pub fn ReleasesTable(
             let action = if blocked {
                 let rk = c.release_key.clone();
                 view! {
-                    <button class="secondary" on:click=move |_| on_unblock.run(rk.clone())>
+                    <Button variant="subtle" size="xs"
+                        on_click=Callback::new(move |()| on_unblock.run(rk.clone()))>
                         "Unblock"
-                    </button>
+                    </Button>
                 }
                 .into_any()
             } else {
@@ -1112,7 +1102,7 @@ pub fn ReleasesTable(
                 let grab_label = format!("{} {title}", if is_pack { "Grab pack" } else { "Grab" });
                 let block_label = format!("Block {title}");
                 view! {
-                    <button aria-label=grab_label on:click=move |_| {
+                    <Button size="xs" aria_label=grab_label on_click=Callback::new(move |()| {
                         let rel = rel.clone();
                         let body = format!(
                             "{confirm_title} is a season pack — grabbing it will \
@@ -1127,16 +1117,14 @@ pub fn ReleasesTable(
                             }
                             on_grab.run(rel);
                         });
-                    }>
+                    })>
                         {if is_pack { "Grab pack" } else { "Grab" }}
-                    </button>
-                    <button
-                        class="secondary"
-                        aria-label=block_label
-                        on:click=move |_| on_block.run((rk.clone(), t.clone()))
+                    </Button>
+                    <Button variant="subtle" size="xs" aria_label=block_label
+                        on_click=Callback::new(move |()| on_block.run((rk.clone(), t.clone())))
                     >
                         "Block"
-                    </button>
+                    </Button>
                 }
                 .into_any()
             };
@@ -1156,7 +1144,7 @@ pub fn ReleasesTable(
         .collect_view();
 
     view! {
-        <table class="releases-table">
+        <Table class:releases-table=true label="Releases">
             <thead>
                 <tr>
                     <th>"Title"</th><th>"Quality"</th><th>"Size"</th>
@@ -1164,7 +1152,7 @@ pub fn ReleasesTable(
                 </tr>
             </thead>
             <tbody>{rows}</tbody>
-        </table>
+        </Table>
     }
 }
 

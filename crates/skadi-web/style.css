@@ -913,7 +913,7 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 .releases-head .bad { color: var(--bad); font-size: 0.8rem; }
 /* Manual acquisition: paste-a-magnet row (SKADI-I-0043). */
 .releases-magnet { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-.releases-magnet input { flex: 1; min-width: 0; padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.85rem; }
+.releases-magnet-field { flex: 1; min-width: 0; }
 .releases-table {
   width: 100%;
   border-collapse: collapse;
@@ -962,21 +962,9 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
   padding-bottom: 0.8rem; margin-bottom: 1.1rem;
   border-bottom: 1px solid var(--border-fainter);
 }
+/* Filter chips are Aurora's chip (`cl-chip`; ui::FilterChip, SKADI-T-0719). */
 .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.filter-chip {
-  display: flex; align-items: center; gap: 0.4rem;
-  background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
-  border-radius: var(--radius-chip); padding: 0.3rem 0.85rem; font-size: 13px; cursor: pointer;
-}
-.filter-chip:hover { border-color: var(--border-control); }
-.filter-chip.active { background: var(--ice); color: var(--on-accent); border-color: var(--ice); font-weight: 600; }
-.chip-count { font-size: 11px; opacity: 0.85; }
-.lib-filter-input {
-  width: 230px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 9px; color: var(--fg); padding: 0.45rem 0.7rem; font-size: 13px;
-  font-family: var(--font-sans);
-}
-.lib-filter-input:focus { border-color: var(--ice); }
+.lib-filter { width: 230px; }
 
 /* "Organize by" pivot (SKADI-T-0254): switcher chips + collapsible author/series
    clusters (collapsed by default for a fast scroll). */
@@ -1090,7 +1078,10 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
   color: var(--muted); border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 11px; cursor: pointer;
 }
 .hist-bl:hover { border-color: var(--bad); color: var(--bad); }
-.hist-toggle { width: 1rem; }
+/* A history row is Aurora's FeedRow; its text holds the detail and the
+   replace button, and the detail gives way first. */
+.hist-text { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.hist-text .hist-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .episode-wrap { display: flex; flex-direction: column; }
 .episode-wrap .history-panel { margin: 0.1rem 0 0.6rem 1.5rem; }
 
@@ -1261,7 +1252,6 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
    and the search facts. */
 .event-log-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; flex-wrap: wrap; }
 .event-log-head .event-log-label { margin: 0; }
-.log-filters .filter-chip { padding: 0.15rem 0.6rem; font-size: 12px; }
 .run-row { padding: 0.25rem 0.5rem; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; }
 .run-row:hover { background: var(--panel-2); }
 .run-row.bad { border-left-color: var(--bad); }
@@ -1733,7 +1723,7 @@ a.health-rollup:hover { border-color: var(--ice); }
   .lib-head { flex-wrap: wrap; }
   .lib-head-right { flex-wrap: wrap; }
   .filter-bar { flex-direction: column; align-items: stretch; }
-  .lib-filter-input { width: 100%; }
+  .lib-filter { width: 100%; }
   .poster-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px 10px; }
   .detail-hero { height: 150px; margin: -14px -12px 0; }
   .detail-body { flex-direction: column; margin-top: -60px; gap: 0.8rem; }
@@ -1781,6 +1771,7 @@ a.health-rollup:hover { border-color: var(--ice); }
 .wanted-more:hover { color: var(--fg); }
 .wanted-unmonitor { font-size: 12px; }
 .wanted-filter { min-width: 14rem; }
+.org-chips { align-items: center; }
 .wanted-panel { margin: 0 0 0.4rem 1.2rem; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
 .wanted-panel-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
 .wanted-panel-head .spacer { flex: 1; }
@@ -1796,10 +1787,6 @@ a.health-rollup:hover { border-color: var(--ice); }
 }
 .filter-chips.genre-chips:empty {
     display: none;
-}
-.filter-chips.genre-chips .filter-chip {
-    font-size: 0.82em;
-    padding: 0.2rem 0.6rem;
 }
 p.genres.muted {
     color: var(--muted);
@@ -1940,16 +1927,6 @@ p.genres.muted {
   flex-wrap: wrap;
 }
 .lib-sort { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
-.lib-sort-key {
-  background: var(--panel); border: 1px solid var(--border); color: var(--fg);
-  border-radius: 9px; padding: 0.4rem 0.55rem; font-size: 13px; font-family: var(--font-sans);
-}
-.lib-sort-key:focus { border-color: var(--ice); }
-.lib-sort-dir {
-  background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
-  border-radius: 9px; padding: 0.35rem 0.6rem; font-size: 13px; cursor: pointer;
-}
-.lib-sort-dir:hover { border-color: var(--border-control); }
 .lib-toolbar-bulk { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .lib-toolbar-bulk:empty { display: none; }
 @media (max-width: 720px) {
@@ -1957,14 +1934,6 @@ p.genres.muted {
   .lib-sort { margin-left: 0; }
 }
 /* Library multi-select + bulk bar (SKADI-T-0696). */
-.lib-toolbar-bulk button {
-  background: var(--panel); border: 1px solid var(--border); color: var(--fg-2);
-  border-radius: 9px; padding: 0.35rem 0.7rem; font-size: 13px; cursor: pointer;
-  font-family: var(--font-sans);
-}
-.lib-toolbar-bulk button:hover:not(:disabled) { border-color: var(--border-control); color: var(--fg); }
-.lib-toolbar-bulk button:disabled { opacity: 0.45; cursor: default; }
-.lib-toolbar-bulk button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 .lib-toolbar-bulk .bulk-count { color: var(--fg); font-size: 13px; min-width: 6.5em; }
 .lib-toolbar-bulk .bulk-done { margin-left: auto; }
 .bulk-msg { font-size: 13px; flex-basis: 100%; }

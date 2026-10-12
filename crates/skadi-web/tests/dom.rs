@@ -169,12 +169,7 @@ fn reset_disabled_for(resettable: bool) -> bool {
             />
         }
     });
-    host.query_selector("button.secondary")
-        .unwrap()
-        .unwrap()
-        .dyn_into::<HtmlButtonElement>()
-        .unwrap()
-        .disabled()
+    button_with_text(&host, "Reset").disabled()
 }
 
 #[wasm_bindgen_test]
@@ -201,12 +196,7 @@ fn book_reset_disabled_for(resettable: bool) -> bool {
             />
         }
     });
-    host.query_selector("button.secondary")
-        .unwrap()
-        .unwrap()
-        .dyn_into::<HtmlButtonElement>()
-        .unwrap()
-        .disabled()
+    button_with_text(&host, "Reset").disabled()
 }
 
 #[wasm_bindgen_test]
@@ -699,7 +689,7 @@ async fn library_sort_choice_persists_across_a_remount() {
     local_storage().remove_item(key).unwrap();
     let (host, sort, _) = mount_toolbar(key, RwSignal::new(false));
     let select = host
-        .query_selector(".lib-sort-key")
+        .query_selector(".lib-sort select")
         .unwrap()
         .unwrap()
         .dyn_into::<web_sys::HtmlSelectElement>()
@@ -737,7 +727,7 @@ async fn library_sort_choice_persists_across_a_remount() {
         "the remount restores the stored sort"
     );
     let select2 = host2
-        .query_selector(".lib-sort-key")
+        .query_selector(".lib-sort select")
         .unwrap()
         .unwrap()
         .dyn_into::<web_sys::HtmlSelectElement>()

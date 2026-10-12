@@ -33,8 +33,9 @@ pub fn shortcut_for(key: &str, allowed: bool) -> Option<Shortcut> {
 
 /// The fields that `/` can focus, in order of preference. Only fields in
 /// `<main>` count: the drawer has none.
-pub const SEARCH_FIELDS: &str = "main input[type=search], main .add-search-input, \
-     main .lib-filter-input, main .catalog-filter, main input[type=text]";
+pub const SEARCH_FIELDS: &str = "main input[type=search], main .add-search input, \
+     main .lib-filter input, main input.lib-filter-input, main .catalog-filter input, \
+     main input[type=text]";
 
 /// The rows of the shortcut list: (keys, what they do).
 pub const SHORTCUTS: &[(&str, &str)] = &[

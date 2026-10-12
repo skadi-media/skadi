@@ -9,7 +9,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use aurora_leptos::components::{Alert, PageHeader, Pill, Table};
+use aurora_leptos::components::{
+    Alert, Button, Code, CopyButton, Empty, Loading, PageHeader, Pill, SegmentedControl, Table,
+};
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -27,7 +29,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
-use crate::ui::LevelDot;
+use crate::ui::{LevelDot, tone};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
 fn decode_entities(s: &str) -> String {
@@ -413,7 +415,7 @@ fn BookCluster(
         let is_on = move || watchers.get().contains(&target_cls);
         let is_on_lbl = move || watchers.get().contains(&target_lbl);
         let asin_h = asin.clone();
-        let on_toggle = move |_| {
+        let on_toggle = move |()| {
             let asin = asin_h.clone();
             let key = (scope.to_string(), asin.clone());
             let on_now = watchers.get_untracked().contains(&key);
@@ -451,15 +453,13 @@ fn BookCluster(
             });
         };
         view! {
-            <button
-                type="button"
-                class="watch-btn"
-                class:on=is_on
-                on:click=on_toggle
+            <Button variant="default" size="xs" class:watch-btn=true
+                attr:aria-pressed=move || if is_on() { "true" } else { "false" }
+                on_click=Callback::new(on_toggle)
                 title="Watch — auto-acquire missing & future releases"
             >
                 {move || if is_on_lbl() { "★ Watching" } else { "☆ Watch" }}
-            </button>
+            </Button>
         }
     });
 
@@ -487,7 +487,7 @@ fn BookCluster(
                         {move || if expanded.get().contains(&key_chev) { "▾" } else { "▸" }}
                     </span>
                     <span class="lib-cluster-name">{name}</span>
-                    <span class="chip-count mono">{count_label}</span>
+                    <Pill color=token::MUTED>{count_label}</Pill>
                 </button>
                 {watch_btn}
             </div>
@@ -532,7 +532,7 @@ fn BookCluster(
 /// with that series' missing works (position-ordered), plus a trailing "Standalone &
 /// more" subcluster for standalone books and any missing works whose series the user
 /// owns nothing of (SKADI-T-0353).
-fn author_body<F: Fn() + Copy + 'static>(
+fn author_body<F: Fn() + Copy + Send + Sync + 'static>(
     books: Vec<api::Book>,
     works: &[api::Work],
     reload: F,
@@ -817,19 +817,16 @@ pub fn AudiobooksPage() -> impl IntoView {
             }
         }
     };
-    // "Organize by" pivot chip — switches the wall between flat / author / series.
-    let org_chip = move |key: &'static str, label: &'static str| {
-        view! {
-            <button
-                class=move || {
-                    if organize.get() == key { "filter-chip active" } else { "filter-chip" }
-                }
-                on:click=move |_| organize.set(key)
-            >
-                {label}
-            </button>
+    // "Organize by" pivot — switches the wall between flat / author / series.
+    // Aurora's SegmentedControl (SKADI-T-0719); it holds the label, the wall
+    // the key.
+    let org_label = RwSignal::new(org_label_of(organize.get_untracked()).to_string());
+    Effect::new(move |_| {
+        let key = org_key_of(&org_label.get());
+        if organize.get_untracked() != key {
+            organize.set(key);
         }
-    };
+    });
 
     view! {
         <section class="library">
@@ -850,11 +847,14 @@ pub fn AudiobooksPage() -> impl IntoView {
                     // nav strips, so it never saw them — they are in-page links
                     // (SKADI-T-0639).
                     {move || not_kid().then(|| view! {
-                        <A href="/audiobooks/discover" attr:class="btn-link" attr:title="Discover unowned titles from your authors & series">"Discover"</A>
+                        <Button variant="default" size="xs" href="/audiobooks/discover"
+                            title="Discover unowned titles from your authors & series">"Discover"</Button>
                     })}
                     {move || is_admin_view().then(|| view! {
-                        <A href="/audiobooks/import" attr:class="btn-link" attr:title="Import an existing audiobook library">"Import"</A>
-                        <A href="/audiobooks/config" attr:class="gear" attr:title="Audiobooks settings">"⚙"</A>
+                        <Button variant="default" size="xs" href="/audiobooks/import"
+                            title="Import an existing audiobook library">"Import"</Button>
+                        <Button variant="default" size="xs" href="/audiobooks/config"
+                            title="Audiobooks settings" aria_label="Audiobooks settings">"⚙"</Button>
                     })}
                 </div>
             </div>
@@ -869,10 +869,11 @@ pub fn AudiobooksPage() -> impl IntoView {
                 storage_key=AUDIOBOOKS_SORT_STORAGE
                 sort_hidden=Signal::derive(move || organize.get() != "none")
                 facets=move || view! {
-                    <div class="filter-chips org-chips">
-                        <span class="org-label mono">"Organize"</span>
-                        {org_chip("none", "Default")} {org_chip("author", "Author")}
-                        {org_chip("series", "Series")}
+                    <div class="filter-chips org-chips" role="group" aria-label="Organize">
+                        <span class="org-label mono" aria-hidden="true">"Organize"</span>
+                        <SegmentedControl
+                            options=ORG_LABELS.iter().map(|(_, l)| (*l).to_string()).collect()
+                            value=org_label/>
                     </div>
                 }
                 // Reactive inside: the slot renders once, and the role (and the
@@ -888,10 +889,35 @@ pub fn AudiobooksPage() -> impl IntoView {
                 })} }
             />
             {load.status(SkeletonKind::Posters, Callback::new(move |()| reload.update(|n| *n += 1)))}
-            {move || (load.is_loaded() && books.get().is_empty()).then(|| view! { <p class="muted">"No audiobooks yet — add one with + Add media."</p> })}
+            {move || (load.is_loaded() && books.get().is_empty()).then(|| view! {
+                <Empty message="No audiobooks yet." hint="Add one with + Add media."/>
+            })}
             {grid}
         </section>
     }
+}
+
+/// The "Organize by" choices: the wall's key and the control's label.
+const ORG_LABELS: [(&str, &str); 3] = [
+    ("none", "Default"),
+    ("author", "Author"),
+    ("series", "Series"),
+];
+
+/// The control's label for an organize key.
+fn org_label_of(key: &str) -> &'static str {
+    ORG_LABELS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map_or("Default", |(_, l)| *l)
+}
+
+/// The organize key for a control label.
+fn org_key_of(label: &str) -> &'static str {
+    ORG_LABELS
+        .iter()
+        .find(|(_, l)| *l == label)
+        .map_or("none", |(k, _)| *k)
 }
 
 /// The audiobook wall's status chips (SKADI-T-0253).
@@ -1075,7 +1101,7 @@ pub fn split_related_tiles(tiles: Vec<SeriesTile>) -> (Vec<SeriesTile>, Vec<Seri
     tiles.into_iter().partition(SeriesTile::is_positioned)
 }
 
-fn render_tile<F: Fn() + Copy + 'static>(t: SeriesTile, reload: F) -> AnyView {
+fn render_tile<F: Fn() + Copy + Send + Sync + 'static>(t: SeriesTile, reload: F) -> AnyView {
     match t {
         SeriesTile::Owned(b) => cover_tile(b),
         SeriesTile::Missing(w) => missing_cover_tile(w, reload),
@@ -1087,7 +1113,7 @@ fn render_tile<F: Fn() + Copy + 'static>(t: SeriesTile, reload: F) -> AnyView {
 /// **Grab** (add + search/snatch now, `search=true`) and **+ Want** (add as Missing so
 /// the hunter sweep fetches it later, `search=false`). `reload` refreshes the library
 /// so the tile flips to an owned cover once acquired.
-fn missing_cover_tile<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
+fn missing_cover_tile<F: Fn() + Copy + Send + Sync + 'static>(w: api::Work, reload: F) -> AnyView {
     let cover = w.cover_url.clone().filter(|u| !u.is_empty());
     let title = w.title.clone();
     let byline = w.authors.join(", ");
@@ -1099,14 +1125,14 @@ fn missing_cover_tile<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyV
         .unwrap_or_default();
     let asin_g = w.asin.clone();
     let asin_w = w.asin.clone();
-    let on_grab = move |_| {
+    let on_grab = move |()| {
         let asin = asin_g.clone();
         spawn_local(async move {
             let _ = api::add_book(&asin, None, true).await;
             reload();
         });
     };
-    let on_want = move |_| {
+    let on_want = move |()| {
         let asin = asin_w.clone();
         spawn_local(async move {
             let _ = api::add_book(&asin, None, false).await;
@@ -1127,8 +1153,11 @@ fn missing_cover_tile<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyV
                     <span class="tile-title">{format!("{pos}{title}")}</span>
                     <span class="tile-sub mono">{byline}</span>
                     <div class="missing-actions">
-                        <button type="button" class="mini-btn" on:click=on_grab title="Search and download now">"Grab"</button>
-                        <button type="button" class="mini-btn ghost" on:click=on_want title="Add to wanted — the hunter fetches it on the next sweep">"+ Want"</button>
+                        <Button size="xs" title="Search and download now"
+                            on_click=Callback::new(on_grab)>"Grab"</Button>
+                        <Button variant="default" size="xs"
+                            title="Add to wanted — the hunter fetches it on the next sweep"
+                            on_click=Callback::new(on_want)>"+ Want"</Button>
                     </div>
             </div>
         </div>
@@ -1140,7 +1169,7 @@ fn missing_cover_tile<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyV
 /// their book; unowned works are "missing" with a per-title **Watch** (book scope)
 /// and an immediate **Add**; works already covered by a watcher show "Watching".
 /// `reload` re-fetches the page after an action so state reflects immediately.
-fn work_row<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
+fn work_row<F: Fn() + Copy + Send + Sync + 'static>(w: api::Work, reload: F) -> AnyView {
     let pos = w.series_position.clone().filter(|p| !p.is_empty());
     let cover = w.cover_url.clone().filter(|u| !u.is_empty());
     let title = w.title.clone();
@@ -1160,13 +1189,15 @@ fn work_row<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
     };
 
     let action = if let Some(bid) = w.book_id.clone() {
-        view! { <A href=format!("/audiobooks/{bid}") attr:class="badge ok">"Owned ✓"</A> }
-            .into_any()
+        view! {
+            <Button variant="light" size="xs" href=format!("/audiobooks/{bid}")>"Owned ✓"</Button>
+        }
+        .into_any()
     } else if w.watched {
-        view! { <span class="badge">"Watching"</span> }.into_any()
+        view! { <Pill color=token::ICE>"Watching"</Pill> }.into_any()
     } else {
         let asin_w = w.asin.clone();
-        let on_watch = move |_| {
+        let on_watch = move |()| {
             let asin = asin_w.clone();
             spawn_local(async move {
                 let _ = api::set_watcher("book", &asin).await;
@@ -1174,7 +1205,7 @@ fn work_row<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
             });
         };
         let asin_a = w.asin.clone();
-        let on_add = move |_| {
+        let on_add = move |()| {
             let asin = asin_a.clone();
             spawn_local(async move {
                 let _ = api::add_book(&asin, None, true).await;
@@ -1183,14 +1214,14 @@ fn work_row<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyView {
         };
         view! {
             <div class="work-actions">
-                <button type="button" class="watch-btn" on:click=on_watch>"Watch"</button>
-                <button type="button" on:click=on_add>"Add"</button>
+                <Button variant="default" size="xs" on_click=Callback::new(on_watch)>"Watch"</Button>
+                <Button size="xs" on_click=Callback::new(on_add)>"Add"</Button>
             </div>
         }
         .into_any()
     };
 
-    let pos_label = pos.map(|p| view! { <span class="badge muted">{format!("#{p}")}</span> });
+    let pos_label = pos.map(|p| view! { <Pill color=token::MUTED>{format!("#{p}")}</Pill> });
     let sub = series
         .map(|s| {
             if year.is_empty() {
@@ -1232,10 +1263,8 @@ pub fn AudiobookDiscoverPage() -> impl IntoView {
 
     view! {
         <div class="page">
-            <div class="lib-head">
-                <h1>"Discover"</h1>
-                <A href="/audiobooks" attr:class="btn-link">"← Library"</A>
-            </div>
+            <PageHeader title="Discover" back_href="/audiobooks" back_label="Library"
+                class:page-header=true/>
             <p class="muted">
                 "New and unowned titles from the authors and series already in your library — "
                 "soonest releases first. Add one to grab it, or Watch its author/series to keep up."
@@ -1248,10 +1277,8 @@ pub fn AudiobookDiscoverPage() -> impl IntoView {
                 let all = works.get();
                 if all.is_empty() {
                     return view! {
-                        <p class="muted">
-                            "Nothing to discover yet. Add a book or follow an author/series and "
-                            "skadi will surface their other titles here as it catalogues them."
-                        </p>
+                        <Empty message="Nothing to discover yet."
+                            hint="Add a book or follow an author or series, and skadi will surface their other titles here as it catalogues them."/>
                     }
                     .into_any();
                 }
@@ -1370,7 +1397,7 @@ pub fn BookDetailPage() -> impl IntoView {
 
     let body = move || {
         let Some(b) = book.get() else {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+            return view! { <Loading/> }.into_any();
         };
         let year = b.year.map(|y| format!(" ({y})")).unwrap_or_default();
         let monitored = b.monitored;
@@ -1381,7 +1408,7 @@ pub fn BookDetailPage() -> impl IntoView {
         let series = b.series.as_ref().map(series_label);
 
         let mon_id = b.id.clone();
-        let toggle_monitor = move |_| {
+        let toggle_monitor = move |()| {
             let id = mon_id.clone();
             busy.set(true);
             spawn_local(async move {
@@ -1393,7 +1420,7 @@ pub fn BookDetailPage() -> impl IntoView {
         let del_id = b.id.clone();
         let del_title = b.title.clone();
         let nav_del = nav.clone();
-        let on_delete = move |_| {
+        let on_delete = move |()| {
             let body =
                 format!("Delete \"{del_title}\" and its files from disk? This can't be undone.");
             let id = del_id.clone();
@@ -1501,8 +1528,8 @@ pub fn BookDetailPage() -> impl IntoView {
                     let name = api::download_filename(&stem, ext.as_deref());
                     let href = api::book_audio_download_url(&save_bid, &save_fid);
                     view! {
-                        <a href=href download=name class="btn-link"
-                           title="Save this audiobook to your computer">"⇩ Save"</a>
+                        <Button variant="default" size="xs" href=href attr:download=name
+                            title="Save this audiobook to your computer">"⇩ Save"</Button>
                     }
                     .into_any()
                 };
@@ -1521,7 +1548,7 @@ pub fn BookDetailPage() -> impl IntoView {
                                 crate::movies::size_human(loc.total_bytes),
                             );
                             let folder = loc.folder.clone();
-                            let folder_copy = folder.clone();
+                            let folder_text = folder.clone();
                             let imported = loc
                                 .imported_at
                                 .as_deref()
@@ -1531,12 +1558,10 @@ pub fn BookDetailPage() -> impl IntoView {
                             view! {
                                 <div class="file-location">
                                     <div class="muted file-meta">{meta}</div>
+                                    // Aurora's Code and CopyButton (SKADI-T-0719).
                                     <div class="path-row">
-                                        <input class="path-field" readonly prop:value=folder.clone()/>
-                                        <button
-                                            class="copy-btn"
-                                            on:click=move |_| copy_to_clipboard(&folder_copy)
-                                        >"Copy"</button>
+                                        <Code>{folder_text}</Code>
+                                        <CopyButton value=Signal::stored(folder)/>
                                     </div>
                                     {(!imported.is_empty())
                                         .then(|| view! { <div class="muted">"imported "{imported}</div> })}
@@ -1548,15 +1573,20 @@ pub fn BookDetailPage() -> impl IntoView {
                     }
                 };
 
+                let pill_text = format!("{label}{}", progress.unwrap_or_default());
                 view! {
                     <div class="edition-block">
                         <div class="edition-row">
                             <span class="muted">"audiobook"</span>
-                            <span class=cls>{label.clone()}{progress}</span>
+                            <Pill color=tone(cls)>{pill_text}</Pill>
                             {(label == "imported" || label == "cutoff").then(|| {
                                 // Offline player entry point (SKADI-T-0331).
                                 let href = format!("/listen/{book_id}/{file_id}");
-                                view! { <A href=href attr:class="btn-link listen-link">"▶ Listen"</A> }
+                                view! {
+                                    <Button variant="light" size="xs" href=href class:listen-link=true>
+                                        "▶ Listen"
+                                    </Button>
+                                }
                             })}
                             {save_view}
                             <BookFileActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
@@ -1587,12 +1617,14 @@ pub fn BookDetailPage() -> impl IntoView {
                         <h2>{b.title.clone()}<span class="muted">{year}</span></h2>
                         {subtitle.map(|s| view! { <p class="muted">{s}</p> })}
                         {(!byline.is_empty()).then(|| view! { <p class="muted">{byline}</p> })}
-                        {series.map(|s| view! { <p><span class="badge">{s}</span></p> })}
+                        {series.map(|s| view! { <p><Pill color=token::TEAL>{s}</Pill></p> })}
                         <div class="card-actions">
-                            <button on:click=toggle_monitor disabled=move || busy.get()>
+                            <Button variant="default" size="xs" disabled=busy
+                                on_click=Callback::new(toggle_monitor)>
                                 {if monitored { "Unmonitor" } else { "Monitor" }}
-                            </button>
-                            <button class="danger" on:click=on_delete disabled=move || busy.get()>"Delete"</button>
+                            </Button>
+                            <Button variant="default" size="xs" bad=true disabled=busy
+                                on_click=Callback::new(on_delete)>"Delete"</Button>
                         </div>
                         {overview.map(|o| clean_overview(&o)
                             .into_iter()
@@ -1608,9 +1640,9 @@ pub fn BookDetailPage() -> impl IntoView {
 
     view! {
         <div class="page-head">
-            <A href="/audiobooks" attr:class="btn-link">"← Library"</A>
+            <Button variant="subtle" size="xs" href="/audiobooks">"← Library"</Button>
         </div>
-        {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+        {move || error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
         {body}
     }
 }
@@ -1632,10 +1664,8 @@ pub fn BookFileActions(
     on_reset: Callback<()>,
 ) -> impl IntoView {
     view! {
-        <button on:click=move |_| on_acquire.run(())>"Acquire"</button>
-        <button class="secondary" on:click=move |_| on_reset.run(()) disabled=!resettable>
-            "Reset"
-        </button>
+        <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
+        <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
     }
 }
 
@@ -1703,7 +1733,7 @@ pub fn AuthorDetailPage() -> impl IntoView {
 
     let body = move || {
         let Some(a) = author.get() else {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+            return view! { <Loading/> }.into_any();
         };
         let monitored = a.monitored;
         let description = a.description.clone().filter(|d| !d.is_empty());
@@ -1718,13 +1748,12 @@ pub fn AuthorDetailPage() -> impl IntoView {
         // unowned works. Only when we know the author's ASIN.
         let watch_btn = a.asin.clone().map(|asin| {
             let watched = author_watched.get();
-            let cls = if watched { "watch-btn on" } else { "watch-btn" };
             let txt = if watched {
                 "Watching author"
             } else {
                 "Watch author"
             };
-            let toggle_watch = move |_| {
+            let toggle_watch = move |()| {
                 let asin = asin.clone();
                 busy.set(true);
                 spawn_local(async move {
@@ -1738,14 +1767,16 @@ pub fn AuthorDetailPage() -> impl IntoView {
                 });
             };
             view! {
-                <button type="button" class=cls on:click=toggle_watch disabled=move || busy.get()>
+                <Button variant=if watched { "light" } else { "default" } size="xs"
+                    attr:aria-pressed=if watched { "true" } else { "false" }
+                    disabled=busy on_click=Callback::new(toggle_watch)>
                     {txt}
-                </button>
+                </Button>
             }
         });
 
         let mon_id = a.id.clone();
-        let toggle_monitor = move |_| {
+        let toggle_monitor = move |()| {
             let id = mon_id.clone();
             busy.set(true);
             spawn_local(async move {
@@ -1757,7 +1788,7 @@ pub fn AuthorDetailPage() -> impl IntoView {
         let del_id = a.id.clone();
         let del_name = a.name.clone();
         let nav_del = nav.clone();
-        let on_delete = move |_| {
+        let on_delete = move |()| {
             let body = format!("Delete \"{del_name}\"? (library entry only — no files removed)");
             let id = del_id.clone();
             let nav = nav_del.clone();
@@ -1791,10 +1822,12 @@ pub fn AuthorDetailPage() -> impl IntoView {
                         {show_actions.then(|| view! {
                             <div class="card-actions">
                                 {watch_btn}
-                                <button on:click=toggle_monitor disabled=move || busy.get()>
+                                <Button variant="default" size="xs" disabled=busy
+                                    on_click=Callback::new(toggle_monitor)>
                                     {if monitored { "Unmonitor" } else { "Monitor" }}
-                                </button>
-                                <button class="danger" on:click=on_delete disabled=move || busy.get()>"Delete"</button>
+                                </Button>
+                                <Button variant="default" size="xs" bad=true disabled=busy
+                                    on_click=Callback::new(on_delete)>"Delete"</Button>
                             </div>
                         })}
                         {description.map(|d| clean_overview(&d)
@@ -1818,7 +1851,7 @@ pub fn AuthorDetailPage() -> impl IntoView {
                         <p class="muted">"Cataloguing this author's works… check back shortly."</p>
                     })}
                     {move || (works.get().is_empty() && books.get().is_empty()).then(|| view! {
-                        <p class="muted">"No works catalogued for this author yet."</p>
+                        <Empty message="No works catalogued for this author yet."/>
                     })}
                     <div class="work-list">
                         {move || works.get().into_iter().map(|w| work_row(w, load)).collect_view()}
@@ -1830,11 +1863,9 @@ pub fn AuthorDetailPage() -> impl IntoView {
     };
 
     view! {
-        <div class="page-head">
-            <h2>"Author"</h2>
-            <A href="/audiobooks" attr:class="gear" attr:title="Back to Audiobooks">"←"</A>
-        </div>
-        {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
+        <PageHeader title="Author" back_href="/audiobooks" back_label="Audiobooks"
+            class:page-header=true/>
+        {move || error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
         {body}
     }
 }
@@ -1947,13 +1978,5 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
                 </div>
             </div>
         </section>
-    }
-}
-
-/// Best-effort "copy this text to the clipboard" via the async Clipboard API.
-/// Fire-and-forget — the returned promise is ignored (no UI dependency on it).
-fn copy_to_clipboard(text: &str) {
-    if let Some(win) = web_sys::window() {
-        let _ = win.navigator().clipboard().write_text(text);
     }
 }

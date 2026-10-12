@@ -52,6 +52,34 @@ pub fn LevelDot(
     }
 }
 
+/// A filter toggle in Aurora's chip markup (`cl-chip`), with the
+/// `filter-chip` hook. Aurora's `Chip` takes its count once, when it is
+/// built; a wall's counts change with each poll, so the count here is
+/// reactive (AURORA-T-0013).
+#[component]
+pub fn FilterChip(
+    #[prop(into)] label: String,
+    /// The count after the label; none when it is not given.
+    #[prop(optional, into)]
+    count: MaybeProp<String>,
+    #[prop(into)] active: Signal<bool>,
+    on_click: Callback<()>,
+) -> impl IntoView {
+    view! {
+        <button
+            type="button"
+            class="cl-chip filter-chip"
+            class:cl-chip--active=move || active.get()
+            class:active=move || active.get()
+            aria-pressed=move || if active.get() { "true" } else { "false" }
+            on:click=move |_| on_click.run(())
+        >
+            {label}
+            {move || count.get().map(|n| view! { <span class="cl-chip__count">{n}</span> })}
+        </button>
+    }
+}
+
 /// An `RwSignal` for an Aurora field that shows `get()` and follows it when
 /// the source changes (a form reset, a new item). Write the field's input
 /// back to the source with the field's `on_input`.

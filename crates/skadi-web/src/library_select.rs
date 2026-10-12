@@ -17,6 +17,7 @@
 
 use std::collections::HashSet;
 
+use aurora_leptos::components::Button;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -275,13 +276,12 @@ pub fn BulkBar(
     };
     let action_btn = move |label: &'static str, action: BulkAction, danger: bool| {
         view! {
-            <button
-                class=if danger { "bulk-action danger" } else { "bulk-action" }
+            <Button variant="default" size="xs" bad=danger
                 disabled=move || busy.get() || count() == 0
-                on:click=move |_| run(action)
+                on_click=Callback::new(move |()| run(action))
             >
                 {label}
-            </button>
+            </Button>
         }
     };
 
@@ -289,29 +289,30 @@ pub fn BulkBar(
         {move || if sel.mode.get() {
             view! {
                 <span class="bulk-count mono" aria-live="polite">{move || format!("{} selected", count())}</span>
-                <button
-                    class="bulk-all"
+                <Button variant="default" size="xs"
                     disabled=move || busy.get() || visible.with(Vec::is_empty)
-                    on:click=move |_| {
+                    on_click=Callback::new(move |()| {
                         let next = sel.ids.with_untracked(|s| visible.with_untracked(|v| select_all_or_none(v, s)));
                         sel.ids.set(next);
-                    }
+                    })
                 >
                     {move || {
                         let all = sel.ids.with(|s| visible.with(|v| !v.is_empty() && v.iter().all(|id| s.contains(id))));
                         if all { "Clear".to_string() } else { format!("Select all ({})", visible.with(Vec::len)) }
                     }}
-                </button>
+                </Button>
                 {action_btn("Monitor", BulkAction::Monitor, false)}
                 {action_btn("Unmonitor", BulkAction::Unmonitor, false)}
                 {action_btn("Search", BulkAction::Search, false)}
                 {action_btn("Delete", BulkAction::Delete { files: false }, true)}
                 {action_btn("Delete + files", BulkAction::Delete { files: true }, true)}
-                <button class="bulk-done" on:click=move |_| { sel.exit(); msg.set(None); }>"Done"</button>
+                <Button variant="subtle" size="xs" class:bulk-done=true
+                    on_click=Callback::new(move |()| { sel.exit(); msg.set(None); })>"Done"</Button>
             }.into_any()
         } else {
             view! {
-                <button class="bulk-toggle" on:click=move |_| sel.mode.set(true)>"Select"</button>
+                <Button variant="default" size="xs" class:bulk-toggle=true
+                    on_click=Callback::new(move |()| sel.mode.set(true))>"Select"</Button>
             }.into_any()
         }}
         {move || msg.get().map(|(ok, text)| view! {

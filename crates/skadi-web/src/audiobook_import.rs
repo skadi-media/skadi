@@ -9,13 +9,15 @@
 //! canonical `{asin-…}` tag when present; otherwise the operator pastes it. A
 //! page's matches resolve lazily (`POST /audiobooks/library-import/match`).
 
+use aurora_leptos::components::{Alert, Button, PageHeader, Pill, Table, TextInput};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 use crate::api;
 use crate::audiobooks::looks_like_asin;
 use crate::path_picker::PathPicker;
+use crate::ui::tone;
 
 /// How many candidates per page (also the per-page match batch size).
 const PAGE_SIZE: usize = 50;
@@ -198,7 +200,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
         match_page(p);
     };
 
-    let on_import = move |_| {
+    let on_import = move |()| {
         // Gather ticked rows; a ticked row needs a plausible ASIN.
         let mut items = Vec::new();
         for r in rows.get_untracked().iter().filter(|r| r.selected) {
@@ -321,6 +323,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                 let proposed = row.proposed.clone();
                 let matched = row.matched;
                 let confidence = row.confidence.clone();
+                let conf_title = crate::import_common::confidence_title(&confidence);
                 let conf_class = confidence_class(&confidence);
 
                 let toggle = move |_| {
@@ -330,8 +333,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                         }
                     });
                 };
-                let on_asin = move |ev| {
-                    let val = event_target_value(&ev);
+                let on_asin = move |val: String| {
                     rows.update(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.asin = val;
@@ -344,7 +346,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                     (_, Some(t)) => t,
                     _ => cand.display_name.clone(),
                 };
-                let toggle_picker = move |_| {
+                let toggle_picker = move |()| {
                     rows.update(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.picker_open = !r.picker_open;
@@ -354,9 +356,8 @@ pub fn AudiobookImportPage() -> impl IntoView {
                         }
                     });
                 };
-                let on_q = move |ev| {
-                    let val = event_target_value(&ev);
-                    rows.update(|v| {
+                let on_q = move |val: String| {
+                    rows.update_untracked(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.search_q = val;
                         }
@@ -374,16 +375,16 @@ pub fn AudiobookImportPage() -> impl IntoView {
                             <td colspan="5">
                                 <div class="import-picker">
                                     <div class="import-picker-search">
-                                        <input
-                                            class="path-field"
-                                            placeholder="Search title / author…"
-                                            prop:value=row.search_q.clone()
-                                            on:input=on_q
-                                            on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                                if ev.key() == "Enter" { run_search(i); }
-                                            }
-                                        />
-                                        <button on:click=move |_| run_search(i)>"Search"</button>
+                                        // A form, so Enter searches; the query is kept without a
+                                        // redraw, which would take the focus (AURORA-T-0013).
+                                        <form class="import-picker-form" on:submit=move |ev| { ev.prevent_default(); run_search(i); }>
+                                            <div class="path-field">
+                                                <TextInput value=RwSignal::new(row.search_q.clone())
+                                                    placeholder="Search title / author…" aria_label="Search title / author…"
+                                                    on_input=Callback::new(on_q)/>
+                                            </div>
+                                            <Button variant="default" button_type="submit">"Search"</Button>
+                                        </form>
                                     </div>
                                     {searching.then(|| view! { <p class="muted ep-empty">"Searching…"</p> })}
                                     {none_yet.then(|| view! { <p class="muted ep-empty">"No results — try a different title."</p> })}
@@ -455,7 +456,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                                     let year = p.year.map(|y| format!(" ({y})")).unwrap_or_default();
                                     view! {
                                         <span>{p.title.clone()} {year} " "</span>
-                                        <span class=format!("badge {conf_class}") title=crate::import_common::confidence_title(&confidence)>{confidence.clone()}</span>
+                                        <span title=conf_title><Pill color=tone(conf_class)>{confidence.clone()}</Pill></span>
                                     }.into_any()
                                 }
                                 (true, None) => view! {
@@ -464,24 +465,15 @@ pub fn AudiobookImportPage() -> impl IntoView {
                             }}
                         </td>
                         <td class="import-actions" data-label="ASIN">
-                            <button
-                                class="btn-link import-find"
-                                disabled=in_lib
-                                title="Search the Audible catalog"
-                                aria-label="Search the Audible catalog"
-                                on:click=toggle_picker
-                            >
+                            <Button variant="subtle" size="xs" class:import-find=true
+                                disabled=in_lib title="Search the Audible catalog" aria_label="Search the Audible catalog"
+                                on_click=Callback::new(toggle_picker)>
                                 "🔍"
-                            </button>
-                            <input
-                                class="tmdb-input"
-                                type="text"
-                                placeholder="B08G9PRS1K"
-                                aria-label="ASIN"
-                                prop:value=row.asin.clone()
-                                disabled=in_lib
-                                on:change=on_asin
-                            />
+                                </Button>
+                            <div class="tmdb-input">
+                                <TextInput value=RwSignal::new(row.asin.clone()) placeholder="B08G9PRS1K" aria_label="ASIN"
+                                    mono=true disabled=in_lib on_change=Callback::new(on_asin)/>
+                                </div>
                         </td>
                     </tr>
                     {picker_row}
@@ -491,10 +483,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
     };
 
     view! {
-        <div class="page-head">
-            <h2>"Audiobook import"</h2>
-            <A href="/audiobooks" attr:class="gear" attr:title="Back to Audiobooks">"←"</A>
-        </div>
+        <PageHeader title="Audiobook import" back_href="/audiobooks" back_label="Audiobooks" class:page-header=true/>
 
         <section class="provider-section">
             <div class="section-head">
@@ -515,18 +504,18 @@ pub fn AudiobookImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /mnt/storage/audiobooks)"</label>
+                    <span class="cl-field__label">"Library path (as the server sees it, e.g. /mnt/storage/audiobooks)"</span>
                     <div class="checks">
                         <PathPicker value=path placeholder="/mnt/storage/audiobooks"/>
-                        <button on:click=on_scan disabled=move || scanning.get()>
+                        <Button loading=scanning on_click=Callback::new(on_scan)>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
-                        </button>
+                            </Button>
                     </div>
                 </div>
                 {move || scanning.get().then(|| view! {
                     <p class="muted">"Scanning the folder (parse-only — fast). Matches are looked up a page at a time below."</p>
                 })}
-                {move || scan_error.get().map(|e| view! { <p class="bad">{e}</p> })}
+                {move || scan_error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
             </div>
         </section>
 
@@ -555,14 +544,14 @@ pub fn AudiobookImportPage() -> impl IntoView {
                             <span class="muted">
                                 {format!("{total} candidates — page {} of {pages}", cur + 1)}
                             </span>
-                            <button
-                                on:click=move |_| go_page(cur.saturating_sub(1))
+                            <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| go_page(cur.saturating_sub(1)))
                                 disabled=move || cur_page() == 0 || matching.get()
-                            >"‹ Prev"</button>
-                            <button
-                                on:click=move |_| go_page(cur + 1)
+                                >"‹ Prev"</Button>
+                                <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| go_page(cur + 1))
                                 disabled=move || { cur_page() + 1 >= total_pages() || matching.get() }
-                            >"Next ›"</button>
+                                >"Next ›"</Button>
                             {matching.get().then(|| view! { <span class="muted">"matching page…"</span> })}
                             <label class="import-hide-toggle muted">
                                 <input
@@ -586,7 +575,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
                 })}
 
                 {move || (!rows.with(Vec::is_empty)).then(|| view! {
-                    <table class="import-table">
+                    <Table class:import-table=true label="Candidates">
                         <colgroup>
                             <col class="c-sel"/>
                             <col class="c-folder"/>
@@ -606,18 +595,18 @@ pub fn AudiobookImportPage() -> impl IntoView {
                             </tr>
                         </thead>
                         <tbody>{candidate_rows}</tbody>
-                    </table>
+                    </Table>
                 })}
 
                 {move || (!rows.with(Vec::is_empty)).then(|| {
                     view! {
-                        <button on:click=on_import disabled=move || importing.get() || selected_count() == 0>
+                        <Button on_click=Callback::new(on_import) disabled=move || importing.get() || selected_count() == 0>
                             {move || match progress.get() {
                                 Some((d, t)) => format!("Importing… {d} / {t}"),
                                 None if importing.get() => "Importing…".to_string(),
                                 None => format!("Import {} selected", selected_count()),
                             }}
-                        </button>
+                        </Button>
                     }
                 })}
                 {move || progress.get().map(|(d, t)| view! {
@@ -626,7 +615,7 @@ pub fn AudiobookImportPage() -> impl IntoView {
 
                 {move || result.get().map(|r| match r {
                     Ok(res) => crate::import_common::commit_result_view(&res),
-                    Err(m) => view! { <p class="bad">{m}</p> }.into_any(),
+                    Err(m) => view! { <Alert color=token::BAD>{m}</Alert> }.into_any(),
                 })}
             </div>
         </section>

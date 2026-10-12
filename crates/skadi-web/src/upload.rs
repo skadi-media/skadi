@@ -17,6 +17,9 @@
 //! its own memory of how far it had got would append into the wrong place
 //! after a failure that landed server-side but never answered.
 
+use aurora_leptos::components::{Alert, Button, PageHeader, Pill, Select};
+use aurora_leptos::tokens::token;
+use aurora_leptos::widgets::Meter;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
@@ -219,7 +222,7 @@ pub fn UploadPage() -> impl IntoView {
     view! {
         <section class="upload-page">
             <crate::subnav::SubNav/>
-            <div class="page-head"><h2>"Upload"</h2></div>
+            <PageHeader title="Upload" class:page-header=true/>
             <p class="muted">
                 "Send a file from this device. Skadi checks it is playable, then \
                  hands it to the import page for the right library, where you \
@@ -228,20 +231,19 @@ pub fn UploadPage() -> impl IntoView {
             </p>
 
             <div class="upload-controls">
-                <label class="upload-kind">
-                    <span class="muted">"What is it?"</span>
-                    <select on:change=move |ev| kind.set(event_target_value(&ev))>
-                        {kinds
+                <div class="upload-kind">
+                    <Select label="What is it?" value=kind
+                        option_pairs=kinds
                             .iter()
-                            .map(|(v, label)| {
-                                view! { <option value=*v>{*label}</option> }
-                            })
-                            .collect_view()}
-                    </select>
-                </label>
-                <label class="upload-pick btn-link">
+                            .map(|(v, label)| ((*v).to_string(), (*label).to_string()))
+                            .collect()/>
+                </div>
+                // Aurora has no file input: the label wears Aurora's button
+                // classes, and the input is hidden only from sight, so Tab
+                // reaches it (AURORA-T-0013).
+                <label class="upload-pick cl-btn cl-btn--default">
                     "Choose files…"
-                    <input type="file" multiple on:change=on_pick style="display:none"/>
+                    <input type="file" class="sr-only" multiple on:change=on_pick/>
                 </label>
             </div>
 
@@ -252,11 +254,11 @@ pub fn UploadPage() -> impl IntoView {
                 (kind.get() == "audiobook")
                     .then(|| {
                         view! {
-                            <p class="pending">
+                            <Alert color=token::ICE>
                                 "Audiobooks are matched by ASIN — skadi cannot search \
                                  Audible by title. Have the ASIN to hand for the \
                                  identify step, or the book cannot be committed."
-                            </p>
+                            </Alert>
                         }
                     })
             }}
@@ -302,10 +304,9 @@ pub fn UploadPage() -> impl IntoView {
                                                             size_human(s.size_bytes as f64),
                                                         )}
                                                     </span>
-                                                    <button
-                                                        type="button"
-                                                        class="btn-link"
-                                                        on:click=move |_| {
+                                                    <Button variant="subtle" size="xs" bad=true
+                                                        button_type="button"
+                                                        on_click=Callback::new(move |()| {
                                                             let id = id.clone();
                                                             spawn_local(async move {
                                                                 let _ = api::delete_upload(&id).await;
@@ -313,10 +314,10 @@ pub fn UploadPage() -> impl IntoView {
                                                                     resumable.set(list);
                                                                 }
                                                             });
-                                                        }
+                                                        })
                                                     >
                                                         "Discard"
-                                                    </button>
+                                                    </Button>
                                                 </li>
                                             }
                                         })
@@ -343,6 +344,7 @@ pub fn UploadPage() -> impl IntoView {
 #[component]
 fn JobRow(job: Job) -> impl IntoView {
     let name = job.file.name();
+    let name_label = name.clone();
     let total = job.file.size();
     let j = job.clone();
     let pct = move || {
@@ -352,7 +354,7 @@ fn JobRow(job: Job) -> impl IntoView {
         ((j.sent.get() / total) * 100.0).clamp(0.0, 100.0) as u32
     };
     let j = job.clone();
-    let cancel = move |_| {
+    let cancel = move |()| {
         j.state.set(JobState::Cancelled);
         if let Some(s) = j.session.get_untracked() {
             spawn_local(async move {
@@ -370,24 +372,29 @@ fn JobRow(job: Job) -> impl IntoView {
             <div class="upload-job-head">
                 <span class="upload-job-name">{name}</span>
                 <span class="muted">{size_human(total)}</span>
-                <span class=move || format!("badge {}", match state.get() {
-                    JobState::Done => "ok",
-                    JobState::Failed => "bad",
-                    _ => "muted",
-                })>{move || state.get().label()}</span>
+                {move || {
+                    let color = match state.get() {
+                        JobState::Done => token::OK,
+                        JobState::Failed => token::BAD,
+                        _ => token::MUTED,
+                    };
+                    view! { <Pill color=color>{state.get().label()}</Pill> }
+                }}
                 {move || {
                     matches!(state.get(), JobState::Sending | JobState::Waiting)
                         .then(|| {
                             view! {
-                                <button type="button" class="btn-link" on:click=cancel>
+                                <Button variant="subtle" size="xs" button_type="button"
+                                    on_click=Callback::new(cancel)>
                                     "Cancel"
-                                </button>
+                                </Button>
                             }
                         })
                 }}
             </div>
             <div class="upload-track">
-                <div class="upload-fill" style=move || format!("width:{}%", pct())></div>
+                <Meter value=Signal::derive(move || f64::from(pct())) color=token::ICE
+                    label=format!("{name_label} sent")/>
             </div>
             {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
             {move || {

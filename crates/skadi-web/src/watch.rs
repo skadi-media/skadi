@@ -18,9 +18,10 @@
 //! the same two refusals: nothing under fifteen seconds is worth restoring,
 //! and the last minute counts as finished.
 
+use aurora_leptos::components::{Alert, Button, Loading, Select};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
@@ -278,8 +279,8 @@ fn Watch(item: WatchItem) -> impl IntoView {
     let verdict = playability(item.media_info.as_ref(), browser_can_play);
     let note = match &verdict {
         Playability::Ok => None,
-        Playability::Warn(m) => Some(("watch-note warn", m.clone())),
-        Playability::Blocked(m) => Some(("watch-note bad", m.clone())),
+        Playability::Warn(m) => Some((token::GOLD, m.clone())),
+        Playability::Blocked(m) => Some((token::BAD, m.clone())),
     };
     let video = NodeRef::<leptos::html::Video>::new();
     // Restore once the duration is known, so the end-of-file refusal has
@@ -389,21 +390,27 @@ fn Watch(item: WatchItem) -> impl IntoView {
     view! {
         <div class="watch-page">
             <div class="page-head">
-                <A href=item.back_href.clone() attr:class="btn-link">{format!("← {}", item.back_label)}</A>
+                <Button variant="subtle" size="xs" href=item.back_href.clone()>
+                    {format!("← {}", item.back_label)}
+                </Button>
             </div>
             <div class="watch-head">
                 <h2>{item.title.clone()}</h2>
                 {item.subtitle.clone().map(|s| view! { <span class="muted">{s}</span> })}
                 <span class="watch-nav">
                     {item.prev.clone().map(|(h, l)| view! {
-                        <A href=h attr:class="btn-link" attr:title="Previous episode (p)">{format!("◀ {l}")}</A>
+                        <Button variant="default" size="xs" href=h title="Previous episode (p)">
+                            {format!("◀ {l}")}
+                        </Button>
                     })}
                     {item.next.clone().map(|(h, l)| view! {
-                        <A href=h attr:class="btn-link watch-next" attr:title="Next episode (n)">{format!("{l} ▶")}</A>
+                        <Button variant="default" size="xs" href=h title="Next episode (n)">
+                            {format!("{l} ▶")}
+                        </Button>
                     })}
                 </span>
             </div>
-            {note.map(|(cls, m)| view! { <div class=cls>{m}</div> })}
+            {note.map(|(color, m)| view! { <Alert color=color class:watch-note=true>{m}</Alert> })}
             <video
                 class="watch-video"
                 node_ref=video
@@ -433,7 +440,10 @@ fn Watch(item: WatchItem) -> impl IntoView {
             // The viewer's subtitle choice, remembered for every video
             // (SKADI-T-0664). Shown only when the video has subtitle files.
             {move || (!subs.get().is_empty()).then(|| {
-                let mut langs: Vec<(String, String)> = Vec::new();
+                let mut langs: Vec<(String, String)> = vec![
+                    ("off".to_string(), "Off".to_string()),
+                    ("forced".to_string(), "Forced only".to_string()),
+                ];
                 for t in subs.get() {
                     if let Some(l) = t.language.clone()
                         && !langs.iter().any(|(c, _)| *c == l)
@@ -442,24 +452,16 @@ fn Watch(item: WatchItem) -> impl IntoView {
                         langs.push((l, name));
                     }
                 }
+                // Aurora's Select (SKADI-T-0719).
                 view! {
-                    <label class="watch-subs">
-                        "Subtitles "
-                        <select on:change=move |ev| {
-                            let v = event_target_value(&ev);
-                            if let Some(s) = storage() {
-                                let _ = s.set_item(SUB_PREF_KEY, &v);
-                            }
-                            sub_pref.set(v);
-                        }>
-                            <option value="off" selected=move || sub_pref.get() == "off">"Off"</option>
-                            <option value="forced" selected=move || sub_pref.get() == "forced">"Forced only"</option>
-                            {langs.into_iter().map(|(code, name)| {
-                                let c = code.clone();
-                                view! { <option value=code selected=move || sub_pref.get() == c>{name}</option> }
-                            }).collect_view()}
-                        </select>
-                    </label>
+                    <div class="watch-subs">
+                        <Select label="Subtitles" option_pairs=langs value=sub_pref
+                            on_change=Callback::new(move |v: String| {
+                                if let Some(s) = storage() {
+                                    let _ = s.set_item(SUB_PREF_KEY, &v);
+                                }
+                            })/>
+                    </div>
                 }
             })}
             {meta.map(|m| view! { <p class="watch-meta mono">{m}</p> })}
@@ -505,7 +507,7 @@ pub fn WatchMoviePage() -> impl IntoView {
     });
     view! {
         {move || match item.get() {
-            None => view! { <p class="muted">"Loading…"</p> }.into_any(),
+            None => view! { <Loading/> }.into_any(),
             Some(Err(e)) => view! { <p class="bad">{e}</p> }.into_any(),
             Some(Ok(it)) => view! { <Watch item=it/> }.into_any(),
         }}
@@ -557,7 +559,7 @@ pub fn WatchEpisodePage() -> impl IntoView {
     });
     view! {
         {move || match item.get() {
-            None => view! { <p class="muted">"Loading…"</p> }.into_any(),
+            None => view! { <Loading/> }.into_any(),
             Some(Err(e)) => view! { <p class="bad">{e}</p> }.into_any(),
             Some(Ok(it)) => view! { <Watch item=it/> }.into_any(),
         }}

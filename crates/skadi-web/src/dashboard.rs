@@ -11,6 +11,11 @@
 
 use std::collections::HashMap;
 
+use aurora_leptos::components::{
+    Button, Card, Empty, FeedList, FeedRow, PageHeader, Pill, StatTile,
+};
+use aurora_leptos::tokens::token;
+use aurora_leptos::widgets::Meter;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -86,13 +91,13 @@ pub fn HealthChecks(checks: Vec<api::HealthCheck>) -> impl IntoView {
                 "metric check"
             };
             view! {
-                <div class=metric_cls>
+                <Card class:metric=true class:check=true class:bad=metric_cls.ends_with("bad")>
                     <LevelDot level=cls class="status-dot" size=11/>
                     <div class="metric-body">
                         <span class="metric-name">{c.name}</span>
                         <span class="muted metric-detail wrap">{c.detail}</span>
                     </div>
-                </div>
+                </Card>
             }
         })
         .collect_view()
@@ -314,7 +319,7 @@ pub fn Dashboard() -> impl IntoView {
         let ds = active();
         if ds.is_empty() {
             return view! {
-                <div class="hunt-empty">"No active transfers — everything imported."</div>
+                <Empty message="No active transfers — everything imported."/>
             }
             .into_any();
         }
@@ -329,18 +334,19 @@ pub fn Dashboard() -> impl IntoView {
                     .unwrap_or_else(|| (d.acquirable_ref.clone(), "·"));
                 let pct = d.percent.round().clamp(0.0, 100.0);
                 let speed = rate(d.down_speed_bps.unwrap_or(0));
+                let label = format!("{title} progress");
                 view! {
-                    <div class="hunt-row">
+                    <Card class:hunt-row=true>
                         <div class="hunt-row-head">
-                            <span class="tile-tag mono">{tag}</span>
+                            <Pill color=if tag == "BOOK" { token::TEAL } else { token::ICE }>{tag}</Pill>
                             <span class="hunt-title">{title}</span>
                             <span class="hunt-pct tnum">{format!("{pct:.0}%")}</span>
                         </div>
                         <div class="hunt-bar">
-                            <div class="hunt-bar-fill" style=format!("width:{pct:.0}%")></div>
+                            <Meter value=pct color="var(--aurora-3)" label=label/>
                         </div>
                         <div class="hunt-meta mono">{speed}</div>
-                    </div>
+                    </Card>
                 }
             })
             .collect_view()
@@ -356,21 +362,23 @@ pub fn Dashboard() -> impl IntoView {
             .take(8)
             .collect();
         if imported.is_empty() {
-            return view! { <p class="muted">"Nothing imported yet."</p> }.into_any();
+            return view! { <Empty message="Nothing imported yet."/> }.into_any();
         }
-        imported
+        // Aurora's FeedList and FeedRow (SKADI-T-0719); the quality in gold.
+        let rows = imported
             .into_iter()
             .map(|h| {
                 view! {
-                    <div class="imp-row">
-                        <LevelDot level="ok"/>
-                        <span class="imp-title">{h.label}</span>
-                        <span class="imp-meta mono">{h.detail.unwrap_or_default()}</span>
-                    </div>
+                    <FeedRow dot=token::OK>
+                        <span class="imp-row">
+                            <span class="imp-title">{h.label}</span>
+                            <span class="imp-meta mono">{h.detail.unwrap_or_default()}</span>
+                        </span>
+                    </FeedRow>
                 }
             })
-            .collect_view()
-            .into_any()
+            .collect_view();
+        view! { <FeedList label="Recently imported">{rows}</FeedList> }.into_any()
     };
 
     // Rollup cards (one per enabled domain) → that library.
@@ -388,7 +396,7 @@ pub fn Dashboard() -> impl IntoView {
                 };
                 let title = domain_title(&d.kind, &d.name);
                 Some(view! {
-                    <A href=href attr:class="rollup">
+                    <Card href=href class:rollup=true>
                         <div class="rollup-head">
                             <span class=format!("lib-accent {accent}")></span>
                             <strong>{title}</strong>
@@ -401,7 +409,7 @@ pub fn Dashboard() -> impl IntoView {
                                 c.in_progress,
                             )}
                         </span>
-                    </A>
+                    </Card>
                 })
             })
             .collect_view()
@@ -416,12 +424,12 @@ pub fn Dashboard() -> impl IntoView {
             return (0..5)
                 .map(|_| {
                     view! {
-                        <div class="health-chip">
+                        <Card class:health-chip=true>
                             <LevelDot level="muted"/>
                             <div class="health-chip-body">
                                 <span class="health-chip-name muted">"checking…"</span>
                             </div>
-                        </div>
+                        </Card>
                     }
                 })
                 .collect_view()
@@ -445,13 +453,13 @@ pub fn Dashboard() -> impl IntoView {
                     .map(str::to_string)
                     .unwrap_or(c.name.clone());
                 view! {
-                    <div class="health-chip">
+                    <Card class:health-chip=true>
                         <LevelDot level=cls/>
                         <div class="health-chip-body">
                             <span class="health-chip-name">{name}</span>
                             <span class="health-chip-detail mono">{c.detail}</span>
                         </div>
-                    </div>
+                    </Card>
                 }
             })
             .collect_view();
@@ -459,13 +467,13 @@ pub fn Dashboard() -> impl IntoView {
             let cls = severity_class(c.level());
             let detail = c.detail;
             view! {
-                <A href="/indexers" attr:class="health-chip health-rollup">
+                <Card href="/indexers" class:health-chip=true class:health-rollup=true>
                     <LevelDot level=cls/>
                     <div class="health-chip-body">
                         <span class="health-chip-name">"Indexers"</span>
                         <span class="health-chip-detail mono">{detail}</span>
                     </div>
-                </A>
+                </Card>
             }
         });
         view! { <>{infra_chips}{rollup}</> }.into_any()
@@ -490,45 +498,30 @@ pub fn Dashboard() -> impl IntoView {
     };
 
     view! {
-        <div class="ov-head">
-            <div>
-                <h2 class="page-title">"Overview"</h2>
-                <p class="page-sub mono">"all media"</p>
-            </div>
-            {move || can_contribute().then(|| view! {
-                <button class="ov-search" on:click=move |_| go_add.run(())>
-                    <span class="ov-search-icon">"⌕"</span>
-                    "Search or add anything…"
-                </button>
-            })}
-        </div>
+        // Aurora's PageHeader and StatTiles (SKADI-T-0719).
+        <PageHeader title="Overview" sub="all media" class:page-header=true
+            actions=Box::new(move || view! {
+                {move || can_contribute().then(|| view! {
+                    <Button variant="default" class:ov-search=true on_click=go_add>
+                        <span class="ov-search-icon" aria-hidden="true">"⌕"</span>
+                        "Search or add anything…"
+                    </Button>
+                })}
+            }.into_any())/>
 
         <div class="metrics-row">
-            <div class="ov-metric">
-                <span class="u-label">"Library"</span>
-                <span class="ov-metric-num tnum">{move || total().to_string()}</span>
-                <span class="ov-metric-sub mono">"items tracked"</span>
-            </div>
-            <div class="ov-metric">
-                <span class="u-label">"Monitored"</span>
-                <span class="ov-metric-num tnum">{move || monitored().to_string()}</span>
-                <span class="ov-metric-sub mono">"auto-upgrading"</span>
-            </div>
-            <div class="ov-metric">
-                <span class="u-label">"Wanted"</span>
-                <span class="ov-metric-num tnum">{move || wanted().to_string()}</span>
-                <span class="ov-metric-sub mono">"missing"</span>
-            </div>
-            <div class="ov-metric">
-                <span class="u-label">"Downloading"</span>
-                <span class="ov-metric-num tnum">{move || downloading().to_string()}</span>
-                <span class="ov-metric-sub mono">
-                    {move || {
-                        let t = throughput();
-                        if t > 0 { format!("↓ {}", rate(t)) } else { "idle".into() }
-                    }}
-                </span>
-            </div>
+            <StatTile class:ov-metric=true label="Library"
+                value=Signal::derive(move || total().to_string()) sub="items tracked"/>
+            <StatTile class:ov-metric=true label="Monitored"
+                value=Signal::derive(move || monitored().to_string()) sub="auto-upgrading"/>
+            <StatTile class:ov-metric=true label="Wanted"
+                value=Signal::derive(move || wanted().to_string()) sub="missing"/>
+            <StatTile class:ov-metric=true label="Downloading"
+                value=Signal::derive(move || downloading().to_string())
+                sub=Signal::derive(move || {
+                    let t = throughput();
+                    if t > 0 { format!("↓ {}", rate(t)) } else { "idle".into() }
+                })/>
         </div>
 
         <div class="health-strip">{health_strip}</div>

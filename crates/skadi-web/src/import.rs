@@ -9,12 +9,14 @@
 //! never triggers thousands of lookups up front (SKADI-T-0078). Commit runs in
 //! client-side batches with a live progress count.
 
+use aurora_leptos::components::{Alert, Button, PageHeader, Pill, Table, TextInput};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 use crate::api;
 use crate::path_picker::PathPicker;
+use crate::ui::tone;
 
 /// How many candidates per page (also the per-page match batch size).
 const PAGE_SIZE: usize = 50;
@@ -227,7 +229,7 @@ pub fn LibraryImportPage() -> impl IntoView {
         match_page(p);
     };
 
-    let on_import = move |_| {
+    let on_import = move |()| {
         // Gather the ticked rows across all pages; a ticked row with a
         // non-numeric TMDB id is a hard error (the operator must fix or untick).
         let mut items = Vec::new();
@@ -367,8 +369,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                         }
                     });
                 };
-                let on_tmdb = move |ev| {
-                    let val = event_target_value(&ev);
+                let on_tmdb = move |val: String| {
                     rows.update(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.tmdb = val;
@@ -380,7 +381,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                     .parsed_title
                     .clone()
                     .unwrap_or_else(|| cand.display_name.clone());
-                let toggle_picker = move |_| {
+                let toggle_picker = move |()| {
                     rows.update(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.picker_open = !r.picker_open;
@@ -390,9 +391,8 @@ pub fn LibraryImportPage() -> impl IntoView {
                         }
                     });
                 };
-                let on_q = move |ev| {
-                    let val = event_target_value(&ev);
-                    rows.update(|v| {
+                let on_q = move |val: String| {
+                    rows.update_untracked(|v| {
                         if let Some(r) = v.get_mut(i) {
                             r.search_q = val;
                         }
@@ -410,16 +410,16 @@ pub fn LibraryImportPage() -> impl IntoView {
                             <td colspan="5">
                                 <div class="import-picker">
                                     <div class="import-picker-search">
-                                        <input
-                                            class="path-field"
-                                            placeholder="Search movie title…"
-                                            prop:value=row.search_q.clone()
-                                            on:input=on_q
-                                            on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                                if ev.key() == "Enter" { run_search(i); }
-                                            }
-                                        />
-                                        <button on:click=move |_| run_search(i)>"Search"</button>
+                                        // A form, so Enter searches; the query is kept without a
+                                        // redraw, which would take the focus (AURORA-T-0013).
+                                        <form class="import-picker-form" on:submit=move |ev| { ev.prevent_default(); run_search(i); }>
+                                            <div class="path-field">
+                                                <TextInput value=RwSignal::new(row.search_q.clone())
+                                                    placeholder="Search movie title…" aria_label="Search movie title…"
+                                                    on_input=Callback::new(on_q)/>
+                                            </div>
+                                            <Button variant="default" button_type="submit">"Search"</Button>
+                                        </form>
                                     </div>
                                     {searching.then(|| view! { <p class="muted ep-empty">"Searching…"</p> })}
                                     {none_yet.then(|| view! { <p class="muted ep-empty">"No results — try a different title."</p> })}
@@ -498,7 +498,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                                     let year = p.year.map(|y| format!(" ({y})")).unwrap_or_default();
                                     view! {
                                         <span>{p.title.clone()} {year} " "</span>
-                                        <span class=format!("badge {conf_class}") title=conf_title>{confidence.clone()}</span>
+                                        <span title=conf_title><Pill color=tone(conf_class)>{confidence.clone()}</Pill></span>
                                     }.into_any()
                                 }
                                 (true, None) => view! {
@@ -507,24 +507,15 @@ pub fn LibraryImportPage() -> impl IntoView {
                             }}
                         </td>
                         <td class="import-actions" data-label="TMDB id">
-                            <button
-                                class="btn-link import-find"
-                                disabled=in_lib
-                                title="Search for the right movie"
-                                aria-label="Search for the right movie"
-                                on:click=toggle_picker
-                            >
+                            <Button variant="subtle" size="xs" class:import-find=true
+                                disabled=in_lib title="Search for the right movie" aria_label="Search for the right movie"
+                                on_click=Callback::new(toggle_picker)>
                                 "🔍"
-                            </button>
-                            <input
-                                class="tmdb-input"
-                                type="text"
-                                placeholder="603"
-                                aria-label="TMDB id"
-                                prop:value=row.tmdb.clone()
-                                disabled=in_lib
-                                on:change=on_tmdb
-                            />
+                                </Button>
+                            <div class="tmdb-input">
+                                <TextInput value=RwSignal::new(row.tmdb.clone()) placeholder="603" aria_label="TMDB id"
+                                    mono=true disabled=in_lib on_change=Callback::new(on_tmdb)/>
+                                </div>
                         </td>
                     </tr>
                     {picker_row}
@@ -534,10 +525,7 @@ pub fn LibraryImportPage() -> impl IntoView {
     };
 
     view! {
-        <div class="page-head">
-            <h2>"Library import"</h2>
-            <A href="/movies" attr:class="gear" attr:title="Back to Movies">"←"</A>
-        </div>
+        <PageHeader title="Library import" back_href="/movies" back_label="Movies" class:page-header=true/>
 
         <section class="provider-section">
             <div class="section-head">
@@ -557,18 +545,18 @@ pub fn LibraryImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /mnt/storage/movies)"</label>
+                    <span class="cl-field__label">"Library path (as the server sees it, e.g. /mnt/storage/movies)"</span>
                     <div class="checks">
                         <PathPicker value=path placeholder="/mnt/storage/movies"/>
-                        <button on:click=on_scan disabled=move || scanning.get()>
+                        <Button loading=scanning on_click=Callback::new(on_scan)>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
-                        </button>
+                            </Button>
                     </div>
                 </div>
                 {move || scanning.get().then(|| view! {
                     <p class="muted">"Scanning the folder (parse-only — fast). Matches are looked up a page at a time below."</p>
                 })}
-                {move || scan_error.get().map(|e| view! { <p class="bad">{e}</p> })}
+                {move || scan_error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
             </div>
         </section>
 
@@ -597,14 +585,14 @@ pub fn LibraryImportPage() -> impl IntoView {
                             <span class="muted">
                                 {format!("{total} candidates — page {} of {pages}", cur + 1)}
                             </span>
-                            <button
-                                on:click=move |_| go_page(cur.saturating_sub(1))
+                            <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| go_page(cur.saturating_sub(1)))
                                 disabled=move || cur_page() == 0 || matching.get()
-                            >"‹ Prev"</button>
-                            <button
-                                on:click=move |_| go_page(cur + 1)
+                                >"‹ Prev"</Button>
+                                <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| go_page(cur + 1))
                                 disabled=move || { cur_page() + 1 >= total_pages() || matching.get() }
-                            >"Next ›"</button>
+                                >"Next ›"</Button>
                             {matching.get().then(|| view! { <span class="muted">"matching page…"</span> })}
                             <label class="import-hide-toggle muted">
                                 <input
@@ -628,7 +616,7 @@ pub fn LibraryImportPage() -> impl IntoView {
                 })}
 
                 {move || (!rows.with(Vec::is_empty)).then(|| view! {
-                    <table class="import-table">
+                    <Table class:import-table=true label="Candidates">
                         <colgroup>
                             <col class="c-sel"/>
                             <col class="c-folder"/>
@@ -648,18 +636,18 @@ pub fn LibraryImportPage() -> impl IntoView {
                             </tr>
                         </thead>
                         <tbody>{candidate_rows}</tbody>
-                    </table>
+                    </Table>
                 })}
 
                 {move || (!rows.with(Vec::is_empty)).then(|| {
                     view! {
-                        <button on:click=on_import disabled=move || importing.get() || selected_count() == 0>
+                        <Button on_click=Callback::new(on_import) disabled=move || importing.get() || selected_count() == 0>
                             {move || match progress.get() {
                                 Some((d, t)) => format!("Importing… {d} / {t}"),
                                 None if importing.get() => "Importing…".to_string(),
                                 None => format!("Import {} selected", selected_count()),
                             }}
-                        </button>
+                        </Button>
                     }
                 })}
                 {move || progress.get().map(|(d, t)| view! {
@@ -668,7 +656,7 @@ pub fn LibraryImportPage() -> impl IntoView {
 
                 {move || result.get().map(|r| match r {
                     Ok(res) => crate::import_common::commit_result_view(&res),
-                    Err(m) => view! { <p class="bad">{m}</p> }.into_any(),
+                    Err(m) => view! { <Alert color=token::BAD>{m}</Alert> }.into_any(),
                 })}
             </div>
         </section>

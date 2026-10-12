@@ -124,6 +124,9 @@ pub fn App() -> impl IntoView {
     // Settings pages reads it. The init script in index.html has already set
     // the stored choice on <html>.
     aurora_leptos::theme::provide_theme();
+    // Aurora's toast queue (SKADI-T-0719): views show a result with
+    // `use_context::<Toaster>()`; one ToastStack below draws them.
+    aurora_leptos::components::provide_toaster();
     // Provided once at the shell so any view can request a sidebar refresh.
     provide_context(DomainsVersion(RwSignal::new(0)));
 
@@ -143,6 +146,7 @@ pub fn App() -> impl IntoView {
             <LoginPage/>
         </Show>
         <ConfirmDialogHost/>
+        <aurora_leptos::components::ToastStack/>
     }
 }
 

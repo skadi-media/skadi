@@ -1191,7 +1191,7 @@ async fn nothing_scrolls_sideways_at_375px_and_the_drawer_is_off_canvas() {
         ".import-table",
         ".releases-table",
         ".system-table",
-        ".ov-head",
+        ".page-header",
         ".metrics-row",
     ] {
         assert_fits(&root, sel, 375);

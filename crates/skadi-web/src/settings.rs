@@ -1145,7 +1145,7 @@ fn row_view(
     });
 
     view! {
-        <div class="provider-card">
+        <Card class:provider-card=true>
             <div class="provider-row">
                 <div class="provider-main">
                     {health_dot}
@@ -1176,7 +1176,7 @@ fn row_view(
                 </div>
             </div>
             <div class="card-test">{test_view}</div>
-        </div>
+        </Card>
     }
     .into_any()
 }

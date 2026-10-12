@@ -115,7 +115,7 @@ fn DomainsSection() -> impl IntoView {
                     "domain-state muted"
                 };
                 view! {
-                    <div class="domain-row">
+                    <Card class:domain-row=true>
                         <div class="domain-row-main">
                             <span class=format!("lib-accent {accent}")></span>
                             <div class="domain-row-text">
@@ -128,7 +128,7 @@ fn DomainsSection() -> impl IntoView {
                             <Switch checked=checked attr:aria-label=switch_label
                                 disabled=busy on_change=Callback::new(toggle)/>
                         </div>
-                    </div>
+                    </Card>
                 }
             })
             .collect_view()

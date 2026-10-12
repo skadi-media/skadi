@@ -203,6 +203,7 @@ fn Shell() -> impl IntoView {
                     <Route path=path!("/household") view=crate::household::HouseholdPage/>
                     <Route path=path!("/naming") view=crate::naming::NamingPage/>
                     <Route path=path!("/system") view=crate::system::SystemPage/>
+                    <Route path=path!("/preferences") view=crate::preferences::PreferencesPage/>
                 </Routes>
             </AppFrame>
         </Router>
@@ -368,8 +369,9 @@ pub fn AppFrame(children: Children) -> impl IntoView {
     }
 }
 
-/// The right of the top bar: the daemon's health and, for an account that
-/// may add, the primary "+ Add media".
+/// The right of the top bar: the daemon's health, for an account that may
+/// add the primary "+ Add media", and for every role the gear to your own
+/// settings (SKADI-T-0723).
 #[component]
 fn TopBarTools() -> impl IntoView {
     let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
@@ -390,6 +392,10 @@ fn TopBarTools() -> impl IntoView {
             {move || can_contribute().then(|| view! {
                 <Button on_click=go_add class:add-media=true>"+ Add media"</Button>
             })}
+            // Workaround, Aurora defect: Aurora 0.5 has no gear icon, so the
+            // glyph the library pages use, named for screen readers.
+            <Button variant="subtle" href=crate::preferences::PREFERENCES_PATH
+                title="Settings" aria_label="Settings" class:topbar-gear=true>"⚙"</Button>
         </div>
     }
 }

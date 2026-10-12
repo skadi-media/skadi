@@ -37,6 +37,7 @@ pub mod offline;
 pub mod path_picker;
 pub mod persist;
 pub mod player;
+mod preferences;
 mod settings;
 mod setup;
 pub mod shortcuts;

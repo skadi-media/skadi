@@ -102,6 +102,10 @@ a { color: var(--ice); text-decoration: none; }
 .daemon-line > span:not(.health-dot) { overflow: hidden; text-overflow: ellipsis; }
 .daemon-line .faint { color: var(--faint); }
 .add-media { flex: none; }
+/* The gear to your own settings (SKADI-T-0723): last in the bar, and never
+   pushed off it on a phone. */
+.topbar-gear { flex: none; }
+.topbar-gear .cl-btn__label { font-size: 1.15rem; line-height: 1; }
 @media (max-width: 520px) {
   /* A phone shows only the health dot; the words would push the button off.
      They stay for screen readers. */
@@ -1336,10 +1340,14 @@ p.genres.muted {
 .subnav-title { font-size: 1.3rem; font-weight: 600; color: var(--fg); padding-bottom: 0.4rem; }
 .subnav-links { flex: 1; min-width: 0; }
 
-/* Theme choice under the Settings strip (SKADI-T-0720): Aurora's toggle. */
-.settings-theme { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: -0.25rem 0 1rem; }
-.settings-theme-label { font-size: 0.85rem; color: var(--muted); }
-.settings-theme-note { font-size: 0.8rem; color: var(--muted); }
+/* Your own settings, behind the top-bar gear (SKADI-T-0723). One section
+   per heading; the theme toggle is Aurora's (SKADI-T-0720). */
+.prefs-page { max-width: 640px; }
+.prefs-section { margin-top: 1.25rem; }
+.prefs-section-title { margin: 0 0 0.5rem; font-size: var(--fs-md); font-weight: 600; color: var(--fg); }
+.prefs-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.prefs-row-label { font-size: 0.85rem; color: var(--muted); }
+.prefs-note { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--muted); }
 
 /* Settings → System (SKADI-T-0684): Aurora's Table, DetailList and Alert
    (SKADI-T-0719); the cells wrap long words and sit at the top. */

@@ -47,6 +47,7 @@ const SOURCES: &[(&str, &str)] = sources![
     "path_picker",
     "persist",
     "player",
+    "preferences",
     "settings",
     "setup",
     "shortcuts",

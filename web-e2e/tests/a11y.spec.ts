@@ -230,6 +230,7 @@ test.describe("C31 a11y: axe on the main pages", () => {
     "/listen",
     "/players",
     "/upload",
+    "/preferences",
     "/movies/import",
     "/audiobooks/discover",
   ];

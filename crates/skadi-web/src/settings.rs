@@ -16,7 +16,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use aurora_leptos::components::{Button, Card, PasswordInput, Pill, Select, TextInput};
-use aurora_leptos::theme::ThemeToggle;
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -33,22 +32,6 @@ fn privacy_tone(privacy: &str) -> &'static str {
         "public" => token::OK,
         "private" => token::BAD,
         _ => token::GOLD,
-    }
-}
-
-/// The theme choice (SKADI-T-0720): Aurora's Light / Dark / Hyper / System
-/// toggle, under the Settings strip on every Settings page. Aurora stores the
-/// choice in this browser under the key the init script in `index.html`
-/// reads, so a reload paints the chosen theme at once. No choice stored means
-/// System: the page follows the operating system.
-#[component]
-pub fn ThemeSection() -> impl IntoView {
-    view! {
-        <div class="settings-theme">
-            <span class="settings-theme-label" aria-hidden="true">"Theme"</span>
-            <ThemeToggle hyper=true/>
-            <span class="settings-theme-note">"Kept in this browser."</span>
-        </div>
     }
 }
 

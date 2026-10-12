@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.astro/
+# Written by `plissken render` (plissken.toml); not committed.
+/src/content/docs/reference/api/

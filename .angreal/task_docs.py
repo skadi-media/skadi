@@ -1,43 +1,82 @@
-import angreal
-import subprocess
+"""
+Docs tasks (SKADI-T-0715). The docs are an Astro Starlight site in docs/ with
+the Colliery theme starlight-aurora. They need Node 22 or later. The API
+reference is written by plissken into docs/src/content/docs/reference/api/.
+
+Every task file shares one namespace (SKADI-T-0533): module-level names here
+carry a `_docs` prefix.
+"""
+
 import os
-import webbrowser
+import shutil
+import subprocess
+
+import angreal
 
 cwd = os.path.join(angreal.get_root(), '..')
+_DOCS_DIR = os.path.join(cwd, "docs")
+
 docs = angreal.command_group(name="docs", about="commands for documentation")
 
 
+def _docs_plissken():
+    """Write the API reference. A missing plissken is a warning, not an error."""
+    if not shutil.which("plissken"):
+        print("Warning: plissken not found; the site builds with no API reference "
+              "(cargo install plissken --version 0.1.0)")
+        return 0
+    print("Generating API documentation with plissken...")
+    return subprocess.run(["plissken", "render"], cwd=cwd).returncode
+
+
+def _docs_npm(*args):
+    npm = shutil.which("npm")
+    if not npm:
+        print("npm not found: install Node 22 or later")
+        return 1
+    if not os.path.isdir(os.path.join(_DOCS_DIR, "node_modules")):
+        result = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=_DOCS_DIR)
+        if result.returncode != 0:
+            return result.returncode
+    return subprocess.run([npm, *args], cwd=_DOCS_DIR).returncode
+
+
 @docs()
-@angreal.command(name="build", about="generate API docs and build the site")
+@angreal.command(
+    name="build",
+    about="generate API docs and build the site into docs/dist",
+    tool=angreal.ToolDescription(
+        "Runs `plissken render`, then builds the Starlight site in docs/ into "
+        "docs/dist. Installs the npm dependencies on the first run. Fails when "
+        "a page does not build.",
+        risk_level="safe",
+    ),
+)
 def build_docs():
-    # Generate API docs with plissken
-    print("Generating API documentation with plissken...")
-    result = subprocess.run(["plissken", "render"], cwd=cwd)
-    if result.returncode != 0:
-        print("Warning: plissken render failed (is plissken installed?)")
-
-    # Build mkdocs site
-    print("Building documentation site...")
-    result = subprocess.run(["mkdocs", "build"], cwd=cwd)
-    raise SystemExit(result.returncode)
+    result = _docs_plissken()
+    if result != 0:
+        raise SystemExit(result)
+    raise SystemExit(_docs_npm("run", "build"))
 
 
 @docs()
-@angreal.command(name="serve", about="serve documentation locally with live reload")
-@angreal.argument(name="port", long="port", short="p", required=False, help="port to serve on (default: 8000)")
-def serve_docs(port="8000"):
-    # Generate API docs first
-    print("Generating API documentation with plissken...")
-    subprocess.run(["plissken", "render"], cwd=cwd)
-
-    # Serve with mkdocs
-    print(f"Serving docs at http://localhost:{port}")
-    result = subprocess.run(["mkdocs", "serve", "-a", f"localhost:{port}"], cwd=cwd)
-    raise SystemExit(result.returncode)
+@angreal.command(
+    name="serve",
+    about="serve the docs site with live reload",
+    tool=angreal.ToolDescription(
+        "Runs `plissken render`, then serves the docs site at "
+        "http://localhost:4321 and reloads on each change. In a terminal it runs "
+        "until Ctrl+C. From a script or an agent, Astro runs it in the "
+        "background: stop it with `npx astro dev stop` in docs/.",
+        risk_level="safe",
+    ),
+)
+def serve_docs():
+    _docs_plissken()
+    raise SystemExit(_docs_npm("run", "dev"))
 
 
 @docs()
 @angreal.command(name="api", about="regenerate API docs only (plissken render)")
 def api_docs():
-    result = subprocess.run(["plissken", "render"], cwd=cwd)
-    raise SystemExit(result.returncode)
+    raise SystemExit(subprocess.run(["plissken", "render"], cwd=cwd).returncode)

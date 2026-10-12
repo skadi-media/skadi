@@ -1,3 +1,16 @@
+# The Skadi docs (SKADI-T-0715): an Astro Starlight site in docs/ with the
+# Colliery theme starlight-aurora. The API reference is written by plissken
+# (plissken.toml) into docs/src/content/docs/reference/api/ at build time; it is
+# not committed.
+#
+# Builds the site on each pull request that changes it, and publishes it to
+# GitHub Pages on a push to main.
+#
+# The site URL is fixed here, not read from actions/configure-pages: that
+# action fails while Pages is not enabled for the repository, and the build
+# must stay green then. One-time setup: Settings → Pages → Source = "GitHub
+# Actions". Until then the deploy job fails on main, as it did with MkDocs.
+
 name: Docs
 
 on:
@@ -5,11 +18,15 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
-      - 'mkdocs.yml'
       - 'plissken.toml'
       - 'crates/*/src/**'
-      - 'bindings/*/python/**'
-      - 'bindings/*/src/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'plissken.toml'
+      - 'crates/*/src/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,13 +35,14 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: docs-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     name: Build Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -33,45 +51,51 @@ jobs:
         with:
           toolchain: "1.93"
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache plissken
+        id: plissken-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/plissken
+          key: plissken-0.1.0-${{ runner.os }}
 
       - name: Install plissken
-        run: cargo install plissken
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install mkdocs-material
-        run: pip install mkdocs-material
+        if: steps.plissken-cache.outputs.cache-hit != 'true'
+        run: cargo install plissken --version 0.1.0 --locked
 
       - name: Generate API docs
         run: plissken render
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install
+        working-directory: docs
+        run: npm ci --no-audit --no-fund
+
+      # A pull request builds at /, which is enough to prove the site builds.
+      # main builds at the Pages address.
       - name: Build site
-        run: mkdocs build
+        working-directory: docs
+        run: npm run build
+        env:
+          DOCS_SITE: ${{ github.event_name != 'pull_request' && 'https://skadi-media.github.io' || '' }}
+          DOCS_BASE: ${{ github.event_name != 'pull_request' && '/skadi' || '' }}
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/
+          path: docs/dist
 
   deploy:
     name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: build
-    # GitHub Pages is not available for a **private** repository on a Free
-    # plan, and this org is Free while the repo is private — the deploy step
-    # answers `404 … Ensure GitHub Pages has been enabled` and the whole
-    # workflow goes red on every push (SKADI-T-0482, 2026-09-23).
-    #
-    # The docs still *build* above, which is the part that catches a broken
-    # mkdocs config or a dead link. Only the publish is skipped, and only
-    # while private: the moment the repo goes public this starts deploying on
-    # its own with no edit needed. A workflow that is permanently red is a
-    # workflow people stop reading.
-    if: github.event.repository.visibility == 'public'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -2,7 +2,7 @@
 //!
 //! Per the vision principle, every subcommand except `run` is a thin HTTP client
 //! against a running daemon (via [`skadi_client`]). `run` is the daemon itself:
-//! it loads [`Config`](skadi_api::Config), bootstraps the database, builds the
+//! it loads [`skadi_api::Config`], bootstraps the database, builds the
 //! compiled-in domain registry (movies for v0), starts the per-domain supervisor
 //! and the HTTP server, and awaits Ctrl-C for graceful shutdown.
 

@@ -1,4 +1,7 @@
-# Installation
+---
+title: Installation
+description: Install Skadi from source.
+---
 
 ## From Source
 

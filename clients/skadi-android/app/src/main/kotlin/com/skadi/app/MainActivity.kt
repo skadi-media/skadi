@@ -34,7 +34,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
@@ -48,7 +47,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import com.skadi.core.SkadiApi
@@ -77,7 +75,13 @@ class MainActivity : ComponentActivity() {
             android.content.IntentFilter(Pip.ACTION),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        setContent { SkadiTheme { Root() } }
+        setContent {
+            // The stored theme (SKADI-T-0721). Nothing is drawn until DataStore
+            // answers, so a stored Light never opens as Dark for a frame; Root
+            // waits on the same read for the server anyway.
+            val theme by Settings.theme(applicationContext).collectAsState(initial = null)
+            theme?.let { SkadiTheme(it) { Root() } }
+        }
     }
 
     private val pipReceiver = object : android.content.BroadcastReceiver() {
@@ -140,37 +144,6 @@ class MainActivity : ComponentActivity() {
                 .onFailure { android.util.Log.w("skadi", "pair from link failed: $it") }
         }
     }
-}
-
-@Composable
-fun SkadiTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        // One source of truth for the app palette (SKADI-T-0356) — screens read
-        // MaterialTheme.colorScheme.* instead of scattered Color(0xFF…) literals.
-        //
-        // `primary` is for *actions* (play, the selected tab, the active rail
-        // letter). Titles are `onBackground`: a heading in the accent colour
-        // competes with the buttons next to it, which is part of what made the
-        // old headers feel busy (SKADI-T-0577).
-        colorScheme = darkColorScheme(
-            primary = Color(0xFF7FB2FF),
-            onPrimary = Color(0xFF0E1116),
-            secondary = Color(0xFF6FBF87), // "up next" / success green
-            onSecondary = Color(0xFF0E1116),
-            tertiary = Color(0xFFE0B060), // offline / warning amber
-            error = Color(0xFFF06464), // destructive (unpair)
-            background = Color(0xFF0E1116),
-            onBackground = Color(0xFFE2E8F0),
-            surface = Color(0xFF12161C),
-            onSurface = Color(0xFFE2E8F0),
-            surfaceVariant = Color(0xFF1E252E), // chips, placeholders, bars
-            onSurfaceVariant = Color(0xFF8A93A2), // muted/secondary text
-            surfaceContainer = Color(0xFF161B22), // nav bar, mini-player, sheets
-            secondaryContainer = Color(0xFF243247), // selected tab / chip pill
-            onSecondaryContainer = Color(0xFFDDE8FF),
-        ),
-        content = content,
-    )
 }
 
 /**
@@ -272,6 +245,9 @@ private fun Paired(baseUrl: String, token: String) {
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var changingPassword by rememberSaveable { mutableStateOf(false) }
     var showServer by rememberSaveable { mutableStateOf(false) }
+    // Settings (SKADI-T-0721): the gear on every tab's top bar, for every role.
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    val openSettings = { showSettings = true }
     // A show another tab asked the TV tab to open (SKADI-T-0608).
     var tvRequest by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val openSeries: (String, Int?) -> Unit = { sid, season ->
@@ -332,6 +308,11 @@ private fun Paired(baseUrl: String, token: String) {
         PlayerScreen(fid = fid, onBack = { playingFid = null })
         return
     }
+    if (showSettings) {
+        BackHandler { showSettings = false }
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
     if (showStorage) {
         BackHandler { showStorage = false }
         StorageScreen(onBack = { showStorage = false })
@@ -344,12 +325,14 @@ private fun Paired(baseUrl: String, token: String) {
     }
     if (showDownloads) {
         BackHandler { showDownloads = false }
-        DownloadsScreen(
-            baseUrl = baseUrl,
-            token = token,
-            onWanted = { showWanted = true },
-            onServer = { showServer = true },
-        )
+        CompositionLocalProvider(LocalOpenSettings provides openSettings) {
+            DownloadsScreen(
+                baseUrl = baseUrl,
+                token = token,
+                onWanted = { showWanted = true },
+                onServer = { showServer = true },
+            )
+        }
         return
     }
     if (changingPassword) {
@@ -428,37 +411,39 @@ private fun Paired(baseUrl: String, token: String) {
         },
     ) { inset ->
         Box(modifier = Modifier.fillMaxSize().padding(inset)) {
-            tabState.SaveableStateProvider(tab.name) {
-                when (tab) {
-                    Tab.Home -> HomeScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        isAdmin = admin,
-                        onOpenDownloads = { showDownloads = true },
-                        onManageStorage = { showStorage = true },
-                        onChangePassword = { changingPassword = true },
-                        onSignOut = unpair,
-                        onPlayVideo = { url, title, key -> playingVideo = Triple(url, title, key) },
-                        onPlayBook = { playingFid = it },
-                        onOpenSeries = { sid, season -> openSeries(sid, season) },
-                    )
-                    Tab.Audiobooks -> LibraryScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { playingFid = it },
-                    )
-                    Tab.Movies -> MoviesScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
-                    )
-                    Tab.Tv -> TvScreen(
-                        baseUrl = baseUrl,
-                        token = token,
-                        onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
-                        request = tvRequest,
-                        onRequestConsumed = { tvRequest = null },
-                    )
+            CompositionLocalProvider(LocalOpenSettings provides openSettings) {
+                tabState.SaveableStateProvider(tab.name) {
+                    when (tab) {
+                        Tab.Home -> HomeScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            isAdmin = admin,
+                            onOpenDownloads = { showDownloads = true },
+                            onManageStorage = { showStorage = true },
+                            onChangePassword = { changingPassword = true },
+                            onSignOut = unpair,
+                            onPlayVideo = { url, title, key -> playingVideo = Triple(url, title, key) },
+                            onPlayBook = { playingFid = it },
+                            onOpenSeries = { sid, season -> openSeries(sid, season) },
+                        )
+                        Tab.Audiobooks -> LibraryScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { playingFid = it },
+                        )
+                        Tab.Movies -> MoviesScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
+                        )
+                        Tab.Tv -> TvScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
+                            request = tvRequest,
+                            onRequestConsumed = { tvRequest = null },
+                        )
+                    }
                 }
             }
         }

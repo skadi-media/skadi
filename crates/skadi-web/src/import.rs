@@ -9,7 +9,9 @@
 //! never triggers thousands of lookups up front (SKADI-T-0078). Commit runs in
 //! client-side batches with a live progress count.
 
-use aurora_leptos::components::{Alert, Button, PageHeader, Pill, Table, TextInput};
+use aurora_leptos::components::{
+    Alert, Button, PageHeader, PageRange, Pagination, Pill, Table, TextInput,
+};
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -228,6 +230,16 @@ pub fn LibraryImportPage() -> impl IntoView {
         page.set(p);
         match_page(p);
     };
+    // Aurora's Pagination works in offsets; the page here follows it, and
+    // it follows the page when a filter puts the list back at page 1.
+    let pg_offset = RwSignal::new(0usize);
+    let pg_limit = RwSignal::new(PAGE_SIZE);
+    Effect::new(move |_| {
+        let off = page.get() * PAGE_SIZE;
+        if pg_offset.get_untracked() != off {
+            pg_offset.set(off);
+        }
+    });
 
     let on_import = move |()| {
         // Gather the ticked rows across all pages; a ticked row with a
@@ -577,22 +589,16 @@ pub fn LibraryImportPage() -> impl IntoView {
                 })}
 
                 {move || (!rows.with(Vec::is_empty)).then(|| {
-                    let total = visible.get().len();
-                    let pages = total_pages();
-                    let cur = cur_page();
                     view! {
                         <div class="checks">
-                            <span class="muted">
-                                {format!("{total} candidates — page {} of {pages}", cur + 1)}
-                            </span>
-                            <Button variant="default" size="xs"
-                                on_click=Callback::new(move |()| go_page(cur.saturating_sub(1)))
-                                disabled=move || cur_page() == 0 || matching.get()
-                                >"‹ Prev"</Button>
-                                <Button variant="default" size="xs"
-                                on_click=Callback::new(move |()| go_page(cur + 1))
-                                disabled=move || { cur_page() + 1 >= total_pages() || matching.get() }
-                                >"Next ›"</Button>
+                            // Aurora's Pagination (SKADI-T-0719) over the
+                            // candidate pages; a page change matches that page.
+                            <Pagination offset=pg_offset limit=pg_limit
+                                total=Signal::derive(move || visible.get().len())
+                                range_label=Callback::new(|r: PageRange| {
+                                    format!("{}–{} of {} candidates", r.first, r.last, r.total)
+                                })
+                                on_change=Callback::new(move |(off, _): (usize, usize)| go_page(off / PAGE_SIZE))/>
                             {matching.get().then(|| view! { <span class="muted">"matching page…"</span> })}
                             <label class="import-hide-toggle muted">
                                 <input

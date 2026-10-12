@@ -1,13 +1,40 @@
-/* Skadi's own classes (SKADI-I-0035), on Aurora's tokens (SKADI-T-0717).
-   Aurora 0.5 (colliery-io-aurora) owns the colours, the type, the radii and
-   the light / dark / hyper themes: its stylesheets load before this one (see
-   index.html), and this file holds no token block of its own. Skadi's old
-   names map to Aurora's: --warn is --gold, --accent is --ice, --ice-tint is
-   --ice-bg, --aurora / --progress are --aurora-3 / --aurora-2, --sans /
-   --mono are --font-sans / --font-mono, and --r-tile / --r-card / --r-pill
-   are --radius-md / --radius-panel / --radius-chip. Text that used Skadi's
-   --fainter (lifted to 4.5:1 in SKADI-T-0700) uses --faint: Aurora's
-   --fainter is for large text and decoration only (3:1). */
+/* Skadi's own layout, on Aurora's tokens (SKADI-T-0717, SKADI-T-0719).
+
+   Aurora 0.5 (colliery-io-aurora) owns the colours, the type, the radii, the
+   light / dark / hyper themes and the components: buttons, fields, selects,
+   switches, chips, pills, dots, cards, panels, alerts, tables, dialogs,
+   toasts, tabs, stat tiles, meters, feeds and detail lists. Its stylesheets
+   load before this one (see index.html). This file holds Skadi's own layout:
+   the poster walls, the detail pages, the player, the downloads and trace
+   lists, the import trees, the setup wizard, and the places where an Aurora
+   component sits in them. It restyles a `cl-` class only to fit a
+   component into a dense row, with a comment where it does.
+
+   No raw colour may go in this file or in src/: tests/theme.rs refuses one.
+   A tint is an Aurora `--x-bg` token or color-mix() over a token. Over a
+   cover (in every theme) the tooltip pair is the dark surface.
+
+   Text that used Skadi's --fainter (lifted to 4.5:1 in SKADI-T-0700) uses
+   Aurora's --faint, since Aurora's --fainter is for large text and
+   decoration only (3:1).
+
+   Font sizes and radii on Aurora's scale use its tokens (--fs-*,
+   --radius-*). These raw px values stay, because Aurora has no token for
+   them:
+     - Type off the scale: 8px to 11.5px for mono captions, tags and the
+       dense rows (downloads, traces, health strip); 12.5px to 14.5px for
+       list titles between --fs-xs and --fs-sm; 22px to 30px for the page
+       and metric titles above --fs-xl.
+     - Hairlines and edges: 1px to 3px borders, rings and state edges.
+     - Radii off the scale: 3px, 5px, 6px, 9px to 11px, 50% and 999px.
+     - Layout from the design: the 1180px measure, the breakpoints (520px,
+       640px, 720px, 768px with Aurora's drawer, 900px, 1000px), grid minima
+       (poster tiles 104px / 128px, cards 190px to 320px), field widths,
+       and the gaps of the walls and grids.
+     - Artwork: cover thumbnails (34px to 69px), the detail poster (200px,
+       220px), the hero (150px, 260px), the player cover (280px), the QR
+       (260px).
+     - The tile check box (20px) and the setup stepper dots (22px, 56px). */
 * { box-sizing: border-box; }
 /* Keyboard focus is always visible (SKADI-T-0700). Do not drop the outline
    of a focusable element: style its :focus-visible instead. */
@@ -55,7 +82,7 @@ a { color: var(--ice); text-decoration: none; }
    Aurora's, and so are the scrollbars. Skadi adds the brand, the top-bar
    tools and the sidebar footer. */
 .brand-mark { flex: none; }
-.brand-name { font-size: 16px; font-weight: 600; color: var(--fg-bright); }
+.brand-name { font-size: var(--fs-md); font-weight: 600; color: var(--fg-bright); }
 /* Top bar, right: daemon health and the primary "+ Add media". */
 .topbar-tools {
   display: flex;
@@ -150,7 +177,6 @@ a { color: var(--ice); text-decoration: none; }
 
 /* Live-work stage board (SKADI-T-0321): runs grouped by what they're doing. */
 .stage-board { display: flex; flex-direction: column; gap: 0.5rem; }
-.stage-group .cl-panel__header { margin-bottom: 6px; padding-bottom: 6px; }
 .stage-items { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.4rem 0.5rem; }
 .stage-items .activity-row { border: none; padding: 0.2rem 0.1rem; }
 .stage-doing { font-size: 0.8rem; color: var(--muted); }
@@ -164,7 +190,6 @@ a { color: var(--ice); text-decoration: none; }
 }
 .history-table td.nowrap { white-space: nowrap; }
 .history-table td .badge { margin-left: 0.4rem; }
-/* Collapsible technical payload (magnet/infohash/error) — hidden until asked. */
 
 /* Library posters grid + movie detail (SKADI-T-0076). */
 .poster-grid {
@@ -176,7 +201,7 @@ a { color: var(--ice); text-decoration: none; }
 .poster-img {
   position: relative;
   aspect-ratio: 2 / 3;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: linear-gradient(165deg, var(--panel-2), var(--inset));
   border: 1px solid var(--border);
@@ -247,7 +272,7 @@ a { color: var(--ice); text-decoration: none; }
 .detail.book .detail-poster { aspect-ratio: 1; width: 220px; }
 /* Manual grab lives behind a disclosure; it is the exception, not the flow. */
 details.manual-grab { margin-top: 0.4rem; }
-details.manual-grab > summary { cursor: pointer; font-size: 12px; color: var(--muted); list-style: none; }
+details.manual-grab > summary { cursor: pointer; font-size: var(--fs-xs); color: var(--muted); list-style: none; }
 details.manual-grab > summary::before { content: "▸ "; }
 details.manual-grab[open] > summary::before { content: "▾ "; }
 details.manual-grab > summary:hover { color: var(--fg); }
@@ -496,7 +521,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 /* Cover art in a search result (SKADI-T-0319): the thing that actually
    disambiguates two items sharing a title and year. Fixed box so a missing or
    slow image does not reflow the list under the pointer mid-click. */
-.import-picker-result .picker-art { width: 2rem; height: 3rem; flex: none; object-fit: cover; border-radius: 2px; background: var(--border); }
+.import-picker-result .picker-art { width: 2rem; height: 3rem; flex: none; object-fit: cover; border-radius: var(--radius-xs); background: var(--border); }
 /* The "← filename" against a mapped episode, and the muted "(no file)" row. */
 .episode-row .ep-file { margin-left: auto; color: var(--ice); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 .episode-row.ep-empty .episode-title { color: var(--faint); }
@@ -519,7 +544,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   padding: 0.4rem 0.6rem;
   margin: 0.1rem 0 0.3rem;
   background: var(--panel-2);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
 }
 .file-location .file-meta { font-size: 0.8rem; }
@@ -530,7 +555,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .path-picker { display: flex; flex-direction: column; gap: 0.3rem; width: 100%; }
 .fs-browser {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--inset);
   padding: 0.4rem;
 }
@@ -623,13 +648,13 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
    Library wall + tiles + Add view (SKADI-I-0035 / T-0245, T-0247)
    ==================================================================== */
 .page-title { font-size: 22px; font-weight: 600; margin: 0; color: var(--fg-bright); }
-.page-sub { margin: 0.2rem 0 0; font-size: 12px; color: var(--faint); }
+.page-sub { margin: 0.2rem 0 0; font-size: var(--fs-xs); color: var(--faint); }
 
 /* Library header: domain accent square + title + right status. */
 .lib-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .lib-title { display: flex; align-items: center; gap: 0.6rem; }
 .lib-title h2 { margin: 0; font-size: 22px; font-weight: 600; }
-.lib-accent { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+.lib-accent { width: 14px; height: 14px; border-radius: var(--radius-sm); flex: none; }
 .lib-accent.ice { background: var(--ice); }
 .lib-accent.teal { background: var(--teal); }
 
@@ -660,7 +685,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   display: flex; align-items: center; gap: 0.55rem; width: 100%;
   background: none; border: none; cursor: pointer; text-align: left;
   font-family: inherit; padding: 0.5rem 0.2rem;
-  font-size: 14px; font-weight: 600; color: var(--fg);
+  font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
 }
 .lib-cluster-head:hover { color: var(--ice); }
 .cluster-chevron { font-size: 10px; color: var(--muted); width: 0.8rem; }
@@ -668,7 +693,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 /* Author → series sub-groups: smaller, muted headings separating the runs. */
 .lib-subclusters { display: flex; flex-direction: column; gap: 0.3rem; }
 .lib-subcluster-head {
-  margin: 0.3rem 0 0.5rem; font-size: 12px; font-weight: 500; color: var(--muted);
+  margin: 0.3rem 0 0.5rem; font-size: var(--fs-xs); font-weight: 500; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.03em;
 }
 
@@ -715,7 +740,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   display: flex; flex-direction: column; gap: 1px; padding: 6px 2px 0;
 }
 .tile-title {
-  font-size: 12px; font-weight: 500; line-height: 1.25; color: var(--fg);
+  font-size: var(--fs-xs); font-weight: 500; line-height: 1.25; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tile-sub { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -757,7 +782,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 /* Each chip is an Aurora Card, dense. */
 .health-chip { display: flex; align-items: center; gap: 0.5rem; padding: 10px 11px; min-width: 0; }
 .health-chip-body { display: flex; flex-direction: column; min-width: 0; }
-.health-chip-name { font-size: 12px; font-weight: 500; }
+.health-chip-name { font-size: var(--fs-xs); font-weight: 500; }
 .health-chip-detail {
   font-size: 10.5px; color: var(--muted); line-height: 1.3;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -772,7 +797,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 
 .hunt-row { padding: 0.7rem 0.85rem; margin-bottom: 0.6rem; }
 .hunt-row-head { display: flex; align-items: center; gap: 0.6rem; }
-.hunt-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hunt-title { flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hunt-pct { color: var(--ice); font-size: 13px; font-weight: 600; }
 .hunt-bar { margin: 0.55rem 0 0.45rem; }
 .hunt-meta { font-size: 11px; color: var(--muted); }
@@ -808,7 +833,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .run-row:hover { background: var(--panel-2); }
 .run-row.bad { border-left-color: var(--bad); }
 .run-row.open { background: var(--panel-2); }
-.run-line { display: flex; align-items: baseline; gap: 0.7rem; font-size: 12px; line-height: 1.55; min-width: 0; }
+.run-line { display: flex; align-items: baseline; gap: 0.7rem; font-size: var(--fs-xs); line-height: 1.55; min-width: 0; }
 .run-time { color: var(--faint); flex: none; min-width: 5.5rem; }
 .run-ev { flex: none; min-width: 7.5rem; }
 .run-text { color: var(--fg-2); min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -817,14 +842,14 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .run-row .log-facts { margin-left: 13.7rem; }
 /* Live transfer numbers on a Downloading row. */
 .run-progress { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 11px; color: var(--muted); }
-.run-bar { display: inline-block; width: 90px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.run-bar { display: inline-block; width: 90px; height: 4px; border-radius: var(--radius-xs); background: var(--border); overflow: hidden; }
 .log-facts:empty { display: none; }
 .log-fact {
   font-size: 11px;
   color: var(--fg-2);
   background: var(--control);
   border: 1px solid var(--border-control);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0.05rem 0.4rem;
   max-width: 100%;
   overflow: hidden;
@@ -861,7 +886,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .add-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .add-sub { font-size: 11.5px; color: var(--muted); }
 .add-overview {
-  font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 0.15rem;
+  font-size: var(--fs-xs); color: var(--muted); line-height: 1.45; margin-top: 0.15rem;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .add-btn, .add-owned { align-self: center; }
@@ -874,7 +899,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
    ==================================================================== */
 
 /* Seeding accordion (SKADI-T-0373). */
-.seed-accordion { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seed-accordion { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .seed-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--panel-2); cursor: pointer; user-select: none; }
 .seed-header:hover { background: var(--panel); }
 .seed-chevron { font-size: 0.7rem; color: var(--muted); width: 1rem; text-align: center; }
@@ -891,18 +916,18 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .provider-card { padding: 0.5rem 0.9rem; }
 .provider-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .provider-main { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
-.provider-name { font-size: 14px; font-weight: 600; }
+.provider-name { font-size: var(--fs-sm); font-weight: 600; }
 .provider-actions { display: flex; gap: 0.4rem; flex: none; }
 .provider-flag { font-size: 10px; color: var(--faint); }
 .provider-sub { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.provider-card .card-test { font-size: 12px; margin-top: 0.4rem; }
+.provider-card .card-test { font-size: var(--fs-xs); margin-top: 0.4rem; }
 .provider-card .card-test:empty { display: none; }
 
 /* Config — domain rows with toggle switches (SKADI-I-0035 / T-0251). */
 .domain-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.85rem 1rem; }
 .domain-row-main { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
 .domain-row-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
-.domain-row-text strong { font-size: 14px; }
+.domain-row-text strong { font-size: var(--fs-sm); }
 .domain-row-desc { font-size: 11px; color: var(--faint); }
 .domain-row-right { display: flex; align-items: center; gap: 0.9rem; flex: none; }
 .domain-state { font-size: 11.5px; }
@@ -944,7 +969,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .setup-stepper { display: flex; align-items: center; gap: 0.4rem; flex: 1; }
 .step { display: flex; align-items: center; gap: 0.4rem; opacity: 0.5; }
 .step-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--control); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-family: var(--font-mono); flex: none; }
-.step-label { font-size: 12px; color: var(--muted); }
+.step-label { font-size: var(--fs-xs); color: var(--muted); }
 .step.current { opacity: 1; }
 .step.current .step-dot { background: var(--ice); color: var(--on-accent); }
 .step.done { opacity: 1; }
@@ -961,13 +986,13 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .setup-lede { color: var(--fg-2); line-height: 1.6; max-width: 32rem; margin: 0 auto 1.4rem; }
 .setup-bullets { display: inline-flex; flex-direction: column; gap: 0.5rem; text-align: left; list-style: decimal; padding-left: 1.2rem; }
 .setup-bullets li { color: var(--fg-2); font-size: 13.5px; }
-.setup-step h2 { font-size: 20px; margin: 0 0 1rem; }
-.setup-help { color: var(--faint); font-size: 12px; margin: 0 0 1rem; line-height: 1.5; }
+.setup-step h2 { font-size: var(--fs-xl); margin: 0 0 1rem; }
+.setup-help { color: var(--faint); font-size: var(--fs-xs); margin: 0 0 1rem; line-height: 1.5; }
 .setup-domains { display: flex; flex-direction: column; gap: 0.7rem; }
 .setup-domain { display: flex; align-items: center; gap: 0.8rem; }
 .setup-fields { display: flex; flex-direction: column; gap: var(--space-sm); }
 .setup-domain-text { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
-.setup-domain-text strong { font-size: 14px; }
+.setup-domain-text strong { font-size: var(--fs-sm); }
 .setup-domain-text span { font-size: 11px; color: var(--faint); }
 .setup-check { color: var(--ice); font-weight: 700; }
 .setup-done { text-align: center; }
@@ -987,7 +1012,6 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;
   max-height: 340px; overflow-y: auto;
 }
-.catalog-list .cl-card { padding: 0.5rem 0.65rem; }
 .catalog-item { display: flex; align-items: center; gap: 0.5rem; }
 .catalog-name { flex: 1; font-size: 0.85rem; font-weight: 600; }
 .catalog-meta { font-size: 11px; color: var(--muted); }
@@ -997,9 +1021,8 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 /* Downloads control surface — engine status + honest empty state (SKADI-I-0041). */
 .dl-view { display: flex; flex-direction: column; }
 /* Summary + whole-queue controls on one row (SKADI-T-0290). */
-.dl-empty { padding: 1.25rem; text-align: center; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px; }
+.dl-empty { padding: 1.25rem; text-align: center; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--border); border-radius: var(--radius-md); }
 
-/* Compact table-style downloads (SKADI-I-0053). */
 
 /* Sticky toolbar with global controls + aggregate stats (SKADI-T-0369). */
 .dl-section { display: flex; flex-direction: column; gap: 0; }
@@ -1130,12 +1153,12 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .upload-controls { display: flex; align-items: end; gap: 1rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
 .upload-kind { display: flex; flex-direction: column; gap: 0.25rem; }
 .upload-pick { cursor: pointer; }
-.upload-resumable { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+.upload-resumable { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.75rem 1rem; margin-bottom: 1rem; }
 .upload-resumable h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
 .upload-resumable ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .upload-resumable li { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 .upload-jobs { display: flex; flex-direction: column; gap: 0.75rem; }
-.upload-job { border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.8rem; }
+.upload-job { border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 0.6rem 0.8rem; }
 .upload-job-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
 /* The filename is the one thing that can outgrow its row, so it wraps rather
    than pushing the badge and the cancel control off the end. */
@@ -1146,7 +1169,6 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 /* Activity stage bar (SKADI-T-0348): compact pipeline summary; empty lanes live
    here instead of as full-height empty panels. */
 .stage-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
-/* Indexer rollup card on the dashboard (SKADI-T-0348). */
 
 /* Listen page: two labeled paths (app vs web player) — SKADI-T-0349. */
 .listen-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.6rem 0 1.2rem; }
@@ -1161,8 +1183,6 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 a.health-rollup { text-decoration: none; color: inherit; }
 a.health-rollup:hover { border-color: var(--ice); }
 
-/* Rotated-token banner (SKADI-T-0474). Spans the shell above the sidebar so it
-   is visible on every route — a stale token breaks all of them, not one. */
 /* Inline feedback under a TV episode row (SKADI-T-0559): the acquire/reset
    actions have no page to navigate to, so the result has to appear where the
    click was. */
@@ -1173,10 +1193,10 @@ a.health-rollup:hover { border-color: var(--ice); }
    the key is actually set. Every row used to carry both buttons at rest —
    two per field, forty on the page. */
 .config-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.7rem; padding: 0.3rem 0; }
-.config-key { font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); flex: 0 0 220px; display: flex; align-items: center; gap: 0.4rem; }
+.config-key { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--fg-2); flex: 0 0 220px; display: flex; align-items: center; gap: 0.4rem; }
 .config-row input[type="text"], .config-row input[type="number"] { flex: 1 1 200px; min-width: 0; }
 .config-row .row-actions { display: flex; align-items: center; gap: 0.4rem; }
-.config-row .muted { flex: 1 1 100%; font-size: 12px; margin: 0; }
+.config-row .muted { flex: 1 1 100%; font-size: var(--fs-xs); margin: 0; }
 .hidden { display: none !important; }
 
 /* ====================================================================
@@ -1216,11 +1236,11 @@ a.health-rollup:hover { border-color: var(--ice); }
 /* Browser video player (SKADI-T-0585). */
 .watch-page { max-width: 1180px; }
 .watch-head { display: flex; align-items: baseline; gap: 0.8rem; margin: 0.2rem 0 0.8rem; flex-wrap: wrap; }
-.watch-head h2 { margin: 0; font-size: 20px; }
+.watch-head h2 { margin: 0; font-size: var(--fs-xl); }
 .watch-nav { margin-left: auto; display: flex; gap: 0.5rem; }
 /* The letterbox stays dark in every theme: the tooltip surface is dark in light too. */
 .watch-video { display: block; width: 100%; max-height: 78vh; background: var(--tooltip-bg); border-radius: 10px; }
-.watch-note { padding: 0.55rem 0.9rem; border-radius: 8px; margin-bottom: 0.8rem; font-size: 13px; line-height: 1.45; }
+.watch-note { padding: 0.55rem 0.9rem; border-radius: var(--radius-md); margin-bottom: 0.8rem; font-size: 13px; line-height: 1.45; }
 .watch-note.warn { background: var(--gold-bg); color: var(--gold-fg); }
 .watch-note.bad { background: var(--bad-bg); color: var(--bad-fg); }
 .watch-meta { color: var(--faint); font-size: 11.5px; margin: 0.5rem 0 0; }
@@ -1232,7 +1252,7 @@ a.health-rollup:hover { border-color: var(--ice); }
 .wanted-row .spacer { flex: 1; }
 .wanted-eds { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
 .wanted-ed {
-  font-family: var(--font-mono); font-size: 11px; padding: 0.1rem 0.4rem; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11px; padding: 0.1rem 0.4rem; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer;
 }
 .wanted-ed.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
@@ -1288,7 +1308,7 @@ p.genres.muted {
 .picker { display: flex; flex-direction: column; gap: 0.3rem; }
 .picker-hits { display: flex; flex-direction: column; gap: 0.15rem; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem; }
 .picker-hits:empty { display: none; }
-.picker-hit { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; background: transparent; border: 0; color: var(--fg); text-align: left; padding: 0.2rem 0.3rem; border-radius: 4px; cursor: pointer; }
+.picker-hit { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; background: transparent; border: 0; color: var(--fg); text-align: left; padding: 0.2rem 0.3rem; border-radius: var(--radius-sm); cursor: pointer; }
 .picker-hit:hover { background: var(--control); }
 .picker-hit .muted { font-size: 0.78rem; }
 .picked { display: flex; flex-wrap: wrap; gap: 0.3rem; }
@@ -1349,8 +1369,6 @@ p.genres.muted {
 .seed-row.st-errored { flex-wrap: wrap; }
 .seed-row .seed-error { flex-basis: 100%; font-size: 0.75rem; color: var(--bad); overflow-wrap: anywhere; }
 
-/* Downloads multi-select and bulk bar (SKADI-T-0688). A checkbox column leads
-   the active table; the bar shows while any row on show is selected. */
 
 /* Downloads manual import (SKADI-T-0689). The Import… button sits at the end
    of a seeding row; the preview, the importer's reason and the result open
@@ -1375,7 +1393,6 @@ p.genres.muted {
 .run-action-msg.ok { color: var(--ok); }
 .run-action-msg.bad { color: var(--bad); }
 
-/* Queue order (SKADI-T-0692): the place of a queued row and its moves. */
 
 /* The confirm dialog is Aurora's ConfirmDialog (SKADI-T-0719); the body
    keeps its line breaks. */
@@ -1483,7 +1500,7 @@ p.genres.muted {
 .skeleton { margin: 0.2rem 0 0.8rem; }
 .sk-block, .sk-line {
   display: block;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(90deg, var(--control) 25%, var(--border-control) 50%, var(--control) 75%);
   background-size: 200% 100%;
   animation: sk-shimmer 1.4s ease-in-out infinite;
@@ -1529,10 +1546,10 @@ p.genres.muted {
 
 /* Provider form help, required marks and field errors (SKADI-T-0699). */
 .field-req { color: var(--bad); }
-.field .field-help, .catalog-panel .field-help { font-size: 12px; margin: 0; line-height: 1.35; }
-.field .field-error { font-size: 12px; margin: 0; }
+.field .field-help, .catalog-panel .field-help { font-size: var(--fs-xs); margin: 0; line-height: 1.35; }
+.field .field-error { font-size: var(--fs-xs); margin: 0; }
 .field input[aria-invalid="true"] { border-color: var(--bad); }
-.card-test .last-test { font-size: 12px; }
+.card-test .last-test { font-size: var(--fs-xs); }
 .card-test .last-test.warn { color: var(--gold); }
 .config-row .config-help { flex: 1 1 100%; }
 
@@ -1548,9 +1565,9 @@ p > a:not([class]) { text-decoration: underline; text-underline-offset: 2px; }
 .shortcut-row dt, .shortcut-row dd { margin: 0; }
 .shortcut-row dd { color: var(--fg-2); font-size: 13px; }
 kbd {
-  font-family: var(--font-mono); font-size: 12px; color: var(--fg-bright);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--fg-bright);
   background: var(--control); border: 1px solid var(--border-control);
-  border-radius: 4px; padding: 1px 6px;
+  border-radius: var(--radius-sm); padding: 1px 6px;
 }
 .poster-tile:focus-visible { outline-offset: 3px; border-radius: var(--radius-md); }
 .poster-tile:focus-visible .poster-img { border-color: var(--ice); }

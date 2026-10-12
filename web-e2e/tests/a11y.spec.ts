@@ -281,6 +281,8 @@ test.describe("C31 a11y: axe on the main pages", () => {
     await page.locator("main").focus();
     await page.keyboard.press("?");
     await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+    // Aurora's dialog fades in (140ms); axe would read the text mid-fade.
+    await page.waitForTimeout(300);
     await audit(page, "/movies (shortcut list)");
   });
 

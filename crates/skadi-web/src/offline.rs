@@ -278,9 +278,13 @@ pub fn ListenPage() -> impl leptos::IntoView {
         }
         if list.is_empty() {
             return view! {
+                // The next step is a button: Empty's own link is told apart
+                // from its line by colour alone, which axe refuses
+                // (link-in-text-block; AURORA-T-0013).
                 <Empty message="Nothing downloaded yet."
-                    hint="Open a book in Audiobooks and press ▶ Listen: playing a book stores it on this device."
-                    href="/audiobooks" link="Audiobooks"/>
+                    hint="Open a book in Audiobooks and press ▶ Listen: playing a book stores it on this device.">
+                    <Button variant="default" size="xs" href="/audiobooks">"Open Audiobooks"</Button>
+                </Empty>
             }
             .into_any();
         }

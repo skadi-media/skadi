@@ -98,8 +98,9 @@ mod tests {
 
     /// Keyboard focus is always visible: one global `:focus-visible` ring in
     /// Aurora's ice, and no bare `outline: none` left on a focusable element.
-    /// The two kept are paired with a ring elsewhere (the search bar's
-    /// `:focus-within`) or are not a Tab stop (`<main>`, the skip target).
+    /// The one kept is not a Tab stop (`<main>`, the skip target). The ring
+    /// loads after Aurora's stylesheet, so its fields keep it too
+    /// (SKADI-T-0719).
     #[test]
     fn style_css_keeps_a_visible_focus_ring() {
         let css = include_str!("../style.css");
@@ -109,11 +110,7 @@ mod tests {
             ),
             "the global ring rule"
         );
-        assert!(
-            css.contains(".add-search:focus-within {"),
-            "the search bar draws the ring"
-        );
-        let allowed = [".add-search-input", ".main:focus-visible"];
+        let allowed = [".main:focus-visible"];
         for (at, _) in css.match_indices("outline: none") {
             let sel = selector_at(css, at);
             assert!(

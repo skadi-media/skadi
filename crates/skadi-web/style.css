@@ -39,8 +39,6 @@
 /* Keyboard focus is always visible (SKADI-T-0700). Do not drop the outline
    of a focusable element: style its :focus-visible instead. */
 :focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
-/* Text fields in a search bar: the bar shows the ring, not the bare input. */
-.add-search:focus-within { border-color: var(--ice); box-shadow: 0 0 0 1px var(--ice); }
 /* A skip link for keyboard users: hidden until it has focus. */
 .skip-link {
   position: absolute; left: 0.5rem; top: -3rem; z-index: 1000;
@@ -48,9 +46,11 @@
   border-radius: 6px; padding: 0.45rem 0.8rem; font-size: 13px;
 }
 .skip-link:focus { top: 0.5rem; }
-/* Text for screen readers only. */
+/* Text for screen readers only. Pinned to the corner of its containing
+   block: at its static place (a header cell at the end of a wide table) it
+   would stretch the page past a box that scrolls on its own. */
 .sr-only {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 body {
@@ -131,7 +131,9 @@ a { color: var(--ice); text-decoration: none; }
 /* Aurora's <main> carries Skadi's `main` class and id (AppFrame). Cap the
    content to a comfortable measure and center it, so wide viewports don't
    strand everything in the top-left corner (SKADI-T-0144). */
-.main > * { max-width: 1180px; margin-inline: auto; }
+/* Not a dialog: an Aurora Modal is drawn where it is mounted, and its fixed
+   scrim must stay as wide as the window. */
+.main > :where(:not(.cl-modal-overlay, .cl-drawer-overlay)) { max-width: 1180px; margin-inline: auto; }
 /* Workaround, Aurora defect: tokens.css gives `#main` `height: 100%` (a page
    id it assumes), which would clamp Skadi's <main id="main"> to the grid row. */
 #main { height: auto; }
@@ -1038,7 +1040,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .dl-engine-text, .vpn-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
 .dl-engine-text strong, .vpn-text strong { color: var(--fg-bright); }
 .dl-engine-sub, .vpn-sub { font-size: 0.82rem; }
-.dl-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-md) var(--radius-md) 0 0; border-bottom: none; }
+.dl-toolbar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-md) var(--radius-md) 0 0; border-bottom: none; }
 .dl-toolbar-controls { display: flex; gap: 0.4rem; }
 .dl-toolbar-stats { display: flex; gap: 0.75rem; margin-left: auto; font-size: 0.82rem; }
 .dl-toolbar-speed { white-space: nowrap; }
@@ -1047,9 +1049,10 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .dl-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.6rem; margin: 0.4rem 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.82rem; }
 .dl-bulk-count { color: var(--fg-bright); margin-right: 0.4rem; }
 .dl-table { font-size: 0.82rem; }
-.dl-table .dl-check-cell { width: 2rem; }
 .dl-check { margin: 0; cursor: pointer; }
-.dl-table .dl-name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); }
+.dl-table .dl-name { color: var(--fg-bright); }
+/* The error line under a row wraps (Aurora's fixed table cuts a cell). */
+.dl-table .dl-error-row td { white-space: normal; overflow: visible; }
 .dl-table td.cl-num { white-space: nowrap; color: var(--muted); }
 .dl-table .dl-down.active { color: var(--ice); }
 .dl-table .dl-up.active { color: var(--gold); }
@@ -1057,7 +1060,7 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
 .dl-bar { flex: 1; }
 .dl-pct { flex: none; width: 32px; text-align: right; font-size: 0.75rem; }
 .dl-row.paused td { opacity: 0.65; }
-.dl-actions-cell { width: 1%; white-space: nowrap; }
+.dl-actions-cell { white-space: nowrap; }
 .dl-actions { display: flex; gap: 0.15rem; justify-content: flex-end; opacity: 0; transition: opacity 0.12s; }
 .dl-row:hover .dl-actions, .dl-row:focus-within .dl-actions { opacity: 1; }
 .dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
@@ -1152,7 +1155,8 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
    meter's shape so "something is filling up" reads the same way everywhere. */
 .upload-controls { display: flex; align-items: end; gap: 1rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
 .upload-kind { display: flex; flex-direction: column; gap: 0.25rem; }
-.upload-pick { cursor: pointer; }
+.upload-pick { cursor: pointer; position: relative; }
+.upload-pick:focus-within { outline: 2px solid var(--ice); outline-offset: 2px; }
 .upload-resumable { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.75rem 1rem; margin-bottom: 1rem; }
 .upload-resumable h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
 .upload-resumable ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }

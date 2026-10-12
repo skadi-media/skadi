@@ -1487,7 +1487,10 @@ fn DownloadsSection() -> impl IntoView {
             shown.with_untracked(|v| selected.update(|s| dlm::toggle_all(s, &v.active)));
         };
         view! {
-            <Table class:dl-table=true label="Active transfers">
+            // Fixed columns: a long release name is cut with "…", and under
+            // 1060px the table scrolls in its own box.
+            <Table class:dl-table=true label="Active transfers" fixed=true min_width="1060px"
+                widths=DL_WIDTHS.iter().map(|w| (*w).to_string()).collect()>
                 <thead>
                     <tr>
                         <th class="dl-check-cell">
@@ -1898,6 +1901,12 @@ fn import_panel_view(
     }
     .into_any()
 }
+
+/// The column widths of the active transfers table: select, name, size,
+/// progress, down, up, peers, ETA, added, actions.
+const DL_WIDTHS: [&str; 10] = [
+    "2.75rem", "auto", "6rem", "8.5rem", "7rem", "7rem", "4.5rem", "5.5rem", "4.5rem", "6.5rem",
+];
 
 /// A Downloads sort as Aurora's `SortState`, for its `SortHeader` cells.
 fn aurora_sort(s: crate::downloads::SortState) -> aurora_leptos::components::SortState {

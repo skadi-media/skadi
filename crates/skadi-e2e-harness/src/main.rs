@@ -312,6 +312,18 @@ async fn main() {
         .expect("AppState not yet shared")
         .domain_migrations = domain_migrations.into();
     let state = state;
+    // The daemon's supervisor re-reads `api_token` each tick (SKADI-T-0466);
+    // the harness has no supervisor, so it does that here. A spec can then set
+    // a token, act as a household member that is not the admin, and clear the
+    // token again (SKADI-T-0723). With no token set this is open mode, as
+    // before.
+    let token_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            token_state.refresh_api_token().await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    });
     let routes = HttpModule::routes(&movies_http);
     let ab_routes = HttpModule::routes(&audiobooks_http);
 

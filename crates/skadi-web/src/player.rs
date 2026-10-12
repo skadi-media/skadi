@@ -7,10 +7,12 @@
 //! speed, a sleep timer, lockscreen controls via the MediaSession API, and a
 //! localStorage position memory (T-0334 upgrades it to IndexedDB).
 
+use aurora_leptos::components::Button;
+use aurora_leptos::tokens::token;
+use aurora_leptos::widgets::Meter;
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
@@ -535,7 +537,7 @@ pub fn PlayerPage() -> impl IntoView {
             return view! { <p class="bad">"Player error: " {e}</p> }.into_any();
         }
         let Some(b) = book.get() else {
-            return view! { <p class="muted">"Loading…"</p> }.into_any();
+            return view! { <aurora_leptos::components::Loading/> }.into_any();
         };
         let cover = b.cover_url.clone().filter(|u| !u.is_empty());
         let byline = {
@@ -566,7 +568,7 @@ pub fn PlayerPage() -> impl IntoView {
                 let pct = (dl_progress.get() * 100.0).round();
                 view! {
                     <div class="player-dl">
-                        <div class="player-dl-bar" style=move || format!("width:{pct}%")></div>
+                        <Meter value=pct color=token::ICE label="Download to this device"/>
                         <span class="mono muted">{format!("downloading… {pct:.0}%")}</span>
                     </div>
                 }
@@ -626,7 +628,7 @@ pub fn PlayerPage() -> impl IntoView {
                 seek_to(t);
             }
         };
-        let cycle_speed = move |_| {
+        let cycle_speed = move |()| {
             let r = next_speed(rate.get());
             rate.set(r);
             let (_, fid) = ids();
@@ -697,36 +699,38 @@ pub fn PlayerPage() -> impl IntoView {
                     <button type="button" class="player-btn" disabled=move || !has_chapters() on:click=next_ch title="Next chapter" aria-label="Next chapter">"⏭"</button>
                 </div>
                 <div class="player-sub">
-                    <button type="button" class="player-btn-sm mono" on:click=cycle_speed title="Playback speed"
-                        aria-label=move || format!("Playback speed {}×", rate.get())>
+                    // Aurora's Button for the secondary controls (SKADI-T-0719);
+                    // the round transport buttons above are the player's own.
+                    <Button variant="default" size="xs" button_type="button" title="Playback speed"
+                        attr:aria-label=move || format!("Playback speed {}×", rate.get())
+                        on_click=Callback::new(cycle_speed)>
                         {move || format!("{}×", rate.get())}
-                    </button>
+                    </Button>
                     {move || {
                         let r = rate.get();
                         ((r - default_rate.get()).abs() > 0.001).then(|| view! {
-                            <button
-                                type="button"
-                                class="player-btn-sm"
+                            <Button variant="subtle" size="xs" button_type="button"
                                 title="Use this speed for books you have not set one for"
-                                on:click=move |_| {
+                                on_click=Callback::new(move |()| {
                                     store_f64(RATE_KEY, r);
                                     default_rate.set(r);
-                                }
+                                })
                             >
                                 {format!("Make {r}× default")}
-                            </button>
+                            </Button>
                         })
                     }}
-                    <button
-                        type="button"
-                        class="player-btn-sm"
+                    <Button variant="default" size="xs" button_type="button"
                         disabled=move || !has_chapters()
-                        aria-expanded=move || crate::a11y::expanded(show_chapters.get())
-                        on:click=move |_| show_chapters.update(|v| *v = !*v)
+                        attr:aria-expanded=move || crate::a11y::expanded(show_chapters.get())
+                        on_click=Callback::new(move |()| show_chapters.update(|v| *v = !*v))
                     >
                         "Chapters"
-                    </button>
-                    <select class="player-sleep" on:change=arm_sleep title="Sleep timer" aria-label="Sleep timer">
+                    </Button>
+                    // An action menu whose first entry counts down: Aurora's
+                    // Select takes a fixed list, so this native select wears
+                    // its classes (AURORA-T-0013).
+                    <select class="cl-input cl-select player-sleep" on:change=arm_sleep title="Sleep timer" aria-label="Sleep timer">
                         <option value="">{move || {
                             // `current` ticks with timeupdate, so the countdown
                             // refreshes while playing (SKADI-T-0657).
@@ -770,7 +774,7 @@ pub fn PlayerPage() -> impl IntoView {
     view! {
         <section class="player-page">
             <div class="page-head">
-                <A href=back attr:class="btn-link">"← Book"</A>
+                {move || view! { <Button variant="subtle" size="xs" href=back()>"← Book"</Button> }}
             </div>
             {body}
         </section>

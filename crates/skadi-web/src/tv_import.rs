@@ -14,13 +14,17 @@
 
 use std::collections::{HashMap, HashSet};
 
+use aurora_leptos::components::{
+    Alert, Button, PageHeader, PageRange, Pagination, Pill, Select, TextInput,
+};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 use crate::api;
 use crate::loading::{LoadError, Skeleton, SkeletonKind};
 use crate::path_picker::PathPicker;
+use crate::ui::{mirror, tone};
 
 /// How many candidates per page (also the per-page match batch size).
 const PAGE_SIZE: usize = 50;
@@ -862,8 +866,18 @@ pub fn TvImportPage() -> impl IntoView {
         page.set(p);
         match_page(p);
     };
+    // Aurora's Pagination works in offsets; the page here follows it, and
+    // it follows the page when a filter puts the list back at page 1.
+    let pg_offset = RwSignal::new(0usize);
+    let pg_limit = RwSignal::new(PAGE_SIZE);
+    Effect::new(move |_| {
+        let off = page.get() * PAGE_SIZE;
+        if pg_offset.get_untracked() != off {
+            pg_offset.set(off);
+        }
+    });
 
-    let on_import = move |_| {
+    let on_import = move |()| {
         // Build commit items for every ticked show: auto-mapped files go in
         // unqualified (the backend re-parses), manually-mapped files carry their
         // chosen season+episode, and unmapped/un-picked files are skipped.
@@ -1029,7 +1043,7 @@ pub fn TvImportPage() -> impl IntoView {
 
     // Bulk selection (SKADI-T-0326): most shows arrive pre-ticked via NFO — a
     // cautious first pass shouldn't mean hundreds of unticks.
-    let select_all_visible = move |_| {
+    let select_all_visible = move |()| {
         let idxs = visible.get_untracked();
         groups.with_untracked(|all| {
             for &i in &idxs {
@@ -1041,7 +1055,7 @@ pub fn TvImportPage() -> impl IntoView {
             }
         });
     };
-    let clear_selection = move |_| {
+    let clear_selection = move |()| {
         groups.with_untracked(|all| {
             for g in all {
                 g.selected.set(false);
@@ -1061,10 +1075,7 @@ pub fn TvImportPage() -> impl IntoView {
     };
 
     view! {
-        <div class="page-head">
-            <h2>"TV import"</h2>
-            <A href="/tv" attr:class="gear" attr:title="Back to TV">"←"</A>
-        </div>
+        <PageHeader title="TV import" back_href="/tv" back_label="TV" class:page-header=true/>
 
         <section class="provider-section">
             <div class="section-head">
@@ -1086,18 +1097,18 @@ pub fn TvImportPage() -> impl IntoView {
             </div>
             <div class="form">
                 <div class="field">
-                    <label>"Library path (as the server sees it, e.g. /mnt/storage/tv)"</label>
+                    <span class="cl-field__label">"Library path (as the server sees it, e.g. /mnt/storage/tv)"</span>
                     <div class="checks">
                         <PathPicker value=path placeholder="/mnt/storage/tv"/>
-                        <button on:click=on_scan disabled=move || scanning.get()>
+                        <Button loading=scanning on_click=Callback::new(on_scan)>
                             {move || if scanning.get() { "Scanning…" } else { "Scan" }}
-                        </button>
+                            </Button>
                     </div>
                 </div>
                 {move || scanning.get().then(|| view! {
                     <p class="muted">"Scanning the folder (parse-only — fast). Matches are looked up a page at a time below."</p>
                 })}
-                {move || scan_error.get().map(|e| view! { <p class="bad">{e}</p> })}
+                {move || scan_error.get().map(|e| view! { <Alert color=token::BAD>{e}</Alert> })}
             </div>
         </section>
 
@@ -1118,9 +1129,10 @@ pub fn TvImportPage() -> impl IntoView {
                 })}
 
                 {move || match_error.get().map(|e| view! {
-                    <p class="bad">
+                    <p class="bad match-error">
                         {format!("Matching failed: {e} ")}
-                        <button on:click=move |_| match_page(cur_page())>"Retry matching"</button>
+                        <Button variant="default" size="xs"
+                            on_click=Callback::new(move |()| match_page(cur_page()))>"Retry matching"</Button>
                     </p>
                 })}
 
@@ -1134,31 +1146,23 @@ pub fn TvImportPage() -> impl IntoView {
                             .sum()
                     });
                     let pages = total_pages();
-                    let cur = cur_page();
                     view! {
                         <div class="checks">
                             <span class="muted">
-                                {if pages > 1 {
-                                    format!("{shows} shows ({files} episode files) — page {} of {pages}", cur + 1)
-                                } else {
-                                    format!("{shows} shows · {files} episode files")
-                                }}
+                                    {format!("{shows} shows · {files} episode files")}
                             </span>
+                            // Aurora's Pagination (SKADI-T-0719) over the show pages.
                             {(pages > 1).then(|| view! {
-                                <>
-                                    <button
-                                        on:click=move |_| go_page(cur.saturating_sub(1))
-                                        disabled=move || cur_page() == 0 || matching.get()
-                                    >"‹ Prev"</button>
-                                    <button
-                                        on:click=move |_| go_page(cur + 1)
-                                        disabled=move || { cur_page() + 1 >= total_pages() || matching.get() }
-                                    >"Next ›"</button>
-                                </>
+                                <Pagination offset=pg_offset limit=pg_limit
+                                    total=Signal::derive(move || visible.get().len())
+                                    range_label=Callback::new(|r: PageRange| {
+                                        format!("shows {}–{} of {}", r.first, r.last, r.total)
+                                    })
+                                    on_change=Callback::new(move |(off, _): (usize, usize)| go_page(off / PAGE_SIZE))/>
                             })}
                             {matching.get().then(|| view! { <span class="muted">"matching…"</span> })}
-                            <button class="secondary" on:click=select_all_visible>"Select all"</button>
-                            <button class="secondary" on:click=clear_selection>"Clear"</button>
+                            <Button variant="subtle" size="xs" on_click=Callback::new(select_all_visible)>"Select all"</Button>
+                            <Button variant="subtle" size="xs" on_click=Callback::new(clear_selection)>"Clear"</Button>
                             <label class="import-hide-toggle muted">
                                 <input
                                     type="checkbox"
@@ -1192,7 +1196,7 @@ pub fn TvImportPage() -> impl IntoView {
 
                 {move || (!groups.with(Vec::is_empty)).then(|| {
                     view! {
-                        <button on:click=on_import disabled=move || importing.get() || selected_count() == 0>
+                        <Button on_click=Callback::new(on_import) disabled=move || importing.get() || selected_count() == 0>
                             {move || match progress.get() {
                                 Some((d, t)) => format!("Importing… {d} / {t}"),
                                 None if importing.get() => "Importing…".to_string(),
@@ -1202,7 +1206,7 @@ pub fn TvImportPage() -> impl IntoView {
                                     format!("Import {shows} show{} ({files} episodes)", if shows == 1 { "" } else { "s" })
                                 }
                             }}
-                        </button>
+                        </Button>
                     }
                 })}
                 {move || progress.get().map(|(d, t)| view! {
@@ -1211,7 +1215,7 @@ pub fn TvImportPage() -> impl IntoView {
 
                 {move || result.get().map(|r| match r {
                     Ok(res) => crate::import_common::commit_result_view(&res),
-                    Err(m) => view! { <p class="bad">{m}</p> }.into_any(),
+                    Err(m) => view! { <Alert color=token::BAD>{m}</Alert> }.into_any(),
                 })}
             </div>
         </section>
@@ -1237,6 +1241,8 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
         .map(|p| with_year(&p.title, p.year))
         .unwrap_or_else(|| with_year(&g.title, g.year));
     let confidence = g.confidence.clone();
+    let conf_title = confidence_title(&confidence);
+    let conf_text = confidence.clone();
     let conf_class = confidence_class(&confidence);
     let matched = g.matched;
     let has_match = g.proposed.is_some();
@@ -1338,8 +1344,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
     // old proposed match no longer describes this id — drop it and mark the
     // match "manual", or the card keeps showing the previous show's title with
     // a green nfo/high badge next to a different id (SKADI-T-0326).
-    let on_tvdb = move |ev| {
-        let val = event_target_value(&ev);
+    let on_tvdb = move |val: String| {
         tvdb.set(val.clone());
         if let Ok(id) = val.trim().parse::<u64>() {
             groups.update(|all| {
@@ -1355,7 +1360,7 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
 
     // Series picker: toggle the search box (seeding the query with the title on
     // first open), run a title search, and apply a chosen result as the match.
-    let toggle_picker = move |_| {
+    let toggle_picker = move |()| {
         let opening = !picker_open.get();
         picker_open.update(|o| *o = !*o);
         if opening && search_q.get_untracked().trim().is_empty() {
@@ -1508,10 +1513,9 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                     disabled=in_lib
                     on:change=move |_| selected.update(|s| *s = !*s)
                 />
-                <button
-                    class="btn-link season-toggle"
-                    aria-expanded=move || crate::a11y::expanded(!collapsed.get())
-                    on:click=move |_| {
+                <Button variant="subtle" size="xs" class:season-toggle=true
+                    attr:aria-expanded=move || crate::a11y::expanded(!collapsed.get())
+                    on_click=Callback::new(move |()| {
                         let opening = collapsed.get();
                         collapsed.update(|c| *c = !*c);
                         // Lazily fetch this show's episode tree the first time it's
@@ -1526,35 +1530,27 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
                                 fetch_structure(id);
                             }
                         }
-                    }
+                    })
                 >
                     <span class="chevron" aria-hidden="true">{move || if collapsed.get() { "▸" } else { "▾" }}</span>
                     <strong>{title_text}</strong>
-                </button>
+                </Button>
                 {(matched && has_match).then(|| view! {
-                    <span class=format!("badge {conf_class}") title=confidence_title(&confidence)>
-                        {confidence.clone()}
+                    <span title=conf_title>
+                        <Pill color=tone(conf_class)>{conf_text.clone()}</Pill>
                     </span>
                 })}
                 {(!matched).then(|| view! { <span class="muted">"matching…"</span> })}
                 {(matched && has_match).then(header_count)}
-                <button
-                    class="btn-link import-find"
-                    disabled=in_lib
-                    title="Search for the right show"
-                    aria-label="Search for the right show"
-                    on:click=toggle_picker
-                >
+                <Button variant="subtle" size="xs" class:import-find=true disabled=in_lib
+                    title="Search for the right show" aria_label="Search for the right show"
+                    on_click=Callback::new(toggle_picker)>
                     "🔍 Find show"
-                </button>
-                <input
-                    class="tmdb-input import-tvdb"
-                    type="text"
-                    placeholder="tvdb id"
-                    prop:value=move || tvdb.get()
-                    disabled=in_lib
-                    on:change=on_tvdb
-                />
+                </Button>
+                <div class="import-tvdb">
+                    <TextInput value=tvdb placeholder="tvdb id" aria_label="TVDB id" mono=true
+                        disabled=in_lib on_change=Callback::new(on_tvdb)/>
+                </div>
             </div>
             // NFO facts line + synopsis, to confirm the auto-match at a glance.
             {(facts.is_some() || overview.is_some()).then(|| view! {
@@ -1565,18 +1561,13 @@ fn show_card(groups: RwSignal<Vec<SeriesGroup>>, idx: usize, g: SeriesGroup) -> 
             })}
             {move || picker_open.get().then(|| view! {
                 <div class="import-picker">
-                    <div class="import-picker-search">
-                        <input
-                            class="path-field"
-                            placeholder="Search series title…"
-                            prop:value=move || search_q.get()
-                            on:input=move |ev| search_q.set(event_target_value(&ev))
-                            on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                if ev.key() == "Enter" { run_search(); }
-                            }
-                        />
-                        <button class="btn" on:click=move |_| run_search()>"Search"</button>
-                    </div>
+                    <form class="import-picker-search" on:submit=move |ev| { ev.prevent_default(); run_search(); }>
+                        <div class="path-field">
+                            <TextInput value=search_q placeholder="Search series title…"
+                                aria_label="Search series title"/>
+                        </div>
+                        <Button variant="default" button_type="submit">"Search"</Button>
+                    </form>
                     {move || searching.get().then(|| view! {
                         <p class="muted ep-empty">"Searching…"</p>
                     })}
@@ -1703,18 +1694,17 @@ fn import_season_block(
     view! {
         <div class="edition-block season-block">
             <div class="edition-row season-head">
-                <button
-                    class="btn-link season-toggle"
-                    aria-expanded=move || crate::a11y::expanded(is_open())
-                    on:click=move |_| expanded.update(|s| {
+                <Button variant="subtle" size="xs" class:season-toggle=true
+                    attr:aria-expanded=move || crate::a11y::expanded(is_open())
+                    on_click=Callback::new(move |()| expanded.update(|s| {
                         if !s.remove(&num) {
                             s.insert(num);
                         }
-                    })
+                    }))
                 >
                     <span class="chevron" aria-hidden="true">{move || if is_open() { "▾" } else { "▸" }}</span>
                     <strong>{label}</strong>
-                </button>
+                </Button>
                 <span class=count_cls>{format!("{mapped}/{total} mapped")}</span>
             </div>
             <div class="season-eps" class:collapsed=move || !is_open()>
@@ -1759,16 +1749,16 @@ fn unmapped_block(
             let cur_season = move || overrides.get().get(&path.get_value()).and_then(|x| x.0);
             let cur_episode = move || overrides.get().get(&path.get_value()).and_then(|x| x.1);
 
-            let on_season = move |ev| {
-                let v = event_target_value(&ev).parse::<u16>().ok();
+            let on_season = move |v: String| {
+                let v = v.parse::<u16>().ok();
                 overrides.update(|m| {
                     let e = m.entry(path.get_value()).or_default();
                     e.0 = v;
                     e.1 = None; // reset the episode when the season changes
                 });
             };
-            let on_episode = move |ev| {
-                let v = event_target_value(&ev).parse::<u16>().ok();
+            let on_episode = move |v: String| {
+                let v = v.parse::<u16>().ok();
                 overrides.update(|m| {
                     m.entry(path.get_value()).or_default().1 = v;
                 });
@@ -1776,28 +1766,33 @@ fn unmapped_block(
 
             // Episode options depend on the currently-picked season (reactive).
             let ep_episodes = episodes.clone();
-            let ep_options = move || {
-                let Some(s) = cur_season() else {
-                    return ().into_any();
-                };
+            let file_name = c.display_name.clone();
+            let season_value =
+                mirror(move || cur_season().map(|n| n.to_string()).unwrap_or_default());
+            let episode_value =
+                mirror(move || cur_episode().map(|n| n.to_string()).unwrap_or_default());
+            // Aurora's Select takes its options when it is built: the episode
+            // select is built again when the season changes.
+            let ep_label = format!("Episode of {file_name}");
+            let ep_select = move || {
+                let season = cur_season();
                 let mut list: Vec<api::TvStructEpisode> = ep_episodes
                     .iter()
-                    .filter(|e| e.season == s)
+                    .filter(|e| Some(e.season) == season)
                     .cloned()
                     .collect();
                 list.sort_by_key(|e| e.number);
-                let chosen = cur_episode();
-                list.into_iter()
-                    .map(|e| {
-                        let lbl = episode_option_label(e.number, e.title.as_deref());
-                        view! {
-                            <option value=e.number.to_string() selected=chosen == Some(e.number)>
-                                {lbl}
-                            </option>
-                        }
-                    })
-                    .collect_view()
-                    .into_any()
+                let options = list
+                    .into_iter()
+                    .map(|e| (e.number.to_string(), episode_option_label(e.number, e.title.as_deref())))
+                    .collect::<Vec<_>>();
+                view! {
+                    <div class="unmapped-pick">
+                        <Select aria_label=ep_label.clone() placeholder="Episode" option_pairs=options
+                            value=episode_value disabled=season.is_none()
+                            on_change=Callback::new(on_episode)/>
+                    </div>
+                }
             };
 
             let resolved = move || cur_season().is_some() && cur_episode().is_some();
@@ -1807,29 +1802,19 @@ fn unmapped_block(
                 <div class="edition-row unmapped-row" class:resolved=resolved>
                     <span class="episode-title" title=c.display_name.clone()>{c.display_name.clone()}</span>
                     {dup_code.map(|code| view! {
-                        <span
-                            class="badge pending"
-                            title="Another file already claims this episode — pick where this one really belongs"
-                        >
-                            {format!("duplicate {code}")}
+                        <span title="Another file already claims this episode — pick where this one really belongs">
+                            <Pill color=token::GOLD>{format!("duplicate {code}")}</Pill>
                         </span>
                     })}
-                    <select class="tmdb-input" on:change=on_season>
-                        <option value="" selected=move || cur_season().is_none()>"Season"</option>
-                        {season_opts.into_iter().map(|s| {
-                            let lbl = season_label(s.number);
-                            let num = s.number;
-                            view! {
-                                <option value=num.to_string() selected=move || cur_season() == Some(num)>
-                                    {lbl}
-                                </option>
-                            }
-                        }).collect_view()}
-                    </select>
-                    <select class="tmdb-input" disabled=move || cur_season().is_none() on:change=on_episode>
-                        <option value="" selected=move || cur_episode().is_none()>"Episode"</option>
-                        {ep_options}
-                    </select>
+                    <div class="unmapped-pick">
+                        <Select aria_label=format!("Season of {file_name}") placeholder="Season"
+                            option_pairs=season_opts
+                                .into_iter()
+                                .map(|s| (s.number.to_string(), season_label(s.number)))
+                                .collect()
+                            value=season_value on_change=Callback::new(on_season)/>
+                    </div>
+                    {ep_select}
                     // Live double-booking warning: the picked episode already has
                     // a file mapped to it (SKADI-T-0326).
                     {move || {

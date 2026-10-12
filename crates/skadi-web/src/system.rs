@@ -12,12 +12,15 @@
 //! reactive closure, so the panels mount (and fetch) once `/me` answers; the
 //! fetches themselves are in a child component that only an admin mounts.
 
+use aurora_leptos::components::{Alert, Button, DetailList, KeyValue, Select, Table};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
 use crate::dashboard::severity_class;
 use crate::loading::{ListLoad, SkeletonKind};
+use crate::ui::LevelDot;
 
 /// How many log lines to ask for: the daemon's whole ring (`logbuf::CAPACITY`).
 pub const LOG_PAGE: usize = 500;
@@ -215,7 +218,7 @@ fn SystemPanels() -> impl IntoView {
         load_logs();
     });
 
-    let run_now = move |_| {
+    let run_now = move |()| {
         if running.get_untracked() {
             return;
         }
@@ -248,9 +251,9 @@ fn SystemPanels() -> impl IntoView {
                         "The results of the last check run. The daemon runs the checks on its own timer."
                     </p>
                 </div>
-                <button on:click=run_now disabled=move || running.get()>
+                <Button variant="default" loading=running on_click=Callback::new(run_now)>
                     {move || if running.get() { "Running…" } else { "Run now" }}
-                </button>
+                </Button>
             </div>
             {checks_load.status(SkeletonKind::Rows, Callback::new(move |()| load_checks()))}
             {move || checks_load.is_loaded().then(|| view! { <CheckTable checks=checks.get()/> })}
@@ -277,19 +280,15 @@ fn SystemPanels() -> impl IntoView {
                     </p>
                 </div>
                 <div class="page-head-actions">
-                    <select
-                        aria-label="Log level"
-                        prop:value=move || log_min.get()
-                        on:change=move |ev| log_min.set(event_target_value(&ev))
-                    >
-                        {LOG_FILTERS
+                    <Select aria_label="Log level" value=log_min
+                        option_pairs=LOG_FILTERS
                             .iter()
-                            .map(|(v, label)| view! { <option value=*v>{*label}</option> })
-                            .collect_view()}
-                    </select>
-                    <button on:click=move |_| load_logs() disabled=move || logs_loading.get()>
+                            .map(|(v, label)| ((*v).to_string(), (*label).to_string()))
+                            .collect()/>
+                    <Button variant="default" loading=logs_loading
+                        on_click=Callback::new(move |()| load_logs())>
                         {move || if logs_loading.get() { "Refreshing…" } else { "Refresh" }}
-                    </button>
+                    </Button>
                 </div>
             </div>
             {logs_load.status(SkeletonKind::Rows, Callback::new(move |()| load_logs()))}
@@ -309,21 +308,21 @@ pub fn StatusFacts(status: api::SystemStatus) -> impl IntoView {
         status.library_root.clone()
     };
     let started = time_label(Some(&status.start_time));
+    // Aurora's DetailList (SKADI-T-0719).
     view! {
-        <div class="diag-facts system-facts">
-            <div class="diag-fact"><span class="diag-k">"Version"</span>
-                <span class="diag-v mono system-version">{status.version.clone()}</span></div>
-            <div class="diag-fact"><span class="diag-k">"Build commit"</span>
-                <span class="diag-v mono system-commit" title=commit_full>{commit}</span></div>
-            <div class="diag-fact"><span class="diag-k">"Uptime"</span>
-                <span class="diag-v mono" title=format!("since {started} UTC")>
-                    {uptime_label(status.uptime_seconds)}
-                </span></div>
-            <div class="diag-fact"><span class="diag-k">"Database"</span>
-                <span class="diag-v mono">{status.database.clone()}</span></div>
-            <div class="diag-fact"><span class="diag-k">"Library root"</span>
-                <span class="diag-v mono">{root}</span></div>
-        </div>
+        <DetailList mono=true>
+            <KeyValue label="Version">
+                <span class="system-version">{status.version.clone()}</span>
+            </KeyValue>
+            <KeyValue label="Build commit">
+                <span class="system-commit" title=commit_full>{commit}</span>
+            </KeyValue>
+            <KeyValue label="Uptime">
+                <span title=format!("since {started} UTC")>{uptime_label(status.uptime_seconds)}</span>
+            </KeyValue>
+            <KeyValue label="Database">{status.database.clone()}</KeyValue>
+            <KeyValue label="Library root">{root}</KeyValue>
+        </DetailList>
     }
 }
 
@@ -335,32 +334,34 @@ pub fn CheckTable(checks: Vec<api::HealthCheck>) -> impl IntoView {
         return view! { <p class="muted">"No checks reported."</p> }.into_any();
     }
     let banner = banner_level(&checks).map(|level| {
-        let (class, text) = if level == "error" {
+        let bad = level == "error";
+        let (color, text) = if bad {
             (
-                "notice bad system-banner",
+                token::BAD,
                 "A health check failed. The fix is in the table.",
             )
         } else {
             (
-                "notice warn system-banner",
+                token::GOLD,
                 "A health check has a warning. The fix is in the table.",
             )
         };
-        view! { <p class=class role="status">{text}</p> }
+        view! {
+            <Alert color=color class:system-banner=true class:bad=bad class:warn=!bad>{text}</Alert>
+        }
     });
     let rows = checks
         .into_iter()
         .map(|c| {
             let level = c.level().to_string();
             let sev = severity_class(&level);
-            let dot = format!("status-dot {sev}");
             let label = c.label.clone().unwrap_or_else(|| c.name.clone());
             let remedy = c.remediation.clone().unwrap_or_default();
             let when = time_label(c.checked_at.as_deref());
             view! {
                 <tr class=format!("check-row sev-{sev}")>
                     <td class="nowrap" data-label="Severity">
-                        <span class=dot></span>
+                        <LevelDot level=sev class="status-dot"/>
                         <span class="check-level mono">{level}</span>
                     </td>
                     <td data-label="Check">
@@ -376,7 +377,7 @@ pub fn CheckTable(checks: Vec<api::HealthCheck>) -> impl IntoView {
         .collect_view();
     view! {
         {banner}
-        <table class="system-table checks-table">
+        <Table class:system-table=true class:checks-table=true>
             <thead>
                 <tr>
                     <th>"Severity"</th>
@@ -387,7 +388,7 @@ pub fn CheckTable(checks: Vec<api::HealthCheck>) -> impl IntoView {
                 </tr>
             </thead>
             <tbody>{rows}</tbody>
-        </table>
+        </Table>
     }
     .into_any()
 }
@@ -416,7 +417,7 @@ pub fn TaskTable(tasks: Vec<api::SystemTask>) -> impl IntoView {
         })
         .collect_view();
     view! {
-        <table class="system-table tasks-table">
+        <Table class:system-table=true class:tasks-table=true>
             <thead>
                 <tr>
                     <th>"Task"</th>
@@ -426,7 +427,7 @@ pub fn TaskTable(tasks: Vec<api::SystemTask>) -> impl IntoView {
                 </tr>
             </thead>
             <tbody>{rows}</tbody>
-        </table>
+        </Table>
     }
     .into_any()
 }
@@ -452,7 +453,7 @@ pub fn LogTable(lines: Vec<api::LogLine>) -> impl IntoView {
         })
         .collect_view();
     view! {
-        <table class="system-table log-table">
+        <Table class:system-table=true class:log-table=true>
             <thead>
                 <tr>
                     <th>"Time (UTC)"</th>
@@ -462,7 +463,7 @@ pub fn LogTable(lines: Vec<api::LogLine>) -> impl IntoView {
                 </tr>
             </thead>
             <tbody>{rows}</tbody>
-        </table>
+        </Table>
     }
     .into_any()
 }

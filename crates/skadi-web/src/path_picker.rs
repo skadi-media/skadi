@@ -6,6 +6,8 @@
 //! **Browse** button that opens an inline list of subfolders, navigable up to the
 //! configured media roots, with "Use this folder" to fill the field.
 
+use aurora_leptos::components::{Alert, Button, TextInput};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -38,7 +40,7 @@ pub fn PathPicker(
         });
     };
 
-    let toggle = move |_| {
+    let toggle = move |()| {
         let now = !open.get_untracked();
         open.set(now);
         if now {
@@ -52,11 +54,13 @@ pub fn PathPicker(
         if !open.get() {
             return ().into_any();
         }
-        let err = error.get().map(|e| view! { <p class="bad">{e}</p> });
+        let err = error
+            .get()
+            .map(|e| view! { <Alert color=token::BAD>{e}</Alert> });
         let body = listing.get().map(|l| {
             let here = l.path.clone();
             let use_here_path = here.clone();
-            let use_here = move |_| {
+            let use_here = move |()| {
                 value.set(use_here_path.clone());
                 open.set(false);
             };
@@ -80,7 +84,8 @@ pub fn PathPicker(
             view! {
                 <div class="fs-head">
                     <span class="muted fs-here">{here}</span>
-                    <button type="button" class="copy-btn" on:click=use_here>"Use this folder"</button>
+                    <Button variant="default" size="xs" button_type="button"
+                        on_click=Callback::new(use_here)>"Use this folder"</Button>
                 </div>
                 <div class="fs-list">{up_btn}{rows}</div>
             }
@@ -91,13 +96,13 @@ pub fn PathPicker(
     view! {
         <div class="path-picker">
             <div class="path-row">
-                <input
-                    class="path-field"
-                    placeholder=placeholder
-                    prop:value=move || value.get()
-                    on:input=move |ev| value.set(event_target_value(&ev))
-                />
-                <button type="button" class="copy-btn" on:click=toggle>"Browse"</button>
+                <div class="path-field">
+                    <TextInput value=value placeholder=placeholder.clone() aria_label=placeholder
+                        mono=true spellcheck=false/>
+                </div>
+                <Button variant="default" button_type="button"
+                    attr:aria-expanded=move || if open.get() { "true" } else { "false" }
+                    on_click=Callback::new(toggle)>"Browse"</Button>
             </div>
             {panel}
         </div>

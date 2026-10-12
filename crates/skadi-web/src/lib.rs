@@ -24,6 +24,7 @@ pub mod loading;
 pub mod movies;
 pub mod tv;
 pub mod tv_import;
+pub mod ui;
 pub mod wanted;
 pub mod watch;
 
@@ -36,6 +37,7 @@ pub mod offline;
 pub mod path_picker;
 pub mod persist;
 pub mod player;
+mod preferences;
 mod settings;
 mod setup;
 pub mod shortcuts;
@@ -43,7 +45,7 @@ pub mod subnav;
 pub mod system;
 pub mod upload;
 
-pub use app::{App, AppFrame, DownloadersPage, IndexersPage, MAIN_ID, NAV_ID, SCROLL_LOCK_CLASS};
+pub use app::{App, AppFrame, DownloadersPage, IndexersPage, MAIN_ID, NAV_ID, nav_active};
 
 /// Genre facet over a wall (SKADI-T-0605): each genre with how many items
 /// carry it, most common first then by name — one chip per entry. A genre

@@ -15,7 +15,7 @@
 // Bump CACHE on any shell change: activate() deletes every other cache name,
 // so old hashed wasm/js don't accumulate forever against the device quota
 // (finding 7).
-const CACHE = "skadi-shell-v2";
+const CACHE = "skadi-shell-v3";
 const UNHASHED = ["/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", () => self.skipWaiting());

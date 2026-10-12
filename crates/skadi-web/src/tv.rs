@@ -5,9 +5,10 @@
 //! seasons + episodes) and toggles monitoring per series / season / episode.
 //! Adding a series lives in the unified `/add` flow.
 
+use aurora_leptos::components::{Alert, Button, Empty, Pill};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 
 use crate::api;
@@ -21,6 +22,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class, tmdb_img};
+use crate::ui::{FilterChip, LevelDot, tone};
 
 /// The series wall's status chips; a series with every episode is "Complete".
 pub const TV_CHIPS: &[(&str, &str)] = &[
@@ -132,15 +134,10 @@ pub fn TvPage() -> impl IntoView {
                 let is_active = active.as_deref() == Some(name.as_str());
                 let pick = name.clone();
                 view! {
-                    <button
-                        class=if is_active { "filter-chip active" } else { "filter-chip" }
-                        on:click=move |_| genre_filter.update(|g| {
+                    <FilterChip label=name.clone() count=n.to_string() active=is_active
+                        on_click=Callback::new(move |()| genre_filter.update(|g| {
                             if g.as_deref() == Some(pick.as_str()) { *g = None } else { *g = Some(pick.clone()) }
-                        })
-                    >
-                        {name.clone()}
-                        <span class="chip-count mono">{n}</span>
-                    </button>
+                        }))/>
                 }
             })
             .collect_view()
@@ -155,7 +152,8 @@ pub fn TvPage() -> impl IntoView {
                 </div>
                 <div class="lib-head-right">
                     {move || is_admin().then(|| view! {
-                        <A href="/tv/import" attr:class="btn-link" attr:title="Import an existing TV library">"Import"</A>
+                        <Button variant="default" size="xs" href="/tv/import"
+                            title="Import an existing TV library">"Import"</Button>
                     })}
                 </div>
             </div>
@@ -181,7 +179,9 @@ pub fn TvPage() -> impl IntoView {
                 })} }
             />
             {load.status(SkeletonKind::Posters, Callback::new(move |()| fetch()))}
-            {move || (load.is_loaded() && series.get().is_empty()).then(|| view! { <p class="muted">"No series yet — add one with + Add media."</p> })}
+            {move || (load.is_loaded() && series.get().is_empty()).then(|| view! {
+                <Empty message="No series yet." hint="Add one with + Add media."/>
+            })}
             <div class="poster-grid">{tiles}</div>
         </section>
     }
@@ -248,7 +248,7 @@ fn series_tile(s: api::Series, sel: Option<Selection>) -> AnyView {
                 }}
                 {check}
                 {(status != "owned")
-                    .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
+                    .then(|| view! { <LevelDot level=dot class="status-dot" size=11/> })}
                 {wanted.then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}
             </div>
             <div class="tile-scrim">
@@ -415,9 +415,9 @@ pub fn SeriesDetailPage() -> impl IntoView {
         view! {
             <>
                 <div class="page-head">
-                    // A real router link (movies/audiobooks parity) — the old
+                    // A real link (movies/audiobooks parity) — the old
                     // programmatic-nav <button> didn't navigate (SKADI-T-0329).
-                    <A href="/tv" attr:class="btn-link">"← Library"</A>
+                    <Button variant="subtle" size="xs" href="/tv">"← Library"</Button>
                 </div>
                 <div class="detail" class:no-hero=no_hero>
                     {backdrop.map(|src| view! {
@@ -438,12 +438,14 @@ pub fn SeriesDetailPage() -> impl IntoView {
                                 </span>
                             </p>
                             <div class="card-actions">
-                                <button class="btn" prop:disabled=move || busy.get() on:click=toggle_monitor>
+                                <Button variant="default" size="xs" disabled=busy
+                                    on_click=Callback::new(toggle_monitor)>
                                     {if monitored { "Unmonitor series" } else { "Monitor series" }}
-                                </button>
-                                <button class="btn bad" prop:disabled=move || busy.get() on:click=on_delete>"Delete"</button>
+                                </Button>
+                                <Button variant="default" size="xs" bad=true disabled=busy
+                                    on_click=Callback::new(on_delete)>"Delete"</Button>
                             </div>
-{rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
+                            {rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
                         {genres.map(|g| view! { <p class="genres muted">{g}</p> })}
                             {overview.map(|o| view! { <p class="overview">{o}</p> })}
                             <div class="card-editions">{season_blocks}</div>
@@ -457,7 +459,7 @@ pub fn SeriesDetailPage() -> impl IntoView {
 
     view! {
         <>
-            {move || error.get().map(|e| view! { <p class="bad">"Error: " {e}</p> })}
+            {move || error.get().map(|e| view! { <Alert color=token::BAD>"Error: " {e}</Alert> })}
             {body}
         </>
     }
@@ -490,7 +492,7 @@ fn season_block(
     };
     let monitored = sea.monitored;
     let toggle_sid = sid.clone();
-    let toggle = move |_| {
+    let toggle = move |()| {
         let id = toggle_sid.clone();
         spawn_local(async move {
             let _ = api::monitor_season(&id, num, !monitored).await;
@@ -517,7 +519,7 @@ fn season_block(
     // The episode list is kept in the DOM and hidden via CSS so per-episode
     // History stays expanded across toggles. Open state lives on the page.
     let collapsed = move || !open_seasons.get().contains(&num);
-    let toggle_open = move |_| {
+    let toggle_open = move |()| {
         open_seasons.update(|o| {
             if !o.remove(&num) {
                 o.insert(num);
@@ -533,18 +535,17 @@ fn season_block(
     view! {
         <div class="edition-block season-block">
             <div class="edition-row season-head">
-                <button
-                    class="btn-link season-toggle"
-                    aria-expanded=move || crate::a11y::expanded(!collapsed())
-                    on:click=toggle_open
+                <Button variant="subtle" size="xs" class:season-toggle=true
+                    attr:aria-expanded=move || crate::a11y::expanded(!collapsed())
+                    on_click=Callback::new(toggle_open)
                 >
                     <span class="chevron" aria-hidden="true">{move || if collapsed() { "▸" } else { "▾" }}</span>
                     <strong>{label}</strong>
-                </button>
+                </Button>
                 <span class=count_cls>{format!("{collected}/{total} collected")}</span>
-                <button class="btn-link season-mon" on:click=toggle>
+                <Button variant="subtle" size="xs" class:season-mon=true on_click=Callback::new(toggle)>
                     {if monitored { "Monitored" } else { "Unmonitored" }}
-                </button>
+                </Button>
             </div>
             <div class="season-eps" class:collapsed=collapsed>
                 {rows}
@@ -611,7 +612,7 @@ fn episode_row(
     let eid_reset = e.id.clone();
     let note = RwSignal::new(None::<Result<String, String>>);
 
-    let on_acquire = move |_| {
+    let on_acquire = move |()| {
         let (sid, eid) = (sid_act.clone(), eid_act.clone());
         note.set(Some(Ok("searching…".into())));
         spawn_local(async move {
@@ -623,7 +624,7 @@ fn episode_row(
             reload.run(());
         });
     };
-    let on_reset = move |_| {
+    let on_reset = move |()| {
         let (sid, eid) = (sid_reset.clone(), eid_reset.clone());
         note.set(Some(Ok("resetting…".into())));
         spawn_local(async move {
@@ -641,7 +642,7 @@ fn episode_row(
     };
     let expanded_body = expanded.clone();
     let expanded_aria = expanded.clone();
-    let toggle_expanded = move |_| {
+    let toggle_expanded = move |()| {
         let k = ep_key.clone();
         open_episodes.update(|o| {
             if !o.remove(&k) {
@@ -649,7 +650,7 @@ fn episode_row(
             }
         });
     };
-    let toggle = move |_| {
+    let toggle = move |()| {
         let sid = sid.clone();
         let eid = eid.clone();
         spawn_local(async move {
@@ -661,35 +662,37 @@ fn episode_row(
     view! {
         <div class="episode-wrap">
             <div class="edition-row episode-row">
-                <button
-                    class="btn-link hist-toggle"
-                    title="History"
-                    aria-label=hist_label
-                    aria-expanded=move || crate::a11y::expanded(expanded_aria())
-                    on:click=toggle_expanded
+                <Button variant="subtle" size="xs" class:hist-toggle=true title="History"
+                    aria_label=hist_label
+                    attr:aria-expanded=move || crate::a11y::expanded(expanded_aria())
+                    on_click=Callback::new(toggle_expanded)
                 >
                     <span aria-hidden="true">{move || if expanded() { "▾" } else { "▸" }}</span>
-                </button>
+                </Button>
                 <span class="mono">{code}</span>
                 <span class="episode-title">{title}</span>
                 <span class="mono muted">{air}</span>
-                <span class=cls>{label}</span>
+                <Pill color=tone(cls)>{label}</Pill>
                 {watch_href.map(|h| view! {
-                    <A href=h attr:class="btn-link" attr:title="Play in this browser" attr:aria-label=play_label.clone()>"▶"</A>
+                    <Button variant="subtle" size="xs" href=h title="Play in this browser"
+                        aria_label=play_label.clone()>"▶"</Button>
                 })}
                 {save.map(|(href, name)| view! {
-                    <a href=href download=name class="btn-link"
-                       title="Save this episode to your computer" aria-label=save_label.clone()>"⇩"</a>
+                    <Button variant="subtle" size="xs" href=href attr:download=name
+                        title="Save this episode to your computer" aria_label=save_label.clone()>"⇩"</Button>
                 })}
-                <button class="btn-link" on:click=toggle title="Toggle monitoring" aria-label=mon_label>
+                <Button variant="subtle" size="xs" title="Toggle monitoring" aria_label=mon_label
+                    on_click=Callback::new(toggle)>
                     {if monitored { "●" } else { "○" }}
-                </button>
-                <button class="btn-link" on:click=on_acquire title="Search and acquire" aria-label=acquire_label>
+                </Button>
+                <Button variant="subtle" size="xs" title="Search and acquire" aria_label=acquire_label
+                    on_click=Callback::new(on_acquire)>
                     "⤓"
-                </button>
-                <button class="btn-link" on:click=on_reset title="Reset to Missing" aria-label=reset_label>
+                </Button>
+                <Button variant="subtle" size="xs" title="Reset to Missing" aria_label=reset_label
+                    on_click=Callback::new(on_reset)>
                     "↺"
-                </button>
+                </Button>
             </div>
             {move || note.get().map(|r| match r {
                 Ok(m) => view! { <p class="muted ep-note">{m}</p> }.into_any(),

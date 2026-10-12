@@ -254,6 +254,7 @@ pub fn snapshot(b: &api::Book, fid: &str, chapters: Vec<api::Chapter>, size: f64
 /// delete, and tap-to-play. T-0335 adds Continue Listening + the storage meter.
 #[component]
 pub fn ListenPage() -> impl leptos::IntoView {
+    use aurora_leptos::components::{Button, Empty, PageHeader};
     use leptos::prelude::*;
     use leptos_router::components::A;
     let books = RwSignal::new(Vec::<OfflineBook>::new());
@@ -277,11 +278,13 @@ pub fn ListenPage() -> impl leptos::IntoView {
         }
         if list.is_empty() {
             return view! {
-                <p class="muted">
-                    "Nothing downloaded yet — open a book in "
-                    <A href="/audiobooks">"Audiobooks"</A>
-                    " and press ▶ Listen: playing a book stores it on this device."
-                </p>
+                // The next step is a button: Empty's own link is told apart
+                // from its line by colour alone, which axe refuses
+                // (link-in-text-block; AURORA-T-0013).
+                <Empty message="Nothing downloaded yet."
+                    hint="Open a book in Audiobooks and press ▶ Listen: playing a book stores it on this device.">
+                    <Button variant="default" size="xs" href="/audiobooks">"Open Audiobooks"</Button>
+                </Empty>
             }
             .into_any();
         }
@@ -289,7 +292,7 @@ pub fn ListenPage() -> impl leptos::IntoView {
             .map(|b| {
                 let href = format!("/listen/{}/{}", b.book_id, b.file_id);
                 let fid = b.file_id.clone();
-                let del = move |_| {
+                let del = move |()| {
                     let fid = fid.clone();
                     leptos::task::spawn_local(async move {
                         let _ = delete_book(&fid).await;
@@ -312,7 +315,8 @@ pub fn ListenPage() -> impl leptos::IntoView {
                                 <span class="mono muted">{size}</span>
                             </span>
                         </A>
-                        <button type="button" class="danger" on:click=del>"Remove"</button>
+                        <Button variant="default" size="xs" bad=true button_type="button"
+                            on_click=Callback::new(del)>"Remove"</Button>
                     </div>
                 }
                 .into_any()
@@ -322,9 +326,10 @@ pub fn ListenPage() -> impl leptos::IntoView {
     };
 
     view! {
+        // The strip spans the page; the content keeps its narrow measure.
+        <crate::subnav::SubNav/>
         <section class="listen-page">
-            <crate::subnav::SubNav/>
-            <div class="page-head"><h2>"On this device"</h2></div>
+            <PageHeader title="On this device" class:page-header=true/>
             <p class="muted">"Books this browser has stored for offline play. Setting a device up lives under Players."</p>
             {shelf}
         </section>
@@ -340,6 +345,8 @@ pub fn ListenPage() -> impl leptos::IntoView {
 /// sections now rather than two halves of one page.
 #[component]
 pub fn PlayersPage() -> impl leptos::IntoView {
+    use aurora_leptos::components::{Alert, Button, Card, CopyButton, PageHeader, Pill, TextInput};
+    use aurora_leptos::tokens::token;
     use leptos::prelude::*;
     // "Pair your phone" (SKADI-T-0333 Tier 1): a QR of this server's URL —
     // scan on the phone → skadi opens → token auto-injects → install prompt.
@@ -373,7 +380,7 @@ pub fn PlayersPage() -> impl leptos::IntoView {
             }
         });
     };
-    let toggle_qr = move |_| {
+    let toggle_qr = move |()| {
         let now = !qr_open.get_untracked();
         qr_open.set(now);
         if now && qr.get_untracked().is_none() {
@@ -412,7 +419,7 @@ pub fn PlayersPage() -> impl leptos::IntoView {
             }
             .into_any(),
             (None, Some(e)) => view! {
-                <p class="bad">"Couldn't generate the QR: " {e}</p>
+                <Alert color=token::BAD>"Couldn't generate the QR: " {e}</Alert>
             }
             .into_any(),
             (None, None) => view! { <p class="muted">"Generating…"</p> }.into_any(),
@@ -421,19 +428,18 @@ pub fn PlayersPage() -> impl leptos::IntoView {
             <div class="pair-card">
                 {body}
                 <div class="pair-url-row">
-                    <input
-                        class="path-field mono"
-                        r#type="text"
-                        prop:value=move || qr_url.get()
-                        on:input=move |ev| qr_url.set(event_target_value(&ev))
-                        on:change=move |_| fetch_qr()
-                    />
-                    <button type="button" on:click=move |_| fetch_qr()>"Update"</button>
+                    <div class="pair-url-field">
+                        <TextInput value=qr_url mono=true spellcheck=false
+                            aria_label="Address the phone opens"
+                            on_change=Callback::new(move |_| fetch_qr())/>
+                    </div>
+                    <Button variant="default" button_type="button"
+                        on_click=Callback::new(move |()| fetch_qr())>"Update"</Button>
                 </div>
                 {move || is_loopback().then(|| view! {
-                    <p class="pending">
-                        "⚠ This is a loopback address — your phone can't reach it. Replace the host with this computer's LAN IP (e.g. 192.168.x.x or 10.x.x.x) and press Update."
-                    </p>
+                    <Alert color=token::GOLD>
+                        "This is a loopback address — your phone can't reach it. Replace the host with this computer's LAN IP (e.g. 192.168.x.x or 10.x.x.x) and press Update."
+                    </Alert>
                 })}
                 <p class="muted">"Scan with the phone's camera, then use the browser's Install / Add to Home Screen."</p>
             </div>
@@ -448,7 +454,7 @@ pub fn PlayersPage() -> impl leptos::IntoView {
     let apk = RwSignal::new(None::<api::ApkInstall>);
     let app_pair = RwSignal::new(None::<api::PairQr>);
     let app_open = RwSignal::new(false);
-    let toggle_app = move |_| {
+    let toggle_app = move |()| {
         let now = !app_open.get_untracked();
         app_open.set(now);
         if now && apk.get_untracked().is_none() {
@@ -479,20 +485,16 @@ pub fn PlayersPage() -> impl leptos::IntoView {
                 // someone. Same file either way.
                 let url = a.url.clone().unwrap_or_default();
                 let copy_url = url.clone();
-                let copied = RwSignal::new(false);
                 view! {
                     <div class="pair-step">
                         <p class="pair-step-label">{"1 · Install the app"}{ver}</p>
                         <div class="pair-qr" inner_html=a.qr_svg.clone().unwrap_or_default()></div>
                         <p class="muted">"Scan it, or use the link:"</p>
                         <div class="pair-url-row">
-                            <a class="btn-link mono" href=url.clone() download="">"⬇ Download the APK"</a>
-                            <button type="button" on:click=move |_| {
-                                if let Some(w) = web_sys::window() {
-                                    let _ = w.navigator().clipboard().write_text(&copy_url);
-                                    copied.set(true);
-                                }
-                            }>{move || if copied.get() { "Copied" } else { "Copy link" }}</button>
+                            <Button variant="default" size="xs" href=url.clone() attr:download="">
+                                "⬇ Download the APK"
+                            </Button>
+                            <CopyButton value=Signal::stored(copy_url) label="Copy link"/>
                         </div>
                         <p class="muted mono pair-url">{url}</p>
                         <p class="muted">"Open the downloaded file to install (allow installs from the browser when prompted)."</p>
@@ -523,34 +525,39 @@ pub fn PlayersPage() -> impl leptos::IntoView {
     };
 
     view! {
+        // The strip spans the page; the content keeps its narrow measure.
+        <crate::subnav::SubNav/>
         <section class="listen-page">
-            <crate::subnav::SubNav/>
-            <div class="page-head"><h2>"Players"</h2></div>
+            <PageHeader title="Players" class:page-header=true/>
             <p class="muted">"Download audiobooks to a device and play them with no connection to skadi — on a plane, off the grid, anywhere."</p>
 
             <div class="listen-paths">
-                <div class="listen-path">
+                <Card class:listen-path=true>
                     <div class="listen-path-head">
                         <strong>"Android app"</strong>
-                        <span class="badge ok">"recommended"</span>
-                        <button type="button" class="btn-link" on:click=toggle_app>
+                        <Pill color=token::OK>"recommended"</Pill>
+                        <Button variant="default" size="xs" button_type="button"
+                            attr:aria-expanded=move || if app_open.get() { "true" } else { "false" }
+                            on_click=Callback::new(toggle_app)>
                             {move || if app_open.get() { "Hide" } else { "Set up" }}
-                        </button>
+                        </Button>
                     </div>
                     <p class="muted">"Best offline experience: background playback, lockscreen controls, auto-discovery on your network."</p>
                     {app_panel}
-                </div>
+                </Card>
 
-                <div class="listen-path">
+                <Card class:listen-path=true>
                     <div class="listen-path-head">
                         <strong>"Web player"</strong>
-                        <button type="button" class="btn-link" on:click=toggle_qr>
+                        <Button variant="default" size="xs" button_type="button"
+                            attr:aria-expanded=move || if qr_open.get() { "true" } else { "false" }
+                            on_click=Callback::new(toggle_qr)>
                             {move || if qr_open.get() { "Hide" } else { "Use on this phone" }}
-                        </button>
+                        </Button>
                     </div>
                     <p class="muted">"No install: open Skadi in the phone's browser and Add to Home Screen. Works, but no background audio."</p>
                     {qr_panel}
-                </div>
+                </Card>
             </div>
         </section>
     }

@@ -73,6 +73,93 @@ test.describe("C31 settings.feature", () => {
     await expect(page.locator(".fail, .error, .warn, .health-dot.fail").first()).toBeVisible({ timeout: 20_000 });
   });
 
+  test("@passing the theme choice changes the page at once and holds after a reload", async ({ page }) => {
+    // SKADI-T-0720, through the gear since SKADI-T-0723. The harness is in
+    // open mode, so this is the admin. A fresh browser context: nothing
+    // stored, so System.
+    await steps.whenOpens(page, "/indexers");
+    await expect(steps.themeToggle(page)).toHaveCount(0);
+    await steps.thenGearShown(page);
+    await steps.whenOpensSettingsByGear(page);
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+    await steps.thenDataTheme(page, null);
+
+    const backgrounds: Record<string, string> = {};
+    for (const [label, theme] of [
+      ["Light", "light"],
+      ["Dark", "dark"],
+      ["Hyper", "hyper"],
+    ] as const) {
+      await steps.whenPicksTheme(page, label);
+      await steps.thenDataTheme(page, theme);
+      await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], label);
+      backgrounds[theme] = await steps.pageBackground(page);
+      await page.reload();
+      await steps.thenDataTheme(page, theme);
+      await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], label);
+    }
+    expect(new Set(Object.values(backgrounds)).size, JSON.stringify(backgrounds)).toBe(3);
+
+    // The stored choice is on <html> before the app runs: the init script in
+    // index.html sets it, not the wasm.
+    await page.route("**/*.wasm", (r) => r.abort());
+    await page.reload();
+    await steps.thenDataTheme(page, "hyper");
+    await page.unroute("**/*.wasm");
+
+    // System clears the stored choice; the page follows the operating system.
+    await page.reload();
+    await steps.whenPicksTheme(page, "System");
+    await steps.thenDataTheme(page, null);
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+    expect(await page.evaluate(() => localStorage.getItem("aurora-theme"))).toBeNull();
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await expect.poll(() => steps.pageBackground(page)).toBe(backgrounds[scheme]);
+    }
+    await page.reload();
+    await steps.thenDataTheme(page, null);
+    await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+  });
+
+  for (const role of ["member", "kid"] as const) {
+    test(`@passing a ${role} opens their own settings by the gear and the theme holds`, async ({ page, request }) => {
+      // SKADI-T-0723. Not the admin: no Settings link in the sidebar, and the
+      // server refuses the admin settings calls.
+      const restore = await steps.givenSignedInAs(request, page, role);
+      try {
+        const denied: string[] = [];
+        page.on("response", (r) => {
+          if (r.url().includes(`${steps.API}/`) && (r.status() === 401 || r.status() === 403)) {
+            denied.push(`${r.status()} ${r.request().method()} ${r.url()}`);
+          }
+        });
+        await steps.whenOpens(page, "/");
+        await steps.thenSidebarLink(page, "Settings", false);
+        await steps.thenGearShown(page);
+        await steps.whenOpensSettingsByGear(page);
+        await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "System");
+        await steps.whenPicksTheme(page, "Dark");
+        await steps.thenDataTheme(page, "dark");
+        await page.reload();
+        await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+        await steps.thenDataTheme(page, "dark");
+        await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "Dark");
+        await steps.whenPicksTheme(page, "Hyper");
+        await steps.thenDataTheme(page, "hyper");
+        await page.reload();
+        await steps.thenDataTheme(page, "hyper");
+        await steps.thenThemeToggle(page, ["Light", "Dark", "Hyper", "System"], "Hyper");
+        // On a phone the gear is still in the bar.
+        await page.setViewportSize({ width: 375, height: 740 });
+        await expect(steps.gear(page)).toBeVisible();
+        expect(denied, "the page asked for nothing this role may not have").toEqual([]);
+      } finally {
+        await restore();
+      }
+    });
+  }
+
   test.fixme("@passing a quality profile is created from the form and listed (selectors unverified on this host)", async () => {});
   test.fixme("@gap settings changes show a reloading-providers confirmation", async () => {});
 });

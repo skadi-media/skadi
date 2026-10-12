@@ -17,9 +17,11 @@
 
 use std::cmp::Ordering;
 
+use aurora_leptos::components::{Button, Select, TextInput};
 use leptos::prelude::*;
 
 use crate::api;
+use crate::ui::{FilterChip, mirror};
 
 // --- Sort model (pure) ---
 
@@ -466,28 +468,17 @@ pub fn LibraryToolbar(
         .iter()
         .map(|&(key, label)| {
             view! {
-                <button
-                    class=move || {
-                        if filter.get() == key { "filter-chip active" } else { "filter-chip" }
-                    }
-                    on:click=move |_| filter.set(key)
-                >
-                    {label}
-                    <span class="chip-count mono">{move || counts.get().get(key)}</span>
-                </button>
+                <FilterChip label=label count=Signal::derive(move || counts.get().get(key).to_string())
+                    active=Signal::derive(move || filter.get() == key)
+                    on_click=Callback::new(move |()| filter.set(key))/>
             }
         })
         .collect_view();
     let options = sort_keys
         .iter()
-        .map(|&k| {
-            view! {
-                <option value=k.key() selected=move || sort.get().key == k>
-                    {k.label()}
-                </option>
-            }
-        })
-        .collect_view();
+        .map(|&k| (k.key().to_string(), k.label().to_string()))
+        .collect::<Vec<_>>();
+    let sort_value = mirror(move || sort.get().key.key().to_string());
     view! {
         <div class="filter-bar lib-toolbar">
             <div class="lib-toolbar-row">
@@ -497,35 +488,24 @@ pub fn LibraryToolbar(
                     class="lib-sort"
                     style:display=move || if sort_hidden.get().unwrap_or(false) { "none" } else { "" }
                 >
-                    <span class="org-label mono">"Sort"</span>
-                    <select
-                        class="lib-sort-key"
-                        aria-label="Sort by"
-                        prop:value=move || sort.get().key.key()
-                        on:change=move |ev| {
-                            if let Some(k) = SortKey::from_key(&event_target_value(&ev)) {
+                    <span class="org-label mono" aria-hidden="true">"Sort"</span>
+                    <Select aria_label="Sort by" option_pairs=options value=sort_value
+                        on_change=Callback::new(move |v: String| {
+                            if let Some(k) = SortKey::from_key(&v) {
                                 set_sort(sort.get_untracked().picked(k));
                             }
-                        }
-                    >
-                        {options}
-                    </select>
-                    <button
-                        class="lib-sort-dir"
-                        title=move || sort.get().direction_label()
-                        aria-label=move || sort.get().direction_label()
-                        on:click=move |_| set_sort(sort.get_untracked().flipped())
+                        })/>
+                    <Button variant="default" class:lib-sort-dir=true
+                        attr:title=move || sort.get().direction_label()
+                        attr:aria-label=move || sort.get().direction_label()
+                        on_click=Callback::new(move |()| set_sort(sort.get_untracked().flipped()))
                     >
                         {move || sort.get().arrow()}
-                    </button>
+                    </Button>
                 </div>
-                <input
-                    class="lib-filter-input"
-                    r#type="text"
-                    placeholder=placeholder
-                    prop:value=move || text.get()
-                    on:input=move |ev| text.set(event_target_value(&ev))
-                />
+                <div class="lib-filter">
+                    <TextInput value=text placeholder=placeholder aria_label=placeholder/>
+                </div>
             </div>
             {bulk.map(|b| view! { <div class="lib-toolbar-bulk">{b.run()}</div> })}
         </div>

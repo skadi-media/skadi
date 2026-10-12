@@ -1,0 +1,17 @@
+# Writes Aurora's stylesheets for skadi-web (SKADI-T-0717). Trunk runs it in a
+# pre_build hook (see ../Trunk.toml), so index.html can link real,
+# render-blocking stylesheets: no first paint without style. A member of the
+# skadi-web workspace, so it uses the same Aurora version as the app.
+[package]
+name = "skadi-aurora-css"
+version = "0.1.5"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+authors = ["Dylan Storey"]
+description = "Writes the Aurora stylesheets for the skadi-web build"
+publish = false
+
+[dependencies]
+# No default features: the stylesheet consts only, no Leptos for the host.
+colliery-io-aurora = { version = "0.5.0", default-features = false }

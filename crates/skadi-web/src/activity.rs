@@ -5,12 +5,16 @@
 
 use std::collections::HashMap;
 
+use aurora_leptos::components::{Button, Empty, Panel, Pill};
+use aurora_leptos::tokens::token;
+use aurora_leptos::widgets::Meter;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
 use crate::loading::{ListLoad, SkeletonKind};
+use crate::ui::FilterChip;
 
 /// Longest inline detail before we truncate and tuck the full text behind a
 /// disclosure. Keeps the history table to one readable line per row.
@@ -885,17 +889,8 @@ pub fn ActivityPage() -> impl IntoView {
                     .iter()
                     .filter(|r| stage_group(&r.current_stage) == gi)
                     .count();
-                let cls = if count > 0 {
-                    "stage-pill active"
-                } else {
-                    "stage-pill"
-                };
-                view! {
-                    <span class=cls>
-                        <span class="u-label">{*group_name}</span>
-                        <span class="mono">{count}</span>
-                    </span>
-                }
+                let color = if count > 0 { token::ICE } else { token::MUTED };
+                view! { <Pill color=color>{format!("{group_name} {count}")}</Pill> }
             })
             .collect_view()
     };
@@ -948,7 +943,7 @@ pub fn ActivityPage() -> impl IntoView {
                                         let run = r.clone();
                                         let name = name.clone();
                                         let aref = r.acquirable_ref.clone();
-                                        let on_click = move |_| {
+                                        let on_click = move |()| {
                                             let question = confirm_message(a, &name);
                                             let run = run.clone();
                                             let name = name.clone();
@@ -974,17 +969,14 @@ pub fn ActivityPage() -> impl IntoView {
                                                 }
                                             });
                                         };
-                                        let cls = if a.is_destructive() { "run-action danger" } else { "run-action" };
                                         view! {
-                                            <button
-                                                type="button"
-                                                class=cls
-                                                title=a.hint()
+                                            <Button variant="default" size="xs" bad=a.is_destructive()
+                                                button_type="button" title=a.hint()
                                                 disabled=move || busy.get().as_deref() == Some(aref.as_str())
-                                                on:click=on_click
+                                                on_click=Callback::new(on_click)
                                             >
                                                 {a.label()}
-                                            </button>
+                                            </Button>
                                         }
                                     })
                                     .collect_view();
@@ -1020,7 +1012,7 @@ pub fn ActivityPage() -> impl IntoView {
                             let progress = (gi == 3).then(|| run_progress(&r)).flatten().map(|(pct, text)| {
                                 view! {
                                     <span class="run-progress">
-                                        <span class="run-bar"><span class="run-bar-fill" style=format!("width:{pct:.0}%")></span></span>
+                                        <span class="run-bar"><Meter value=pct color="var(--aurora-2)"/></span>
                                         <span class="mono tnum">{text}</span>
                                     </span>
                                 }
@@ -1045,12 +1037,12 @@ pub fn ActivityPage() -> impl IntoView {
                                 .map(|t| view! { <span class="stage-doing mono">{t}</span> });
                             let decision =
                                 (gi >= 2).then(|| r.decision.clone()).flatten().map(|d| {
-                                    let cls = if d.eq_ignore_ascii_case("upgrade") {
-                                        "badge upgrade"
+                                    let color = if d.eq_ignore_ascii_case("upgrade") {
+                                        token::VIOLET
                                     } else {
-                                        "badge ok"
+                                        token::OK
                                     };
-                                    view! { <span class=cls>{d}</span> }
+                                    view! { <Pill color=color>{d}</Pill> }
                                 });
                             view! {
                                 <div class="activity-row">
@@ -1070,13 +1062,9 @@ pub fn ActivityPage() -> impl IntoView {
                         .into_any()
                 };
                 Some(view! {
-                    <section class="stage-group">
-                        <div class="stage-head">
-                            <span class="stage-name u-label">{*group_name}</span>
-                            <span class="stage-count mono">{count}</span>
-                        </div>
+                    <Panel title=*group_name caption=count.to_string() class:stage-group=true>
                         <div class="stage-items">{body}</div>
-                    </section>
+                    </Panel>
                 })
             })
             .collect_view()
@@ -1099,9 +1087,8 @@ pub fn ActivityPage() -> impl IntoView {
         }
         if ts.is_empty() {
             return view! {
-                <p class="muted">
-                    "No traces yet — they appear as the hunter searches, decides, grabs and imports."
-                </p>
+                <Empty message="No traces yet."
+                    hint="They appear as the hunter searches, decides, grabs and imports."/>
             }
             .into_any();
         }
@@ -1111,7 +1098,7 @@ pub fn ActivityPage() -> impl IntoView {
             .filter(|r| filter_allows(&filter, &r.event))
             .collect();
         if runs.is_empty() {
-            return view! { <p class="muted">"Nothing matches this filter in the last 160 events."</p> }.into_any();
+            return view! { <Empty message="Nothing matches this filter in the last 160 events."/> }.into_any();
         }
         let groups = collapse_runs(runs, |r| {
             names.get(r).cloned().unwrap_or_else(|| r.to_string())
@@ -1195,13 +1182,8 @@ pub fn ActivityPage() -> impl IntoView {
 
     let filter_chip = move |key: &'static str, label: &'static str| {
         view! {
-            <button
-                class="filter-chip"
-                class:active=move || log_filter.get() == key
-                on:click=move |_| log_filter.set(key.to_string())
-            >
-                {label}
-            </button>
+            <FilterChip label=label active=Signal::derive(move || log_filter.get() == key)
+                on_click=Callback::new(move |()| log_filter.set(key.to_string()))/>
         }
     };
 

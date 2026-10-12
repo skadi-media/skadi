@@ -5,6 +5,8 @@
 
 use std::collections::HashSet;
 
+use aurora_leptos::components::{Alert, Button, Card, PasswordInput, TextInput};
+use aurora_leptos::tokens::token;
 use leptos::portal::Portal;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -95,7 +97,7 @@ pub fn SetupPage() -> impl IntoView {
     let domain_card =
         move |key: &'static str, title: &'static str, desc: &'static str, accent: &'static str| {
             let on = move || domains.get().contains(key);
-            let toggle = move |_| {
+            let toggle = move |()| {
                 domains.update(|d| {
                     if !d.remove(key) {
                         d.insert(key.to_string());
@@ -103,17 +105,18 @@ pub fn SetupPage() -> impl IntoView {
                 });
             };
             view! {
-                <button
-                    class=move || if on() { "setup-domain on" } else { "setup-domain" }
-                    on:click=toggle
-                >
-                    <span class=format!("lib-accent {accent}")></span>
-                    <div class="setup-domain-text">
-                        <strong>{title}</strong>
-                        <span class="mono">{desc}</span>
+                // Aurora's Card as a toggle (SKADI-T-0719).
+                <Card on_click=Callback::new(toggle) selected=Signal::derive(on)
+                    attr:aria-pressed=move || if on() { "true" } else { "false" }>
+                    <div class="setup-domain">
+                        <span class=format!("lib-accent {accent}")></span>
+                        <div class="setup-domain-text">
+                            <strong>{title}</strong>
+                            <span class="mono">{desc}</span>
+                        </div>
+                        <span class="setup-check">{move || if on() { "✓" } else { "" }}</span>
                     </div>
-                    <span class="setup-check">{move || if on() { "✓" } else { "" }}</span>
-                </button>
+                </Card>
             }
         };
 
@@ -171,22 +174,21 @@ pub fn SetupPage() -> impl IntoView {
             <div class="setup-step">
                 <h2>"Connect an indexer"</h2>
                 <p class="setup-help mono">"Torznab / Newznab — works with Prowlarr, Jackett, or a native endpoint. You can skip and add one later."</p>
-                <input class="setup-input" r#type="text" placeholder="Name (e.g. Prowlarr)"
-                    prop:value=move || ix_name.get() on:input=move |ev| ix_name.set(event_target_value(&ev))/>
-                <input class="setup-input mono" r#type="text" placeholder="http://prowlarr:9696/1/api"
-                    prop:value=move || ix_url.get() on:input=move |ev| ix_url.set(event_target_value(&ev))/>
-                <input class="setup-input mono" r#type="password" placeholder="API key"
-                    prop:value=move || ix_key.get() on:input=move |ev| ix_key.set(event_target_value(&ev))/>
+                <div class="setup-fields">
+                    <TextInput label="Name" placeholder="Prowlarr" value=ix_name/>
+                    <TextInput label="URL" placeholder="http://prowlarr:9696/1/api" value=ix_url
+                        mono=true spellcheck=false/>
+                    <PasswordInput label="API key" value=ix_key autocomplete="off"/>
+                </div>
             </div>
         }
         .into_any(),
         4 => view! {
             <div class="setup-step">
                 <h2>"Downloads are built in"</h2>
-                <div class="setup-downloader">
-                    <strong>"● Built-in torrent worker"</strong>
-                    <span>"VPN-isolated, drives torrents through the database queue. Selected by default — nothing to configure."</span>
-                </div>
+                <Alert title="Built-in torrent worker" color=token::TEAL>
+                    "VPN-isolated, drives torrents through the database queue. Selected by default — nothing to configure."
+                </Alert>
             </div>
         }
         .into_any(),
@@ -246,13 +248,13 @@ pub fn SetupPage() -> impl IntoView {
             <div class="setup-content">{content}</div>
             <div class="setup-footer">
                 {move || (step.get() > 0).then(|| view! {
-                    <button class="secondary" on:click=move |_| back.run(())>"Back"</button>
+                    <Button variant="default" on_click=back>"Back"</Button>
                 })}
-                <button class="btn-primary setup-next" on:click=move |_| next.run(()) disabled=move || applying.get()>
+                <Button class:setup-next=true loading=applying on_click=next>
                     {move || {
                         if step.get() + 1 >= STEPS.len() { "Enter Skadi" } else { "Continue" }
                     }}
-                </button>
+                </Button>
             </div>
         </div>
         </Portal>

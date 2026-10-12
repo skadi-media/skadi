@@ -11,8 +11,9 @@
 //! entry per *area* instead of one per page, and a deep link to any section
 //! still works.
 
+use aurora_leptos::components::{TabItem, Tabs};
 use leptos::prelude::*;
-use leptos_router::components::A;
+
 use leptos_router::hooks::use_location;
 
 /// One entry in a section strip: where it goes and what it is called.
@@ -89,9 +90,12 @@ pub fn visible(role: Option<&str>, sections: &'static [Section]) -> Vec<Section>
     }
 }
 
+/// The title of the Settings strip.
+const SETTINGS_TITLE: &str = "Settings";
+
 /// Every strip, in the order they are searched.
 const TABLES: &[(&str, &[Section])] = &[
-    ("Settings", SETTINGS_SECTIONS),
+    (SETTINGS_TITLE, SETTINGS_SECTIONS),
     ("Activity", ACTIVITY_SECTIONS),
 ];
 
@@ -119,7 +123,8 @@ pub fn SubNav() -> impl IntoView {
     let location = use_location();
     let role = use_context::<RoleCtx>();
     move || {
-        let Some((title, sections)) = table_for(&location.pathname.get()) else {
+        let path = location.pathname.get();
+        let Some((title, sections)) = table_for(&path) else {
             return ().into_any();
         };
         let role = role.and_then(|r| r.0.get());
@@ -128,23 +133,19 @@ pub fn SubNav() -> impl IntoView {
         if shown.len() < 2 {
             return ().into_any();
         }
-        let links = shown
+        // Aurora's route Tabs (SKADI-T-0719): links with aria-current, the
+        // arrow keys move along the strip.
+        let tabs = shown
             .into_iter()
-            .map(|(href, label)| {
-                let here = move || location.pathname.get() == href;
-                view! {
-                    <A href=href attr:class=move || {
-                        if here() { "subnav-link is-here" } else { "subnav-link" }
-                    }>
-                        {label}
-                    </A>
-                }
-            })
-            .collect_view();
+            .map(|(href, label)| TabItem::new(href, label).href(href))
+            .collect::<Vec<_>>();
+        let value = RwSignal::new(path);
         view! {
             <div class="subnav">
                 <span class="subnav-title">{title}</span>
-                <nav class="subnav-links">{links}</nav>
+                <div class="subnav-links">
+                    <Tabs tabs=tabs value=value label=title/>
+                </div>
             </div>
         }
         .into_any()

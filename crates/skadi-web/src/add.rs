@@ -7,6 +7,8 @@
 
 use std::collections::HashSet;
 
+use aurora_leptos::components::{Button, Loading, PageHeader, Pill, Select, TextInput, Toaster};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -79,8 +81,7 @@ pub fn AddPage() -> impl IntoView {
     };
 
     // Switching domain clears the stale results (and the "searched" flag).
-    let on_domain_change = move |ev: leptos::ev::Event| {
-        domain.set(event_target_value(&ev));
+    let on_domain_change = move |_: String| {
         movie_hits.set(Vec::new());
         series_hits.set(Vec::new());
         book_hits.set(Vec::new());
@@ -145,7 +146,7 @@ pub fn AddPage() -> impl IntoView {
 
     let results = move || {
         if searching.get() {
-            return view! { <p class="muted add-status">"Searching…"</p> }.into_any();
+            return view! { <Loading label="Searching…"/> }.into_any();
         }
         if !searched.get() {
             return ().into_any();
@@ -166,16 +167,13 @@ pub fn AddPage() -> impl IntoView {
                         let sub = s.year.map(|y| y.to_string()).unwrap_or_default();
                         let (title, tvdb) = (s.title.clone(), s.tvdb_id);
                         let action = if in_lib {
-                            view! { <span class="add-owned">"In library"</span> }.into_any()
+                            view! { <span class="add-owned"><Pill color=token::OK>"In library"</Pill></span> }.into_any()
                         } else {
                             view! {
-                                <button
-                                    class="btn-primary add-btn"
-                                    aria-label=format!("Add {}", s.title)
-                                    on:click=move |_| add_series(tvdb, title.clone())
-                                >
+                                <Button class:add-btn=true aria_label=format!("Add {}", s.title)
+                                    on_click=Callback::new(move |()| add_series(tvdb, title.clone()))>
                                     "+ Add"
-                                </button>
+                                </Button>
                             }
                             .into_any()
                         };
@@ -204,16 +202,13 @@ pub fn AddPage() -> impl IntoView {
                         let sub = b.authors.join(", ");
                         let (asin, title) = (b.asin.clone(), b.title.clone());
                         let action = if in_lib {
-                            view! { <span class="add-owned">"In library"</span> }.into_any()
+                            view! { <span class="add-owned"><Pill color=token::OK>"In library"</Pill></span> }.into_any()
                         } else {
                             view! {
-                                <button
-                                    class="btn-primary add-btn"
-                                    aria-label=format!("Add {}", b.title)
-                                    on:click=move |_| add_book(asin.clone(), title.clone())
-                                >
+                                <Button class:add-btn=true aria_label=format!("Add {}", b.title)
+                                    on_click=Callback::new(move |()| add_book(asin.clone(), title.clone()))>
                                     "+ Add"
-                                </button>
+                                </Button>
                             }
                             .into_any()
                         };
@@ -235,16 +230,13 @@ pub fn AddPage() -> impl IntoView {
                         let sub = m.year.map(|y| y.to_string()).unwrap_or_default();
                         let (title, year, tmdb) = (m.title.clone(), m.year, m.tmdb_id);
                         let action = if in_lib {
-                            view! { <span class="add-owned">"In library"</span> }.into_any()
+                            view! { <span class="add-owned"><Pill color=token::OK>"In library"</Pill></span> }.into_any()
                         } else {
                             view! {
-                                <button
-                                    class="btn-primary add-btn"
-                                    aria-label=format!("Add {}", m.title)
-                                    on:click=move |_| add_movie(tmdb, title.clone(), year)
-                                >
+                                <Button class:add-btn=true aria_label=format!("Add {}", m.title)
+                                    on_click=Callback::new(move |()| add_movie(tmdb, title.clone(), year))>
                                     "+ Add"
-                                </button>
+                                </Button>
                             }
                             .into_any()
                         };
@@ -263,46 +255,46 @@ pub fn AddPage() -> impl IntoView {
         view! { <div class="add-results">{rows}</div> }.into_any()
     };
 
+    // Aurora's toasts show the result (SKADI-T-0719). Each Aurora toast is a
+    // live region added with its text, which a screen reader can miss, so a
+    // region that is always there says it too (SKADI-T-0700, AURORA-T-0013).
+    let toaster = use_context::<Toaster>();
+    Effect::new(move |_| {
+        if let (Some(m), Some(t)) = (toast.get(), toaster) {
+            if m.starts_with("Added") {
+                t.success(m);
+            } else {
+                t.error(m);
+            }
+        }
+    });
+
+    // Aurora's PageHeader, Select, TextInput and Button (SKADI-T-0719). A form,
+    // so Enter in the field searches.
     view! {
         <div class="add-view">
-            <div class="page-head">
-                <div>
-                    <h2 class="page-title">"Add media"</h2>
-                    <p class="page-sub mono">
-                        "Pick a media type, then search it — movies via TMDB, TV via TheTVDB, audiobooks via Audnexus."
-                    </p>
+            <PageHeader title="Add media" class:page-header=true
+                sub="Pick a media type, then search it — movies via TMDB, TV via TheTVDB, audiobooks via Audnexus."/>
+            <form class="add-search" on:submit=move |ev| { ev.prevent_default(); do_search(); }>
+                <div class="add-domain">
+                    <Select aria_label="Media type" value=domain on_change=Callback::new(on_domain_change)
+                        option_pairs=vec![
+                            ("movie".to_string(), "Movie".to_string()),
+                            ("tv".to_string(), "TV".to_string()),
+                            ("audiobook".to_string(), "Audiobook".to_string()),
+                        ]/>
                 </div>
-            </div>
-            <div class="add-search">
-                <select class="add-domain" aria-label="Media type" on:change=on_domain_change prop:value=move || domain.get()>
-                    <option value="movie">"Movie"</option>
-                    <option value="tv">"TV"</option>
-                    <option value="audiobook">"Audiobook"</option>
-                </select>
-                <span class="add-search-icon" aria-hidden="true">"⌕"</span>
-                <input
-                    class="add-search-input"
-                    r#type="text"
-                    aria-label="Search"
-                    prop:placeholder=placeholder
-                    prop:value=move || query.get()
-                    on:input=move |ev| query.set(event_target_value(&ev))
-                    on:keydown=move |ev| {
-                        if ev.key() == "Enter" {
-                            do_search();
-                        }
-                    }
-                />
-            </div>
+                <div class="add-search-field">
+                    {move || {
+                        let placeholder = placeholder();
+                        view! { <TextInput value=query aria_label="Search" placeholder=placeholder/> }
+                    }}
+                </div>
+                <Button button_type="submit" loading=searching>"Search"</Button>
+            </form>
             {results}
-            // One live region that is always there, so a screen reader reads
-            // each new toast (SKADI-T-0700).
-            <div class="toast-region" role="status" aria-live="polite">
-                {move || {
-                    toast.get().map(|m| {
-                        view! { <div class="toast"><span class="health-dot ok" aria-hidden="true"></span>{m}</div> }
-                    })
-                }}
+            <div class="toast-region sr-only" role="status" aria-live="polite">
+                {move || toast.get()}
             </div>
         </div>
     }
@@ -319,7 +311,7 @@ fn result_row(
 ) -> AnyView {
     let title = title.to_string();
     let sub = sub.to_string();
-    let tag_class = format!("tag {}", tag.to_lowercase());
+    let tag_color = crate::household::kind_tone(&tag.to_lowercase());
     let tag = tag.to_string();
     // Real artwork when the search carried a poster/cover; otherwise the placeholder.
     let poster_view = match poster {
@@ -334,7 +326,7 @@ fn result_row(
             {poster_view}
             <div class="add-info">
                 <div class="add-info-head">
-                    <span class=tag_class>{tag}</span>
+                    <Pill color=tag_color>{tag}</Pill>
                     <span class="add-title">{title}</span>
                 </div>
                 <span class="add-sub mono">{sub}</span>

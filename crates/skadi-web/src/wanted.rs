@@ -5,6 +5,7 @@
 //! the item. The per-domain detail pages already had all four actions; this is
 //! the cross-domain view of the backlog that they lacked.
 
+use aurora_leptos::components::{Button, Empty, Pill, TextInput};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -13,6 +14,7 @@ use crate::api::{self, AcquirablePath, WantedEdition, WantedItem};
 use crate::confirm::{ConfirmSpec, confirm};
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{ReleasesPanel, status_class};
+use crate::ui::{FilterChip, tone};
 
 /// Edition chips shown per item before the "+N more" toggle.
 const CHIP_CAP: usize = 12;
@@ -157,13 +159,9 @@ pub fn WantedPage() -> impl IntoView {
 
     let kind_chip = move |value: &'static str, count: Signal<usize>| {
         view! {
-            <button
-                class=move || if kind.get() == value { "filter-chip active" } else { "filter-chip" }
-                on:click=move |_| kind.set(value.to_string())
-            >
-                {kind_label(value)}
-                <span class="chip-count mono">{move || count.get().to_string()}</span>
-            </button>
+            <FilterChip label=kind_label(value) count=Signal::derive(move || count.get().to_string())
+                active=Signal::derive(move || kind.get() == value)
+                on_click=Callback::new(move |()| kind.set(value.to_string()))/>
         }
     };
     let status_chip = move |value: &'static str, label: &'static str| {
@@ -175,13 +173,9 @@ pub fn WantedPage() -> impl IntoView {
             }
         });
         view! {
-            <button
-                class=move || if status.get() == value { "filter-chip active" } else { "filter-chip" }
-                on:click=move |_| status.set(value.to_string())
-            >
-                {label}
-                <span class="chip-count mono">{move || count.get().to_string()}</span>
-            </button>
+            <FilterChip label=label count=Signal::derive(move || count.get().to_string())
+                active=Signal::derive(move || status.get() == value)
+                on_click=Callback::new(move |()| status.set(value.to_string()))/>
         }
     };
     let counts = Signal::derive(move || kind_counts(&all.get()));
@@ -301,9 +295,10 @@ pub fn WantedPage() -> impl IntoView {
                         Ok(m) => view! { <span class="ok">{m}</span> }.into_any(),
                         Err(m) => view! { <span class="bad">{m}</span> }.into_any(),
                     })}
-                    <button class="secondary" on:click=move |_| load() disabled=move || loading.get()>
+                    <Button variant="default" size="xs" loading=loading
+                        on_click=Callback::new(move |()| load())>
                         {move || if loading.get() { "Loading…" } else { "Refresh" }}
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -319,13 +314,10 @@ pub fn WantedPage() -> impl IntoView {
                     {status_chip("missing", "Missing")}
                     {status_chip("failed", "Failed")}
                 </div>
-                <input
-                    class="wanted-filter"
-                    type="search"
-                    placeholder="Filter titles…"
-                    prop:value=move || q.get()
-                    on:input=move |ev| q.set(event_target_value(&ev))
-                />
+                <div class="wanted-filter">
+                    <TextInput value=q input_type="search" placeholder="Filter titles…"
+                        aria_label="Filter titles"/>
+                </div>
             </div>
             {move || {
                 let n = series_with_specials(&all.get()).len();
@@ -340,9 +332,10 @@ pub fn WantedPage() -> impl IntoView {
                             }}
                         </span>
                         {(n > 0).then(|| view! {
-                            <button class="secondary" on:click=move |_| unmonitor_all_specials() disabled=move || bulk_busy.get()>
+                            <Button variant="default" size="xs" disabled=bulk_busy
+                                on_click=Callback::new(move |()| unmonitor_all_specials())>
                                 "Unmonitor all specials…"
-                            </button>
+                            </Button>
                         })}
                         {move || bulk_note.get().map(|s| match s {
                             Ok(m) => view! { <span class="ok mono">{m}</span> }.into_any(),
@@ -358,7 +351,7 @@ pub fn WantedPage() -> impl IntoView {
                 {move || {
                     let items = filtered();
                     if items.is_empty() && list.is_loaded() && !loading.get() {
-                        return view! { <p class="muted">"Nothing wanted matches these filters."</p> }.into_any();
+                        return view! { <Empty message="Nothing wanted matches these filters."/> }.into_any();
                     }
                     items.into_iter().map(|item| {
                         let item_kind = item.kind.clone();
@@ -417,14 +410,18 @@ pub fn WantedPage() -> impl IntoView {
                                 <div class="wanted-panel">
                                     <div class="wanted-panel-head">
                                         <strong>{label}</strong>
-                                        <span class=format!("badge {}", status_class(&e.status_kind))>{e.status_kind.clone()}</span>
+                                        <Pill color=tone(status_class(&e.status_kind))>{e.status_kind.clone()}</Pill>
                                         <span class="spacer"></span>
-                                        <button class="secondary" on:click=move |_| search_now(at_search.clone())>"Search now"</button>
+                                        <Button variant="default" size="xs"
+                                            on_click=Callback::new(move |()| search_now(at_search.clone()))>"Search now"</Button>
                                         {is_tv.then(|| {
                                             let sid = sid.clone();
                                             let eid_un = eid_un.clone();
                                             view! {
-                                                <button class="secondary" on:click=move |_| unmonitor_episode(sid.clone(), eid_un.clone())>"Unmonitor episode"</button>
+                                                <Button variant="subtle" size="xs"
+                                                    on_click=Callback::new(move |()| unmonitor_episode(sid.clone(), eid_un.clone()))>
+                                                    "Unmonitor episode"
+                                                </Button>
                                             }
                                         })}
                                     </div>
@@ -435,22 +432,29 @@ pub fn WantedPage() -> impl IntoView {
                         view! {
                             <div class="wanted-item">
                                 <div class="activity-row wanted-row">
-                                    <span class="badge">{kind_label(&item.kind)}</span>
+                                    <Pill color=tone("ice")>{kind_label(&item.kind)}</Pill>
                                     <A href=href><strong>{title}</strong></A>
                                     {item.year.map(|y| view! { <span class="muted mono">{y.to_string()}</span> })}
                                     <span class="wanted-eds">
                                         {chips}
                                         {(hidden > 0).then(|| view! {
-                                            <button class="wanted-more" on:click=move |_| show_all.set(Some(more_id.clone()))>
+                                            <Button variant="subtle" size="xs"
+                                                on_click=Callback::new(move |()| show_all.set(Some(more_id.clone())))>
                                                 {format!("+{hidden} more")}
-                                            </button>
+                                            </Button>
                                         })}
                                     </span>
                                     <span class="spacer"></span>
                                     {has_specials.then(|| view! {
-                                        <button class="secondary wanted-unmonitor" on:click=move |_| unmonitor_specials(sp_id.clone())>"Unmonitor specials"</button>
+                                        <Button variant="subtle" size="xs"
+                                            on_click=Callback::new(move |()| unmonitor_specials(sp_id.clone()))>
+                                            "Unmonitor specials"
+                                        </Button>
                                     })}
-                                    <button class="secondary wanted-unmonitor" on:click=move |_| unmonitor_item(un_kind.clone(), un_id.clone())>"Unmonitor"</button>
+                                    <Button variant="subtle" size="xs"
+                                        on_click=Callback::new(move |()| unmonitor_item(un_kind.clone(), un_id.clone()))>
+                                        "Unmonitor"
+                                    </Button>
                                 </div>
                                 {panel}
                             </div>

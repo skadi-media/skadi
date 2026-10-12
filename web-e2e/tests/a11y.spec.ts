@@ -230,6 +230,7 @@ test.describe("C31 a11y: axe on the main pages", () => {
     "/listen",
     "/players",
     "/upload",
+    "/preferences",
     "/movies/import",
     "/audiobooks/discover",
   ];
@@ -281,6 +282,8 @@ test.describe("C31 a11y: axe on the main pages", () => {
     await page.locator("main").focus();
     await page.keyboard.press("?");
     await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+    // Aurora's dialog fades in (140ms); axe would read the text mid-fade.
+    await page.waitForTimeout(300);
     await audit(page, "/movies (shortcut list)");
   });
 
@@ -296,11 +299,14 @@ test.describe("C31 a11y: axe on the main pages", () => {
     await page.goto("/");
     await settled(page);
     await page.getByRole("button", { name: "Menu" }).click();
-    await expect(page.locator("html")).toHaveClass(/nav-lock/);
+    // Aurora's AppShell marks the open drawer; style.css locks the page on it
+    // (SKADI-T-0717).
+    await expect(page.locator(".cl-appshell")).toHaveClass(/cl-appshell--nav-open/);
     expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     await audit(page, "/ (drawer open, 375px)");
     await page.keyboard.press("Escape");
-    await expect(page.locator("html")).not.toHaveClass(/nav-lock/);
+    await expect(page.locator(".cl-appshell")).not.toHaveClass(/cl-appshell--nav-open/);
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe("hidden");
   });
 });
 

@@ -11,3 +11,16 @@ public_url = "/"
 # front-end talks to the real API without CORS or a token (open-mode v1).
 [[proxy]]
 backend = "http://127.0.0.1:8080/api"
+
+# Aurora's stylesheets (SKADI-T-0717). Trunk checks the assets index.html links
+# before it builds, so build.rs is too late: this hook writes them first, from
+# the Aurora version in Cargo.lock, into generated/ (git-ignored). index.html
+# links them as real stylesheets, so the first paint has its style.
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["run", "-q", "-p", "skadi-aurora-css", "--", "generated"]
+
+[watch]
+# The hook writes generated/ on every build; watching it would build again.
+ignore = ["generated"]

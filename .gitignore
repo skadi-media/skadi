@@ -8,6 +8,8 @@ Cargo.lock
 /crates/skadi-web/dist/
 /crates/skadi-web/target/
 /crates/skadi-web/Cargo.lock
+# Aurora stylesheets written by the trunk pre_build hook (SKADI-T-0717).
+/crates/skadi-web/generated/
 
 # skadi-downloader-worker (embeds librqbit) — separate deployable, excluded from
 # the workspace; its build artifacts aren't committed.

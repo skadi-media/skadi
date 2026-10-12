@@ -15,6 +15,8 @@
 
 use std::fmt::Display;
 
+use aurora_leptos::components::{Alert, Button};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 
 /// The prefix of every failed-load message.
@@ -119,13 +121,18 @@ pub fn LoadError(
     /// Fetch the list again.
     retry: Callback<()>,
 ) -> impl IntoView {
+    // Aurora's Alert and Button (SKADI-T-0719); Aurora's ErrorState offers
+    // Retry only for some HTTP errors, and a list can always fetch again.
     view! {
-        <div class="notice bad load-error" role="alert">
-            <span class="load-error-text">{load_failed_text(&message)}</span>
-            <button type="button" class="secondary load-error-retry" on:click=move |_| retry.run(())>
-                "Retry"
-            </button>
-        </div>
+        <Alert color=token::BAD class:load-error=true>
+            <div class="load-error-row">
+                <span class="load-error-text">{load_failed_text(&message)}</span>
+                <Button variant="default" size="xs" button_type="button"
+                    class:load-error-retry=true on_click=retry>
+                    "Retry"
+                </Button>
+            </div>
+        </Alert>
     }
 }
 

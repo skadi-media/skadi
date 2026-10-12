@@ -232,7 +232,7 @@ impl SortKey {
         }
     }
 
-    fn from_key(key: &str) -> Option<SortKey> {
+    pub fn from_key(key: &str) -> Option<SortKey> {
         SORT_KEYS.into_iter().find(|k| k.key() == key)
     }
 }

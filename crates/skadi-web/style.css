@@ -750,15 +750,21 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tile-sub { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Wanted tiles: washed toward the page + dashed border + centered gold "+".
-   The wash is the page colour, so the tile reads as "not here yet" in light
-   too (a dark overlay made it a drab grey there). */
+/* Wanted tiles: washed toward the page + dashed border + a gold "+" in the
+   bottom corner. The wash is the page colour, so the tile reads as "not here
+   yet" in light too (a dark overlay made it a drab grey there). The mark sat
+   in the middle once, on top of the title of a tile with no poster; in the
+   corner it covers neither the title nor the art (SKADI-T-0719). The
+   top corners hold the select check and the status dot. */
 .tile-wanted {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0.35rem;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   border: 1px dashed var(--border-control); border-radius: var(--radius-md);
 }
-.tile-wanted span { font-size: 1.9rem; font-weight: 600; color: var(--gold); }
+/* No poster: the title is the art, so no wash over it. */
+.poster-img:has(> .poster-ph) > .tile-wanted { background: none; }
+.tile-wanted span { font-size: 1.15rem; font-weight: 600; line-height: 1; color: var(--gold); }
 
 /* Missing known-work tiles inline with owned covers (SKADI-T-0353): greyscaled +
    gold accent bar (vs the owned teal), with Grab / + Want actions in the scrim. The

@@ -11,8 +11,9 @@
 //! entry per *area* instead of one per page, and a deep link to any section
 //! still works.
 
+use aurora_leptos::components::{TabItem, Tabs};
 use leptos::prelude::*;
-use leptos_router::components::A;
+
 use leptos_router::hooks::use_location;
 
 /// One entry in a section strip: where it goes and what it is called.
@@ -141,23 +142,19 @@ pub fn SubNav() -> impl IntoView {
         if shown.len() < 2 {
             return theme.into_any();
         }
-        let links = shown
+        // Aurora's route Tabs (SKADI-T-0719): links with aria-current, the
+        // arrow keys move along the strip.
+        let tabs = shown
             .into_iter()
-            .map(|(href, label)| {
-                let here = move || location.pathname.get() == href;
-                view! {
-                    <A href=href attr:class=move || {
-                        if here() { "subnav-link is-here" } else { "subnav-link" }
-                    }>
-                        {label}
-                    </A>
-                }
-            })
-            .collect_view();
+            .map(|(href, label)| TabItem::new(href, label).href(href))
+            .collect::<Vec<_>>();
+        let value = RwSignal::new(path);
         view! {
             <div class="subnav">
                 <span class="subnav-title">{title}</span>
-                <nav class="subnav-links">{links}</nav>
+                <div class="subnav-links">
+                    <Tabs tabs=tabs value=value label=title/>
+                </div>
             </div>
             {theme}
         }

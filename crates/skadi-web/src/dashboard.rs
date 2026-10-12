@@ -18,6 +18,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::api;
 use crate::movies::size_human;
+use crate::ui::LevelDot;
 
 /// Human transfer rate from bytes/s, e.g. `14.2 MB/s`; empty when zero/unknown. Pure.
 fn rate(bps: i64) -> String {
@@ -86,7 +87,7 @@ pub fn HealthChecks(checks: Vec<api::HealthCheck>) -> impl IntoView {
             };
             view! {
                 <div class=metric_cls>
-                    <span class=format!("status-dot {cls}")></span>
+                    <LevelDot level=cls class="status-dot" size=11/>
                     <div class="metric-body">
                         <span class="metric-name">{c.name}</span>
                         <span class="muted metric-detail wrap">{c.detail}</span>
@@ -362,7 +363,7 @@ pub fn Dashboard() -> impl IntoView {
             .map(|h| {
                 view! {
                     <div class="imp-row">
-                        <span class="health-dot ok"></span>
+                        <LevelDot level="ok"/>
                         <span class="imp-title">{h.label}</span>
                         <span class="imp-meta mono">{h.detail.unwrap_or_default()}</span>
                     </div>
@@ -416,7 +417,7 @@ pub fn Dashboard() -> impl IntoView {
                 .map(|_| {
                     view! {
                         <div class="health-chip">
-                            <span class="health-dot"></span>
+                            <LevelDot level="muted"/>
                             <div class="health-chip-body">
                                 <span class="health-chip-name muted">"checking…"</span>
                             </div>
@@ -445,7 +446,7 @@ pub fn Dashboard() -> impl IntoView {
                     .unwrap_or(c.name.clone());
                 view! {
                     <div class="health-chip">
-                        <span class=format!("health-dot {cls}")></span>
+                        <LevelDot level=cls/>
                         <div class="health-chip-body">
                             <span class="health-chip-name">{name}</span>
                             <span class="health-chip-detail mono">{c.detail}</span>
@@ -459,7 +460,7 @@ pub fn Dashboard() -> impl IntoView {
             let detail = c.detail;
             view! {
                 <A href="/indexers" attr:class="health-chip health-rollup">
-                    <span class=format!("health-dot {cls}")></span>
+                    <LevelDot level=cls/>
                     <div class="health-chip-body">
                         <span class="health-chip-name">"Indexers"</span>
                         <span class="health-chip-detail mono">{detail}</span>

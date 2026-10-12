@@ -54,6 +54,7 @@ const SOURCES: &[(&str, &str)] = sources![
     "system",
     "tv",
     "tv_import",
+    "ui",
     "upload",
     "wanted",
     "watch",

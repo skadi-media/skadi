@@ -8,13 +8,15 @@
 //! settings and the supervisor reconciles it into scoring, so a 1080p cap here
 //! really does stop a UHD grab.
 
+use aurora_leptos::components::{Alert, Button, Card, Panel, Pill, Select, Switch};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 
 use crate::api;
 use crate::app::DomainsVersion;
 use crate::loading::{ListLoad, SkeletonKind};
+use crate::ui::tone;
 
 /// System-wide configuration (SKADI-T-0071): domains enable/disable, shared
 /// quality profiles, root folders, and notifiers. Domain-specific config (e.g.
@@ -26,7 +28,7 @@ pub fn ConfigPage() -> impl IntoView {
         // The strip names the page, so this head carries only the one action
         // on it. Keep the link: `/setup` has no other entry point in the UI.
         <div class="page-head">
-            <A href="/setup" attr:class="btn-link">"↻ Run setup wizard"</A>
+            <Button variant="default" size="xs" href="/setup">"↻ Run setup wizard"</Button>
         </div>
         <DomainsSection/>
         <LibraryRootSection/>
@@ -80,9 +82,8 @@ fn DomainsSection() -> impl IntoView {
             .into_iter()
             .map(|d| {
                 let name = d.name.clone();
-                let toggle = move |_| {
+                let toggle = move |next: bool| {
                     let name = name.clone();
-                    let next = !d.enabled;
                     busy.set(true);
                     spawn_local(async move {
                         let _ = api::set_domain_enabled(&name, next).await;
@@ -106,11 +107,7 @@ fn DomainsSection() -> impl IntoView {
                 } else {
                     desc.to_string()
                 };
-                let switch_cls = if d.enabled {
-                    format!("switch on {accent}")
-                } else {
-                    "switch".to_string()
-                };
+                let checked = RwSignal::new(d.enabled);
                 let switch_label = format!("{title} domain");
                 let state_cls = if d.enabled {
                     "domain-state ok"
@@ -128,14 +125,8 @@ fn DomainsSection() -> impl IntoView {
                         </div>
                         <div class="domain-row-right">
                             <span class=state_cls>{state}</span>
-                            <button
-                                class=switch_cls
-                                role="switch"
-                                aria-checked=if d.enabled { "true" } else { "false" }
-                                aria-label=switch_label
-                                on:click=toggle
-                                disabled=move || busy.get()
-                            ></button>
+                            <Switch checked=checked attr:aria-label=switch_label
+                                disabled=busy on_change=Callback::new(toggle)/>
                         </div>
                     </div>
                 }
@@ -199,13 +190,13 @@ fn LibraryRootSection() -> impl IntoView {
                 ("not writable", "bad")
             };
             view! {
-                <div class="card">
+                <Card class:card=true>
                     <div class="card-main">
                         <strong>{r.path.clone()}</strong>
-                        <span class=format!("pill {badge_class}")>{badge}</span>
+                        <Pill color=tone(badge_class)>{badge}</Pill>
                         <p class="muted">{space}</p>
                     </div>
-                </div>
+                </Card>
             }
         })
     };
@@ -331,12 +322,13 @@ pub fn AdvancedSection() -> impl IntoView {
     };
 
     view! {
-        <section class="card">
-            <h3 class="card-title">"Advanced"</h3>
+        <Panel title="Advanced" caption="every daemon setting">
             <p class="muted">
                 "Every daemon setting. Blank means the default shown in the placeholder."
             </p>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            {move || error.get().map(|e| view! {
+                <Alert color=token::BAD class:error=true>{e}</Alert>
+            })}
             {move || note.get().map(|n| view! { <p class="muted">{n}</p> })}
             {load.status(SkeletonKind::Rows, Callback::new(move |()| reload()))}
             <For
@@ -351,15 +343,15 @@ pub fn AdvancedSection() -> impl IntoView {
                     </For>
                 </div>
             </For>
-        </section>
+        </Panel>
     }
 }
 
 #[component]
 fn ConfigRow(
     k: api::ConfigKey,
-    save: impl Fn(String, String) + Copy + 'static,
-    reset: impl Fn(String) + Copy + 'static,
+    save: impl Fn(String, String) + Copy + Send + Sync + 'static,
+    reset: impl Fn(String) + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     let key = k.key.clone();
     let draft = RwSignal::new(k.value.clone().unwrap_or_default());
@@ -386,8 +378,8 @@ fn ConfigRow(
         <div class="config-row">
             <label class="config-key" for=input_id.clone()>
                 {k.leaf().to_string()}
-                {locked.then(|| view! { <span class="pill">"read-only"</span> })}
-                {env_backed.then(|| view! { <span class="pill warn">"set by env"</span> })}
+                {locked.then(|| view! { <Pill color=token::MUTED>"read-only"</Pill> })}
+                {env_backed.then(|| view! { <Pill color=token::GOLD>"set by env"</Pill> })}
             </label>
             {if redacted {
                 view! {
@@ -395,16 +387,29 @@ fn ConfigRow(
                         {if k.is_set { "set" } else { "not set" }}
                     </span>
                 }.into_any()
+            } else if input_kind(&k.kind) == "checkbox" {
+                // A bool: blank keeps the default (an on/off switch could not).
+                let default = format!("default ({})", k.default);
+                view! {
+                    <div class="config-value">
+                        <Select id=input_id.clone() value=draft placeholder=default
+                            options=vec!["true".to_string(), "false".to_string()]
+                            disabled=locked/>
+                    </div>
+                }.into_any()
             } else {
+                // Aurora's input class on a native input (AURORA-T-0013): the
+                // help line is its description, which TextInput cannot link.
                 view! {
                     <input
+                        class="cl-input config-value"
                         type=input_kind(&k.kind)
                         id=input_id.clone()
                         aria-describedby=help_id.clone()
                         prop:value=move || draft.get()
                         placeholder=k.default.clone()
                         disabled=locked
-                        on:change=move |ev| draft.set(event_target_value(&ev))
+                        on:input=move |ev| draft.set(event_target_value(&ev))
                     />
                 }.into_any()
             }}
@@ -415,15 +420,14 @@ fn ConfigRow(
                 // once there is something to reset (SKADI-T-0580).
                 view! {
                     <span class="row-actions">
-                        <button
+                        <Button variant="default" size="xs"
                             class:hidden=move || draft.get() == stored
-                            on:click=move |_| save(sk.clone(), draft.get())
-                        >"Save"</button>
-                        <button
-                            class="link-btn"
+                            on_click=Callback::new(move |()| save(sk.clone(), draft.get()))
+                        >"Save"</Button>
+                        <Button variant="subtle" size="xs"
                             class:hidden=!is_set
-                            on:click=move |_| reset(rk.clone())
-                        >"Reset"</button>
+                            on_click=Callback::new(move |()| reset(rk.clone()))
+                        >"Reset"</Button>
                     </span>
                 }
             })}

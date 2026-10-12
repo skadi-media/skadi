@@ -9,6 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use aurora_leptos::components::{Alert, Button, Card, PageHeader, Pill, Select, Switch, TextInput};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -25,6 +27,7 @@ use crate::library_toolbar::{
     stored_sort,
 };
 use crate::loading::{ListLoad, SkeletonKind};
+use crate::ui::{LevelDot, mirror};
 
 /// The movie wall's status chips (SKADI-T-0245).
 pub const MOVIE_CHIPS: &[(&str, &str)] = &[
@@ -277,7 +280,7 @@ fn poster_tile(m: api::Movie, sel: Option<Selection>) -> AnyView {
                 // dots on a fully-owned library is pure noise (SKADI-T-0348).
                 // Type chip dropped: you're already in the Movies wall.
                 {(status != "owned")
-                    .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
+                    .then(|| view! { <LevelDot level=dot class="status-dot" size=11/> })}
                 {wanted
                     .then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}
             </div>
@@ -1191,10 +1194,8 @@ pub fn size_human(bytes: u64) -> String {
 pub fn MoviesConfigPage() -> impl IntoView {
     view! {
         <crate::subnav::SubNav/>
-        <div class="page-head">
-            <h2>"Movies · Config"</h2>
-            <A href="/movies">"← Library"</A>
-        </div>
+        <PageHeader title="Movies · Config" back_href="/movies" back_label="Library"
+            class:page-header=true/>
         <ProfileSection/>
         <EditionKindsSection/>
     }
@@ -1369,18 +1370,46 @@ fn ProfileSection() -> impl IntoView {
             .collect_view()
     };
 
-    let cutoff_options = move || {
-        allowed_in_order()
+    // Aurora's Select takes its options when it is built: build it again
+    // when the allowed set changes.
+    let cutoff_select = move || {
+        let options = allowed_in_order()
             .into_iter()
-            .map(|d| {
-                let id = d.id.clone();
-                let sel = move || cutoff.with(|c| *c == id);
-                view! { <option value=d.id.clone() selected=sel>{d.name.clone()}</option> }
+            .map(|d| (d.id, d.name))
+            .collect::<Vec<_>>();
+        view! { <Select label="Upgrade cutoff" option_pairs=options value=cutoff/> }
+    };
+    let picked_profile = mirror(move || profile_id.get().unwrap_or_default());
+    let profile_select = move || {
+        let options = profiles
+            .get()
+            .into_iter()
+            .map(|p| {
+                let pname = p
+                    .body
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unnamed)")
+                    .to_string();
+                (p.id, pname)
             })
-            .collect_view()
+            .collect::<Vec<_>>();
+        view! {
+            <Select label="Profile" option_pairs=options value=picked_profile
+                placeholder="+ New profile"
+                on_change=Callback::new(move |v: String| {
+                    if v.is_empty() {
+                        apply(None);
+                    } else {
+                        let row = profiles.with(|ps| ps.iter().find(|p| p.id == v).cloned());
+                        apply(row);
+                    }
+                    status.set(None);
+                })/>
+        }
     };
 
-    let save = move |_| {
+    let save = move |()| {
         let allowed_ids: Vec<String> = allowed_in_order().into_iter().map(|d| d.id).collect();
         if allowed_ids.is_empty() {
             status.set(Some(Err("select at least one quality".into())));
@@ -1424,7 +1453,7 @@ fn ProfileSection() -> impl IntoView {
         });
     };
 
-    let delete = move |_| {
+    let delete = move |()| {
         let Some(id) = profile_id.get_untracked() else {
             return;
         };
@@ -1457,7 +1486,7 @@ fn ProfileSection() -> impl IntoView {
                 </div>
             </div>
             <div class="active-profile">
-                <span class="tag">"active"</span>
+                <Pill color=token::ICE>"active"</Pill>
                 <strong>{active_name}</strong>
                 <span class="muted">
                     "— enforced for movies "
@@ -1466,83 +1495,44 @@ fn ProfileSection() -> impl IntoView {
                 </span>
             </div>
             <div class="form">
+                <div class="field">{profile_select}</div>
                 <div class="field">
-                    <label>"Profile"</label>
-                    <select
-                        prop:value=move || profile_id.get().unwrap_or_default()
-                        on:change=move |ev| {
-                            let v = event_target_value(&ev);
-                            if v.is_empty() {
-                                apply(None);
-                            } else {
-                                let row = profiles.with(|ps| ps.iter().find(|p| p.id == v).cloned());
-                                apply(row);
-                            }
-                            status.set(None);
-                        }
-                    >
-                        <option value="">"+ New profile"</option>
-                        {move || profiles.get().into_iter().map(|p| {
-                            let pname = p.body.get("name").and_then(|v| v.as_str())
-                                .unwrap_or("(unnamed)").to_string();
-                            view! { <option value=p.id.clone()>{pname}</option> }
-                        }).collect_view()}
-                    </select>
+                    <TextInput label="Name" placeholder="1080p" value=name/>
                 </div>
-                <div class="field">
-                    <label>"Name"</label>
-                    <input
-                        type="text"
-                        placeholder="1080p"
-                        prop:value=move || name.get()
-                        on:input=move |ev| name.set(event_target_value(&ev))
-                    />
-                </div>
-                <div class="field">
-                    <label>"Allowed qualities"</label>
+                <div class="field" role="group" aria-labelledby="profile-allowed-label">
+                    <span class="cl-field__label" id="profile-allowed-label">"Allowed qualities"</span>
                     <div class="checks">{def_rows}</div>
                 </div>
+                <div class="field">{cutoff_select}</div>
                 <div class="field">
-                    <label>"Upgrade cutoff"</label>
-                    <select on:change=move |ev| cutoff.set(event_target_value(&ev))>
-                        {cutoff_options}
-                    </select>
-                </div>
-                <div class="field">
-                    <label class="check">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || upgrade.get()
-                            on:change=move |ev| upgrade.set(event_target_checked(&ev))
-                        />
-                        "Allow upgrades (re-grab a better release until the cutoff)"
-                    </label>
+                    <Switch checked=upgrade
+                        label="Allow upgrades (re-grab a better release until the cutoff)"/>
                 </div>
                 // Upgrades re-acquire files you already hold — the behaviour that
                 // reads as "it's re-grabbing stuff I already have" when it isn't
                 // spelled out (SKADI-T-0379).
                 {move || upgrade.get().then(|| view! {
-                    <p class="notice warn">
+                    <Alert color=token::GOLD class:notice=true>
                         "Upgrades enabled — imports below "
                         <strong>{cutoff_name()}</strong>
                         " will be re-downloaded when a better release shows up."
-                    </p>
+                    </Alert>
                 })}
                 // Editing a profile the daemon will never read is silent effort;
                 // say so rather than letting a save look like it took effect.
                 {move || (profile_id.get().is_some() && !editing_is_active()).then(|| view! {
-                    <p class="notice">
+                    <Alert color=token::ICE class:notice=true>
                         "You're editing an inactive profile. "
                         <strong>{active_name()}</strong>
                         " is the one being enforced."
-                    </p>
+                    </Alert>
                 })}
                 {move || status.get().map(|s| match s {
                     Ok(m) => view! { <p class="ok">{m}</p> }.into_any(),
                     Err(m) => view! { <p class="bad">{m}</p> }.into_any(),
                 })}
                 <div class="form-actions">
-                    <button on:click=save disabled=move || busy.get()>
+                    <Button loading=busy on_click=Callback::new(save)>
                         {move || if busy.get() {
                             "Saving…"
                         } else if profile_id.get().is_none() {
@@ -1550,9 +1540,9 @@ fn ProfileSection() -> impl IntoView {
                         } else {
                             "Save profile"
                         }}
-                    </button>
+                    </Button>
                     {move || profile_id.get().map(|_| view! {
-                        <button class="danger" on:click=delete>"Delete"</button>
+                        <Button variant="default" bad=true on_click=Callback::new(delete)>"Delete"</Button>
                     })}
                 </div>
             </div>
@@ -1587,14 +1577,14 @@ fn EditionKindsSection() -> impl IntoView {
     };
     Effect::new(move |_| refresh());
 
-    let open_add = move |_| {
+    let open_add = move |()| {
         f_name.set(String::new());
         f_tag.set(String::new());
         f_patterns.set(String::new());
         editing.set(Some(String::new()));
     };
 
-    let submit = move |_| {
+    let submit = move |()| {
         let patterns: Vec<Value> = f_patterns
             .get_untracked()
             .split(',')
@@ -1635,7 +1625,7 @@ fn EditionKindsSection() -> impl IntoView {
                 let e_name = k.name.clone();
                 let e_tag = k.normalized_tag.clone();
                 let e_pat = patterns.clone();
-                let on_edit = move |_| {
+                let on_edit = move |()| {
                     f_name.set(e_name.clone());
                     f_tag.set(e_tag.clone());
                     f_patterns.set(e_pat.clone());
@@ -1643,7 +1633,7 @@ fn EditionKindsSection() -> impl IntoView {
                 };
                 let del_id = k.id.clone();
                 let del_name = k.name.clone();
-                let on_del = move |_| {
+                let on_del = move |()| {
                     let del_id = del_id.clone();
                     let title = format!("Delete edition kind \"{del_name}\"?");
                     spawn_local(async move {
@@ -1659,17 +1649,18 @@ fn EditionKindsSection() -> impl IntoView {
                 };
                 let builtin = k.builtin;
                 view! {
-                    <div class="card">
+                    <Card class:card=true>
                         <div class="card-main">
                             <strong>{k.name.clone()}</strong>
                             <span class="muted summary">{patterns}</span>
-                            {builtin.then(|| view! { <span class="badge">"built-in"</span> })}
+                            {builtin.then(|| view! { <Pill color=token::ICE>"built-in"</Pill> })}
                         </div>
                         <div class="card-actions">
-                            <button on:click=on_edit>"Edit"</button>
-                            <button class="danger" on:click=on_del disabled=builtin>"Delete"</button>
+                            <Button variant="default" size="xs" on_click=Callback::new(on_edit)>"Edit"</Button>
+                            <Button variant="default" size="xs" bad=true disabled=builtin
+                                on_click=Callback::new(on_del)>"Delete"</Button>
                         </div>
-                    </div>
+                    </Card>
                 }
             })
             .collect_view()
@@ -1682,28 +1673,23 @@ fn EditionKindsSection() -> impl IntoView {
         view! {
             <div class="form">
                 <div class="field">
-                    <label>"Name"</label>
-                    <input type="text" placeholder="Director's Cut"
-                        prop:value=move || f_name.get()
-                        on:input=move |ev| f_name.set(event_target_value(&ev))/>
+                    <TextInput label="Name" placeholder="Director's Cut" value=f_name/>
                 </div>
                 <div class="field">
-                    <label>"Normalized tag (filesystem-safe)"</label>
-                    <input type="text" placeholder="Directors Cut"
-                        prop:value=move || f_tag.get()
-                        on:input=move |ev| f_tag.set(event_target_value(&ev))/>
+                    <TextInput label="Normalized tag (filesystem-safe)" placeholder="Directors Cut"
+                        value=f_tag/>
                 </div>
                 <div class="field">
-                    <label>"Match patterns (comma-separated)"</label>
-                    <input type="text" placeholder="director, dc"
-                        prop:value=move || f_patterns.get()
-                        on:input=move |ev| f_patterns.set(event_target_value(&ev))/>
+                    <TextInput label="Match patterns (comma-separated)" placeholder="director, dc"
+                        value=f_patterns/>
                 </div>
                 <div class="form-actions">
-                    <button on:click=submit disabled=move || busy.get()>
+                    <Button loading=busy on_click=Callback::new(submit)>
                         {move || if busy.get() { "Saving…" } else { "Save" }}
-                    </button>
-                    <button class="secondary" on:click=move |_| editing.set(None)>"Cancel"</button>
+                    </Button>
+                    <Button variant="default" on_click=Callback::new(move |()| editing.set(None))>
+                        "Cancel"
+                    </Button>
                 </div>
             </div>
         }
@@ -1717,7 +1703,7 @@ fn EditionKindsSection() -> impl IntoView {
                     <h3>"Edition kinds"</h3>
                     <p class="muted">"The registry the matcher uses to map a release's edition tag (Director's Cut, IMAX, …). Built-ins can be edited but not deleted."</p>
                 </div>
-                <button on:click=open_add>"+ Add"</button>
+                <Button variant="default" on_click=Callback::new(open_add)>"+ Add"</Button>
             </div>
             {move || error.get().map(|e| view! { <p class="bad">{e}</p> })}
             {load.status(SkeletonKind::Cards, Callback::new(move |()| refresh()))}

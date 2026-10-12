@@ -11,6 +11,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
+use crate::ui::LevelDot;
 
 /// `/add` — choose a domain, then search it (movies / TV / audiobooks).
 #[component]
@@ -300,7 +301,7 @@ pub fn AddPage() -> impl IntoView {
             <div class="toast-region" role="status" aria-live="polite">
                 {move || {
                     toast.get().map(|m| {
-                        view! { <div class="toast"><span class="health-dot ok" aria-hidden="true"></span>{m}</div> }
+                        view! { <div class="toast"><LevelDot level="ok"/>{m}</div> }
                     })
                 }}
             </div>

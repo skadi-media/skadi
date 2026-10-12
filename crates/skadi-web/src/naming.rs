@@ -2,6 +2,7 @@
 //! preview of a real example path, rendered server-side via `/naming/preview` so the
 //! operator can lock the library layout in visually before it touches disk.
 
+use aurora_leptos::components::{Button, Code, Panel, TextInput};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -65,7 +66,7 @@ pub fn NamingPage() -> impl IntoView {
         });
     });
 
-    let on_save = move |_| {
+    let on_save = move |()| {
         saving.set(true);
         msg.set(String::new());
         let s = api::NamingSettings {
@@ -91,26 +92,13 @@ pub fn NamingPage() -> impl IntoView {
                         file: RwSignal<String>,
                         preview: RwSignal<String>| {
         view! {
-            <div class="naming-domain">
-                <h3>{label}</h3>
-                <label class="naming-field">
-                    <span>"Folder template"</span>
-                    <input
-                        type="text"
-                        prop:value=move || folder.get()
-                        on:input=move |ev| folder.set(event_target_value(&ev))
-                    />
-                </label>
-                <label class="naming-field">
-                    <span>"File template"</span>
-                    <input
-                        type="text"
-                        prop:value=move || file.get()
-                        on:input=move |ev| file.set(event_target_value(&ev))
-                    />
-                </label>
-                <div class="naming-preview mono">{move || preview.get()}</div>
-            </div>
+            <Panel title=label>
+                <div class="naming-fields">
+                    <TextInput label="Folder template" value=folder mono=true spellcheck=false/>
+                    <TextInput label="File template" value=file mono=true spellcheck=false/>
+                    <div class="naming-preview mono">{move || preview.get()}</div>
+                </div>
+            </Panel>
         }
     };
 
@@ -118,8 +106,8 @@ pub fn NamingPage() -> impl IntoView {
         <crate::subnav::SubNav/>
         <div class="page-head"><h2>"Naming"</h2></div>
         <p class="muted naming-help">
-            "Rename templates per domain. "<code>"{Tokens}"</code>" substitute (e.g. "
-            <code>"{TitleKebab}"</code>", "<code>"{Year}"</code>", "<code>"{TmdbTag}"</code>
+            "Rename templates per domain. "<Code>"{Tokens}"</Code>" substitute (e.g. "
+            <Code>"{TitleKebab}"</Code>", "<Code>"{Year}"</Code>", "<Code>"{TmdbTag}"</Code>
             "), the space character replaces whitespace. Changes apply to new imports."
         </p>
         <div class="naming-grid">
@@ -128,18 +116,12 @@ pub fn NamingPage() -> impl IntoView {
             {section("Audiobooks", ab_folder, ab_file, ab_preview)}
         </div>
         <div class="naming-foot">
-            <label class="naming-field naming-space">
-                <span>"Space character"</span>
-                <input
-                    type="text"
-                    maxlength="1"
-                    prop:value=move || space.get()
-                    on:input=move |ev| space.set(event_target_value(&ev))
-                />
-            </label>
-            <button type="button" on:click=on_save disabled=move || saving.get()>
+            <div class="naming-space">
+                <TextInput label="Space character" value=space mono=true spellcheck=false/>
+            </div>
+            <Button button_type="button" loading=saving on_click=Callback::new(on_save)>
                 {move || if saving.get() { "Saving…" } else { "Save" }}
-            </button>
+            </Button>
             <span class="muted naming-msg">{move || msg.get()}</span>
         </div>
     }

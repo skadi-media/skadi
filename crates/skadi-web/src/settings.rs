@@ -15,7 +15,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use aurora_leptos::components::{Button, Card, PasswordInput, Pill, Select, TextInput};
 use aurora_leptos::theme::ThemeToggle;
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde_json::{Map, Value};
@@ -23,6 +25,16 @@ use serde_json::{Map, Value};
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
 use crate::loading::{ListLoad, LoadError, Skeleton, SkeletonKind};
+use crate::ui::{LevelDot, mirror};
+
+/// The hue of a tracker's privacy (`public`, `semi-private`, `private`).
+fn privacy_tone(privacy: &str) -> &'static str {
+    match privacy {
+        "public" => token::OK,
+        "private" => token::BAD,
+        _ => token::GOLD,
+    }
+}
 
 /// The theme choice (SKADI-T-0720): Aurora's Light / Dark / Hyper / System
 /// toggle, under the Settings strip on every Settings page. Aurora stores the
@@ -636,7 +648,7 @@ pub(crate) fn ProviderSection(spec: KindSpec) -> impl IntoView {
                     <h3>{spec.title}</h3>
                     <p class="muted">{spec.description}</p>
                 </div>
-                <button on:click=open_add>"+ Add"</button>
+                <Button variant="default" on_click=Callback::new(open_add)>"+ Add"</Button>
             </div>
             {catalog_panel}
             {load.status(SkeletonKind::Cards, Callback::new(move |()| refresh()))}
@@ -785,14 +797,15 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
             .take(60)
             .map(|d| {
                 let d_click = d.clone();
-                let privacy = d.privacy.clone();
                 let cats = d.categories.len();
                 view! {
-                    <button class="catalog-item" on:click=move |_| pick(d_click.clone())>
-                        <span class="catalog-name">{d.name.clone()}</span>
-                        <span class=format!("pill privacy-{privacy}")>{d.privacy.clone()}</span>
-                        <span class="catalog-meta mono">{format!("{cats} cats")}</span>
-                    </button>
+                    <Card on_click=Callback::new(move |()| pick(d_click.clone())) label=d.name.clone()>
+                        <div class="catalog-item">
+                            <span class="catalog-name">{d.name.clone()}</span>
+                            <Pill color=privacy_tone(&d.privacy)>{d.privacy.clone()}</Pill>
+                            <span class="catalog-meta mono">{format!("{cats} cats")}</span>
+                        </div>
+                    </Card>
                 }
             })
             .collect_view()
@@ -814,17 +827,21 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
         view! {
             <div class="form">
                 <div class="catalog-form-head">
-                    <button class="btn-link" on:click=back>"‹ back"</button>
+                    <Button variant="subtle" size="xs" on_click=Callback::new(back)>"‹ back"</Button>
                     <strong>{title}</strong>
-                    {needs_login.then(|| view! { <span class="pill privacy-private">"login required"</span> })}
+                    {needs_login.then(|| view! { <Pill color=token::BAD>"login required"</Pill> })}
                 </div>
-                <div class="field">
-                    <label for="catalog-field-name">
+                // Aurora's field markup on a native input (AURORA-T-0013):
+                // TextInput cannot link a help line or say aria-required.
+                <div class="cl-field field">
+                    <label class="cl-field__label" for="catalog-field-name">
                         "Name"
                         <span class="field-req" title="Required">" *"</span>
                     </label>
                     <input
                         id="catalog-field-name"
+                        class="cl-input"
+                        class:cl-input--error=move || name_err.with(Option::is_some)
                         type="text"
                         required=true
                         aria-required="true"
@@ -837,15 +854,15 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
                         }
                     />
                     <p class="field-help muted">"The name in lists, logs and health checks."</p>
-                    {move || name_err.get().map(|e| view! { <p class="field-error bad" role="alert">{e}</p> })}
+                    {move || name_err.get().map(|e| view! { <p class="cl-field__error field-error" role="alert">{e}</p> })}
                 </div>
                 {fields}
                 {move || form_err.get().map(|e| view! { <p class="bad">{e}</p> })}
                 <div class="form-actions">
-                    <button on:click=save disabled=move || busy.get()>
+                    <Button loading=busy on_click=Callback::new(save)>
                         {move || if busy.get() { "Adding…" } else { "Add tracker" }}
-                    </button>
-                    <button class="secondary" on:click=close>"Cancel"</button>
+                    </Button>
+                    <Button variant="default" on_click=Callback::new(close)>"Cancel"</Button>
                 </div>
             </div>
         }
@@ -862,17 +879,14 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
         view! {
             <div class="catalog-panel">
                 <div class="catalog-toolbar">
-                    <input
-                        class="catalog-filter"
-                        type="text"
-                        placeholder="Filter trackers…"
-                        prop:value=move || filter.get()
-                        on:input=move |ev| filter.set(event_target_value(&ev))
-                    />
-                    <button class="secondary" on:click=refresh_catalog disabled=move || refreshing.get()>
+                    <div class="catalog-filter">
+                        <TextInput value=filter placeholder="Filter trackers…"
+                            aria_label="Filter trackers" id="catalog-filter"/>
+                    </div>
+                    <Button variant="default" loading=refreshing on_click=Callback::new(refresh_catalog)>
                         {move || if refreshing.get() { "Syncing…" } else { "Sync catalog" }}
-                    </button>
-                    <button class="btn-link" on:click=close>"Close"</button>
+                    </Button>
+                    <Button variant="subtle" on_click=Callback::new(close)>"Close"</Button>
                 </div>
                 {move || load_err.get().map(|e| {
                     let retry = Callback::new(move |()| {
@@ -891,7 +905,9 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
 
     view! {
         <div class="catalog-add">
-            <button class="catalog-add-btn" on:click=open_panel>"+ Add tracker (native)"</button>
+            <Button variant="light" class:catalog-add-btn=true on_click=Callback::new(open_panel)>
+                "+ Add tracker (native)"
+            </Button>
             {body}
         </div>
     }
@@ -932,17 +948,21 @@ fn catalog_field_view(s: api::CatalogSetting, form: RwSignal<HashMap<String, Str
         let key_val = key.clone();
         let key_in = key.clone();
         let is_secret = s.kind == "password";
+        let value = mirror(move || form.with(|f| f.get(&key_val).cloned().unwrap_or_default()));
+        let on_input = Callback::new(move |v: String| {
+            form.update(|f| {
+                f.insert(key_in.clone(), v);
+            });
+        });
+        let field = if is_secret {
+            view! { <PasswordInput label=label value=value on_input=on_input autocomplete="off"/> }
+                .into_any()
+        } else {
+            view! { <TextInput label=label value=value on_input=on_input/> }.into_any()
+        };
         view! {
             <div class="field">
-                <label>{label}</label>
-                <input
-                    type=if is_secret { "password" } else { "text" }
-                    prop:value=move || form.with(|f| f.get(&key_val).cloned().unwrap_or_default())
-                    on:input=move |ev| {
-                        let v = event_target_value(&ev);
-                        form.update(|f| { f.insert(key_in.clone(), v); });
-                    }
-                />
+                {field}
                 {help}
             </div>
         }
@@ -975,7 +995,7 @@ fn row_view(
     item: api::Setting,
     check: Option<api::HealthCheck>,
     sig: RowSignals,
-    refresh: impl Fn() + Copy + 'static,
+    refresh: impl Fn() + Copy + Send + Sync + 'static,
 ) -> AnyView {
     let RowSignals {
         editor,
@@ -1121,7 +1141,7 @@ fn row_view(
     let health_dot = check.map(|c| {
         let level = c.level().to_string();
         let cls = crate::dashboard::severity_class(&level);
-        view! { <span class=format!("health-dot {cls}") title=level></span> }
+        view! { <LevelDot level=cls title=level/> }
     });
 
     view! {
@@ -1130,7 +1150,7 @@ fn row_view(
                 <div class="provider-main">
                     {health_dot}
                     <strong class="provider-name">{name.clone()}</strong>
-                    <span class="protocol-badge">{label}</span>
+                    <Pill color=token::ICE>{label}</Pill>
                     {has_secret
                         .then(|| view! { <span class="provider-flag mono">"secret stored"</span> })}
                     // Inline, not a second line: nineteen two-line cards were a
@@ -1142,12 +1162,17 @@ fn row_view(
                 <div class="provider-actions">
                     // Each card has the same three buttons: the label names the
                     // card too (SKADI-T-0700).
-                    <button on:click=on_test aria-label=format!("Test {name}")>"Test"</button>
+                    <Button variant="default" size="xs" aria_label=format!("Test {name}")
+                        on_click=Callback::new(on_test)>"Test"</Button>
                     {(!is_cardigann).then(|| {
                         let edit_label = format!("Edit {name}");
-                        view! { <button on:click=on_edit aria-label=edit_label>"Edit"</button> }
+                        view! {
+                            <Button variant="default" size="xs" aria_label=edit_label
+                                on_click=Callback::new(on_edit)>"Edit"</Button>
+                        }
                     })}
-                    <button class="danger" on:click=on_delete aria-label=format!("Delete {name}")>"Delete"</button>
+                    <Button variant="default" size="xs" bad=true aria_label=format!("Delete {name}")
+                        on_click=Callback::new(on_delete)>"Delete"</Button>
                 </div>
             </div>
             <div class="card-test">{test_view}</div>
@@ -1166,32 +1191,25 @@ fn form_view(
     form_error: RwSignal<Option<String>>,
     field_errors: RwSignal<FieldErrors>,
     busy: RwSignal<bool>,
-    submit: impl Fn(()) + Clone + 'static,
-    cancel: impl Fn(leptos::ev::MouseEvent) + 'static,
+    submit: impl Fn(()) + Clone + Send + Sync + 'static,
+    cancel: impl Fn(()) + Send + Sync + 'static,
 ) -> AnyView {
     // The kind selector (Add + multi-variant only): switching kind reseeds the
     // form with that variant's defaults.
     let selector = if show_selector {
         let spec_for_change = spec.clone();
-        let on_change = move |ev: leptos::ev::Event| {
-            let k = event_target_value(&ev);
-            selected.set(k.clone());
+        let on_change = Callback::new(move |k: String| {
             form.set(form_for_variant(spec_for_change.variant(&k)));
             field_errors.set(FieldErrors::new());
-        };
+        });
         let options = spec
             .variants
             .iter()
-            .map(|v| {
-                let (ck, label) = (v.config_kind, v.label);
-                view! { <option value=ck>{label}</option> }
-            })
-            .collect_view();
-        let current = move || selected.get();
+            .map(|v| (v.config_kind.to_string(), v.label.to_string()))
+            .collect::<Vec<_>>();
         view! {
             <div class="field">
-                <label>"Kind"</label>
-                <select prop:value=current on:change=on_change>{options}</select>
+                <Select label="Kind" option_pairs=options value=selected on_change=on_change/>
             </div>
         }
         .into_any()
@@ -1212,7 +1230,7 @@ fn form_view(
             .collect_view()
     };
 
-    let submit_click = move |_| submit(());
+    let submit_click = Callback::new(move |()| submit(()));
 
     view! {
         <div class="form">
@@ -1220,10 +1238,10 @@ fn form_view(
             {inputs}
             {move || form_error.get().map(|e| view! { <p class="bad">{e}</p> })}
             <div class="form-actions">
-                <button on:click=submit_click disabled=move || busy.get()>
+                <Button loading=busy on_click=submit_click>
                     {move || if busy.get() { "Saving…" } else { "Save" }}
-                </button>
-                <button class="secondary" on:click=cancel>"Cancel"</button>
+                </Button>
+                <Button variant="default" on_click=Callback::new(cancel)>"Cancel"</Button>
             </div>
         </div>
     }
@@ -1233,7 +1251,7 @@ fn form_view(
 /// The label of a field, with a `*` when it is required.
 fn field_label(label: &'static str, required: bool, for_id: Option<String>) -> AnyView {
     view! {
-        <label for=for_id>
+        <label class="cl-field__label" for=for_id>
             {label}
             {required.then(|| view! {
                 <span class="field-req" title="Required">" *"</span>
@@ -1255,7 +1273,7 @@ fn help_line(help: &str, id: String) -> Option<AnyView> {
 fn error_line(key: &'static str, field_errors: RwSignal<FieldErrors>) -> impl IntoView {
     move || {
         field_errors.with(|e| e.get(key).cloned()).map(|msg| {
-            view! { <p class="field-error bad" role="alert">{msg}</p> }
+            view! { <p class="cl-field__error field-error" role="alert">{msg}</p> }
         })
     }
 }
@@ -1299,7 +1317,7 @@ fn field_view(
                 })
                 .collect_view();
             view! {
-                <div class="field">
+                <div class="cl-field field">
                     {field_label(f.label, f.required, None)}
                     <div class="checks" aria-describedby=described_by>{boxes}</div>
                     {help}
@@ -1328,10 +1346,15 @@ fn field_view(
                 }
             };
             let invalid = move || field_errors.with(|e| e.contains_key(key)).to_string();
+            let has_error = move || field_errors.with(|e| e.contains_key(key));
+            // Aurora's field markup on a native input (AURORA-T-0013):
+            // TextInput cannot link a help line or say aria-required.
             view! {
-                <div class="field">
+                <div class="cl-field field">
                     {field_label(f.label, f.required, Some(input_id.clone()))}
                     <input
+                        class="cl-input"
+                        class:cl-input--error=has_error
                         id=input_id
                         type=input_type
                         placeholder=f.placeholder

@@ -113,6 +113,10 @@ a { color: var(--ice); text-decoration: none; }
    id it assumes), which would clamp Skadi's <main id="main"> to the grid row. */
 #main { height: auto; }
 
+/* Aurora's PageHeader (SKADI-T-0719) gets the page's space under it, and
+   stays above a detail page's pulled-up hero so its back link is clickable
+   (SKADI-T-0329). */
+.page-header { margin-bottom: 1rem; position: relative; z-index: 3; }
 /* Page header row: title + an action (gear / back link). */
 .page-head {
   display: flex;
@@ -278,34 +282,16 @@ a.btn-link:hover { background: var(--control-hover); color: var(--fg); }
   font-size: 0.85rem;
   color: var(--muted);
 }
-.status-dot {
+/* Status dots are Aurora's Dot (SKADI-T-0719) in a span that keeps the
+   level hook (`status-dot ok`, `health-dot bad`; ui::LevelDot). A
+   `.status-dot` on a poster sits in its corner; elsewhere it is in the flow. */
+.status-dot, .health-dot { display: inline-flex; flex: none; border-radius: 50%; }
+.poster-img > .status-dot {
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 50%;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--tooltip-bg) 50%, transparent);
 }
-.status-dot.ok { background: var(--ok); }
-.status-dot.pending { background: var(--ice); }
-.status-dot.warn { background: var(--gold); }
-.status-dot.muted { background: var(--fainter); }
-.status-dot.bad { background: var(--bad); }
-/* Inline status dot for list rows (provider/downloader health) — unlike
-   `.status-dot` it sits in the flow, not absolutely in a poster corner. */
-.health-dot {
-  display: inline-block;
-  flex: none;
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-}
-.health-dot.ok { background: var(--ok); }
-.health-dot.pending { background: var(--ice); }
-.health-dot.warn { background: var(--gold); }
-.health-dot.bad { background: var(--bad); }
-.health-dot.muted { background: var(--fainter); }
 .poster-meta { display: flex; flex-direction: column; margin-top: 0.4rem; }
 .poster-title { font-size: 0.85rem; line-height: 1.2; }
 .poster-meta .muted { font-size: 0.78rem; }
@@ -457,13 +443,6 @@ button.primary:hover, .btn-primary:hover { background: var(--ice-5); border-colo
   border: 1px solid var(--border-control);
   color: var(--fg-2);
 }
-.protocol-badge {
-  font-size: 10.5px;
-  padding: 0.1rem 0.45rem;
-  border-radius: 5px;
-  background: var(--ice-bg);
-  color: var(--ice);
-}
 /* Toggle switch (38×22 track, 18px knob; on = accent). */
 .switch {
   position: relative;
@@ -592,18 +571,12 @@ a.card:hover { border-color: var(--border-control); background: var(--control-ho
   margin-top: 0.75rem;
   max-width: 560px;
 }
+/* A field's place in a form. The label and the control are Aurora's
+   (`cl-field__label`, `cl-input`; SKADI-T-0719). */
 .field { margin-bottom: 0.7rem; display: flex; flex-direction: column; gap: 0.25rem; }
-.field > label { font-size: 0.8rem; color: var(--muted); }
-.field input[type="text"], .field input[type="password"], .field select {
-  background: var(--control);
-  border: 1px solid var(--border-control);
-  border-radius: 8px;
-  color: var(--fg);
-  padding: 0.45rem 0.55rem;
-  font-size: 0.9rem;
-  font-family: var(--font-sans);
-}
-.field input:focus, .field select:focus { border-color: var(--ice); }
+.field-help { color: var(--muted); }
+/* Aurora has no checkbox: a native one, in the accent. */
+input[type="checkbox"] { accent-color: var(--ice); }
 .checks { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--fg); }
 .form-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
@@ -657,7 +630,6 @@ label.check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85re
   border-radius: 6px;
 }
 .metric.placeholder { opacity: 0.6; border-style: dashed; }
-.metric .status-dot { flex: none; }
 .metric-body { display: flex; flex-direction: column; min-width: 0; }
 .metric-name { font-size: 0.85rem; }
 .metric-detail {
@@ -911,16 +883,7 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 /* Downloads page = the torrent worker's front-end (SKADI-T-0166 / T-0170) */
 .worker-strip { display: flex; align-items: center; gap: 0.45rem; margin: 0.1rem 0 1.1rem; line-height: 1.35; }
 .worker-strip .health-dot { position: relative; top: 0.5px; }
-.dl-summary { font-variant-numeric: tabular-nums; margin-bottom: 0.6rem; }
 .dl-footnote { font-size: 0.8rem; margin-top: 0.6rem; }
-.dl-list { display: flex; flex-direction: column; gap: 0.5rem; }
-.dl-row { padding: 0.55rem 0.7rem; background: var(--panel, var(--panel)); border: 1px solid var(--border); border-radius: 6px; }
-.dl-head { display: flex; align-items: center; gap: 0.6rem; }
-.dl-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dl-head .dl-pct { flex: none; font-variant-numeric: tabular-nums; }
-.dl-actions { flex: none; display: flex; gap: 0.35rem; }
-.dl-actions button { font-size: 0.76rem; padding: 0.2rem 0.55rem; }
-.dl-meta { font-size: 0.8rem; margin-top: 0.3rem; font-variant-numeric: tabular-nums; }
 /* Body-of-work browse (author page, SKADI-T-0159) */
 .work-list { display: flex; flex-direction: column; gap: 0.25rem; }
 .work-row {
@@ -1146,9 +1109,6 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
   /* Over a cover in every theme: the tooltip pair is dark in light too. */
   background: color-mix(in srgb, var(--tooltip-bg) 75%, transparent);
 }
-.status-dot.owned { background: var(--ok); }
-.status-dot.dl { background: var(--ice); }
-.status-dot.wanted { background: var(--gold); }
 .tile-scrim {
   display: flex; flex-direction: column; gap: 1px; padding: 6px 2px 0;
 }
@@ -1378,14 +1338,6 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 /* ====================================================================
    Downloads — active transfers + seeding (SKADI-I-0035 / T-0249)
    ==================================================================== */
-.dl-row { border-radius: 10px; }
-.dl-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.dl-state { flex: none; font-size: 11px; }
-.dl-state.ice { color: var(--ice); }
-.dl-state.muted { color: var(--muted); }
-.dl-head .dl-pct { color: var(--ice); font-weight: 600; }
-.dl-meta { color: var(--muted); }
-.dl-summary { color: var(--muted); font-size: 12px; }
 
 /* Seeding accordion (SKADI-T-0373). */
 .seed-accordion { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -1407,7 +1359,6 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 .provider-main { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
 .provider-name { font-size: 14px; font-weight: 600; }
 .provider-actions { display: flex; gap: 0.4rem; flex: none; }
-.provider-actions button { font-size: 12px; padding: 0.3rem 0.7rem; }
 .provider-flag { font-size: 10px; color: var(--faint); }
 .provider-sub { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .provider-card .card-test { font-size: 12px; margin-top: 0.4rem; }
@@ -1527,92 +1478,77 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 .setup-done-badge { width: 56px; height: 56px; border-radius: 50%; background: var(--ok-bg); color: var(--ok-fg); font-size: 26px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem; }
 .setup-summary { display: inline-flex; flex-direction: column; gap: 0.5rem; text-align: left; color: var(--fg-2); font-size: 13px; margin-top: 1rem; }
 
-/* --- Native Cardigann add-tracker catalog (SKADI-T-0261) --- */
+/* --- Native Cardigann add-tracker catalog (SKADI-T-0261). The list items
+   are Aurora Cards, the tags Pills (SKADI-T-0719). --- */
 .catalog-add { margin: 0.4rem 0 0.9rem; }
-.catalog-add-btn {
-  background: var(--ice-bg); color: var(--ice);
-  border: 1px dashed var(--border-control); border-radius: 9px;
-  padding: 0.5rem 0.9rem; font-size: 0.85rem; cursor: pointer;
-}
-.catalog-add-btn:hover { background: var(--ice-bg); border-color: var(--ice); }
 .catalog-panel {
   margin-top: 0.6rem; background: var(--panel-2);
   border: 1px solid var(--border); border-radius: 11px; padding: 0.8rem;
 }
 .catalog-toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
-.catalog-filter {
-  flex: 1; background: var(--control); border: 1px solid var(--border-control);
-  border-radius: 8px; color: var(--fg); padding: 0.45rem 0.6rem; font-size: 0.85rem;
-}
-.catalog-filter:focus { border-color: var(--ice); }
+.catalog-filter { flex: 1; min-width: 0; }
 .catalog-list {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;
   max-height: 340px; overflow-y: auto;
 }
-.catalog-item {
-  display: flex; align-items: center; gap: 0.5rem; text-align: left;
-  background: var(--panel); border: 1px solid var(--border-soft); border-radius: 9px;
-  padding: 0.5rem 0.65rem; cursor: pointer; color: var(--fg);
-}
-.catalog-item:hover { border-color: var(--ice); background: var(--ice-bg); }
+.catalog-list .cl-card { padding: 0.5rem 0.65rem; }
+.catalog-item { display: flex; align-items: center; gap: 0.5rem; }
 .catalog-name { flex: 1; font-size: 0.85rem; font-weight: 600; }
 .catalog-meta { font-size: 11px; color: var(--muted); }
 .catalog-form-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
-.pill.privacy-public { color: var(--ok-fg); }
-.pill.privacy-private { color: var(--bad-fg); }
-.pill.privacy-semi-private { color: var(--gold-fg); }
 @media (max-width: 720px) { .catalog-list { grid-template-columns: 1fr; } }
 
 /* Downloads control surface — engine status + honest empty state (SKADI-I-0041). */
 .dl-view { display: flex; flex-direction: column; }
-.dl-engine { display: flex; align-items: center; gap: 0.7rem; padding: 0.8rem 1rem; margin: 0.5rem 0 1.1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-.dl-engine.ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-.dl-engine.bad { border-color: color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 6%, transparent); }
-.dl-engine .health-dot { width: 10px; height: 10px; flex: none; }
-.dl-engine-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.dl-engine-text strong { color: var(--fg-bright); }
-.dl-engine-sub { font-size: 0.82rem; }
-.dl-summary { margin: 0 0 0.6rem; }
 /* Summary + whole-queue controls on one row (SKADI-T-0290). */
-.dl-summary-row { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.dl-controls { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; flex-shrink: 0; }
 .dl-empty { padding: 1.25rem; text-align: center; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px; }
 
 /* Compact table-style downloads (SKADI-I-0053). */
-.dl-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.dl-header { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.4rem 0.6rem; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
-.dl-header .sort-head { cursor: pointer; user-select: none; }
-.dl-header .sort-head:hover { color: var(--fg); }
-.dl-header .sort-active { color: var(--fg-bright); }
-.dl-row-compact { display: grid; grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px; gap: 0.4rem; padding: 0.35rem 0.6rem; align-items: center; font-size: 0.82rem; border-bottom: 1px solid var(--border); position: relative; }
-.dl-row-compact:last-child { border-bottom: none; }
-.dl-row-compact:hover { background: var(--panel); }
-.dl-row-compact.paused { opacity: 0.65; }
-.dl-row-compact .dl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); }
-.dl-row-compact .dl-size { text-align: right; }
-.dl-row-compact .dl-progress { display: flex; align-items: center; gap: 0.35rem; }
-.dl-row-compact .dl-bar { flex: 1; height: 5px; background: var(--control); border-radius: 3px; overflow: hidden; }
-.dl-row-compact .dl-bar-fill { height: 100%; background: var(--aurora-3); border-radius: 3px; }
-.dl-row-compact .dl-pct { flex: none; width: 32px; text-align: right; font-size: 0.75rem; }
-.dl-row-compact .dl-down, .dl-row-compact .dl-up, .dl-row-compact .dl-peers, .dl-row-compact .dl-eta { text-align: right; color: var(--muted); white-space: nowrap; }
-.dl-row-compact .dl-down.active { color: var(--ice); }
-.dl-row-compact .dl-up.active { color: var(--gold); }
-.dl-row-compact .dl-actions { position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%); display: flex; gap: 0.25rem; opacity: 0; transition: opacity 0.12s; background: linear-gradient(90deg, transparent, var(--bg) 8px); padding-left: 12px; }
-.dl-row-compact:hover .dl-actions, .dl-row-compact:focus-within .dl-actions { opacity: 1; }
-.dl-row-compact .dl-actions button { font-size: 0.72rem; padding: 0.15rem 0.4rem; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
-.dl-row-compact .dl-actions button:hover { background: var(--control); }
-.dl-row-compact .dl-actions button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
-.dl-row-compact .dl-error { grid-column: 1 / -1; font-size: 0.75rem; color: var(--bad); margin-top: 0.2rem; }
 
 /* Sticky toolbar with global controls + aggregate stats (SKADI-T-0369). */
 .dl-section { display: flex; flex-direction: column; gap: 0; }
-.dl-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px 8px 0 0; border-bottom: none; }
+
+/* Downloads (SKADI-I-0041, SKADI-I-0053, SKADI-T-0686..0692) on Aurora
+   (SKADI-T-0719): the status cards are Cards, the transfers an Aurora Table
+   with SortHeader cells, the filters Chips, the progress a Meter, the
+   controls Buttons. These rules keep the layout: a dense one-line row, the
+   row actions shown on hover or focus, the state edges. */
+.dl-engine, .vpn-panel { display: flex; align-items: center; gap: 0.7rem; margin: 0.5rem 0 0.75rem; }
+.dl-engine.ok, .vpn-panel.ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.dl-engine.bad, .vpn-panel.bad { border-color: color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 6%, var(--panel)); }
+.dl-engine-text, .vpn-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+.dl-engine-text strong, .vpn-text strong { color: var(--fg-bright); }
+.dl-engine-sub, .vpn-sub { font-size: 0.82rem; }
+.dl-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-md) var(--radius-md) 0 0; border-bottom: none; }
 .dl-toolbar-controls { display: flex; gap: 0.4rem; }
-.dl-toolbar-btn { font-size: 0.78rem; padding: 0.3rem 0.65rem; background: var(--control); border: 1px solid var(--border-control); border-radius: 6px; cursor: pointer; color: var(--fg); }
-.dl-toolbar-btn:hover { background: var(--panel); border-color: var(--border); }
 .dl-toolbar-stats { display: flex; gap: 0.75rem; margin-left: auto; font-size: 0.82rem; }
 .dl-toolbar-speed { white-space: nowrap; }
 .dl-toolbar-counts { font-size: 0.78rem; white-space: nowrap; }
+.dl-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-top: none; }
+.dl-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.6rem; margin: 0.4rem 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.82rem; }
+.dl-bulk-count { color: var(--fg-bright); margin-right: 0.4rem; }
+.dl-table { font-size: 0.82rem; }
+.dl-table .dl-check-cell { width: 2rem; }
+.dl-check { margin: 0; cursor: pointer; }
+.dl-table .dl-name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-bright); }
+.dl-table td.cl-num { white-space: nowrap; color: var(--muted); }
+.dl-table .dl-down.active { color: var(--ice); }
+.dl-table .dl-up.active { color: var(--gold); }
+.dl-progress { display: flex; align-items: center; gap: 0.35rem; min-width: 6rem; }
+.dl-bar { flex: 1; }
+.dl-pct { flex: none; width: 32px; text-align: right; font-size: 0.75rem; }
+.dl-row.paused td { opacity: 0.65; }
+.dl-actions-cell { width: 1%; white-space: nowrap; }
+.dl-actions { display: flex; gap: 0.15rem; justify-content: flex-end; opacity: 0; transition: opacity 0.12s; }
+.dl-row:hover .dl-actions, .dl-row:focus-within .dl-actions { opacity: 1; }
+.dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
+.dl-badge { margin-right: 0.4rem; }
+.dl-error { font-size: 0.75rem; color: var(--bad); white-space: normal; overflow-wrap: anywhere; }
+.dl-row.st-stalled td:first-child, .seed-row.st-stalled { box-shadow: inset 2px 0 0 var(--gold); }
+.dl-row.st-errored td, .dl-error-row td, .seed-row.st-errored { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.dl-row.st-errored td:first-child, .dl-error-row td:first-child, .seed-row.st-errored { box-shadow: inset 2px 0 0 var(--bad); }
+.dl-row.st-errored:has(+ .dl-error-row) td { border-bottom: none; }
+@media (hover: none) { .dl-actions { opacity: 1; } }
 
 /* Live worker-settings form (SKADI-T-0291). */
 .dl-settings { margin-top: 1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
@@ -1620,38 +1556,24 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 .dl-settings[open] > summary { border-bottom: 1px solid var(--border); }
 .dl-settings-body { padding: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9rem 1.25rem; }
 .dl-field { display: flex; flex-direction: column; gap: 0.3rem; }
-.dl-field > span:first-child { font-size: 0.85rem; color: var(--fg); }
-.dl-field input, .dl-field select { padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); }
 .dl-hint { font-size: 0.75rem; }
 .dl-settings-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.75rem; margin-top: 0.25rem; }
 .dl-save-msg { font-size: 0.85rem; }
 
-/* Naming settings page (SKADI-T-0299). */
+/* Naming settings page (SKADI-T-0299): Aurora Panels and TextInputs
+   (SKADI-T-0719). */
 .naming-help { margin-bottom: 1rem; }
-.naming-help code { background: var(--panel-2); padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.85em; }
 .naming-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
-.naming-domain { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
-.naming-domain h3 { margin: 0 0 0.75rem; color: var(--fg-bright); }
-.naming-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.7rem; }
-.naming-field > span { font-size: 0.82rem; color: var(--fg); }
-.naming-field input { padding: 0.4rem 0.55rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.85rem; }
-.naming-preview { margin-top: 0.5rem; padding: 0.5rem 0.6rem; background: var(--panel-2); border: 1px dashed var(--border); border-radius: 6px; color: var(--fg-bright); font-size: 0.78rem; word-break: break-all; }
-.naming-foot { display: flex; align-items: center; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap; }
-.naming-space { flex-direction: row; align-items: center; gap: 0.5rem; margin: 0; }
-.naming-space input { width: 3rem; text-align: center; }
+.naming-fields { display: flex; flex-direction: column; gap: var(--space-sm); }
+.naming-preview { padding: 0.5rem 0.6rem; background: var(--inset); border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--fg-bright); font-size: 0.78rem; word-break: break-all; }
+.naming-foot { display: flex; align-items: flex-end; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap; }
+.naming-space { width: 9rem; }
 .naming-msg { font-size: 0.85rem; }
 
 /* VPN / kill-switch panel (SKADI-T-0292). */
-.vpn-panel { display: flex; align-items: center; gap: 0.7rem; padding: 0.8rem 1rem; margin: 0.5rem 0 0.75rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-.vpn-panel.ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-.vpn-panel.bad { border-color: color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 6%, transparent); }
-.vpn-panel .health-dot { width: 10px; height: 10px; flex: none; }
 .vpn-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
 .vpn-text strong { color: var(--fg-bright); }
 .vpn-sub { font-size: 0.82rem; }
-.vpn-btn { margin-left: auto; background: var(--control); color: var(--fg); border: 1px solid var(--border-control); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
-.vpn-btn.danger { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }
-.vpn-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Offline audiobook player (SKADI-T-0331 / I-0048) — phone-first. --- */
 .player-page { max-width: 480px; margin: 0 auto; }
@@ -1704,7 +1626,7 @@ a.domain-card:hover { border-color: var(--border-control); background: var(--con
 .pair-card { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 10px; margin: 0.5rem 0 0.8rem; max-width: 300px; }
 .pair-qr svg { width: 260px; height: 260px; display: block; border-radius: 6px; }
 .pair-url-row { display: flex; gap: 0.4rem; width: 100%; }
-.pair-url-row input { flex: 1; min-width: 0; }
+.pair-url-field { flex: 1; min-width: 0; }
 /* The APK address under the download button: long, and worth reading before
    you send it to someone, so it wraps rather than scrolling out of sight. */
 .pair-url { font-size: 0.78rem; overflow-wrap: anywhere; margin: 0.15rem 0 0; }
@@ -1920,10 +1842,8 @@ p.genres.muted {
 .picker-hit .muted { font-size: 0.78rem; }
 .picked { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .picked .chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; background: var(--control); }
-.picked .chip button { border: 0; background: transparent; color: var(--muted); padding: 0; cursor: pointer; font-size: 0.9rem; line-height: 1; }
-.picked .chip button:hover { color: var(--bad); }
-.token-once { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.8rem; border: 1px solid var(--gold); border-radius: 10px; margin: 0.5rem 0; }
-.token-once code { word-break: break-all; font-size: 0.85rem; }
+/* The chip's remove button is an Aurora subtle Button, sized to the chip. */
+.picked .chip .cl-btn { height: auto; padding: 0 0.2rem; }
 .pair-link-row { display: flex; gap: 0.4rem; align-items: center; width: 100%; }
 .pair-link { flex: 1; min-width: 0; font-size: 0.72rem; word-break: break-all; color: var(--muted); }
 
@@ -1935,57 +1855,29 @@ p.genres.muted {
 .nav-account { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); padding: 0 0.2rem; }
 .nav-account > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* Section strips (SKADI-T-0627): one sidebar entry per area, links per page. */
-.subnav { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; }
-.subnav-title { font-size: 1.3rem; font-weight: 600; color: var(--fg); }
-.subnav-links { display: flex; gap: 0.15rem; flex-wrap: wrap; }
-.subnav-link { padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; color: var(--muted); text-decoration: none; }
-.subnav-link:hover { color: var(--fg); background: var(--control); }
-/* Marked the same way the sidebar marks its current entry, so "you are here"
-   reads identically in both navigations. */
-.subnav-link.is-here { color: var(--fg); background: var(--ice-bg); box-shadow: inset 0 -2px 0 var(--ice); }
+/* Section strips (SKADI-T-0627): one sidebar entry per area, links per
+   page, as Aurora's route Tabs (SKADI-T-0719). */
+.subnav { display: flex; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.subnav-title { font-size: 1.3rem; font-weight: 600; color: var(--fg); padding-bottom: 0.4rem; }
+.subnav-links { flex: 1; min-width: 0; }
 
 /* Theme choice under the Settings strip (SKADI-T-0720): Aurora's toggle. */
 .settings-theme { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: -0.25rem 0 1rem; }
 .settings-theme-label { font-size: 0.85rem; color: var(--muted); }
 .settings-theme-note { font-size: 0.8rem; color: var(--muted); }
 
-/* Settings → System (SKADI-T-0684): status facts, check / task / log tables.
-   Same chrome as the releases table; tones from the semantic tokens. */
-.notice.bad {
-  color: var(--bad-fg);
-  border-left-color: var(--bad);
-  background: var(--bad-bg);
-}
+/* Settings → System (SKADI-T-0684): Aurora's Table, DetailList and Alert
+   (SKADI-T-0719); the cells wrap long words and sit at the top. */
 .system-banner { margin: 0 0 0.6rem; }
-.system-facts { padding-top: 0; }
-.system-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-}
-.system-table th {
-  text-align: left;
-  color: var(--muted);
-  font-weight: 500;
-  border-bottom: 1px solid var(--border);
-  padding: 0.3rem 0.5rem;
-}
-.system-table td {
-  padding: 0.35rem 0.5rem;
-  border-top: 1px solid var(--border-soft);
-  vertical-align: top;
-  overflow-wrap: anywhere;
-}
+.system-table td { vertical-align: top; overflow-wrap: anywhere; }
 .system-table td.nowrap { white-space: nowrap; overflow-wrap: normal; }
-.system-table .status-dot { position: static; display: inline-block; margin-right: 0.4rem; vertical-align: middle; }
+.system-table .status-dot { margin-right: 0.4rem; vertical-align: middle; }
 .check-level { font-size: 0.72rem; color: var(--fg-2); }
 .check-id, .task-what { font-size: 0.72rem; }
 .check-remedy { color: var(--fg-2); }
 .check-row.sev-warn .check-remedy { color: var(--gold); }
 .check-row.sev-bad .check-remedy { color: var(--bad); }
 .log-table { font-size: 0.75rem; }
-.log-table td { padding: 0.2rem 0.5rem; }
 .log-message { white-space: pre-wrap; color: var(--fg-2); }
 .log-target { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .log-level { font-size: 0.7rem; }
@@ -1994,13 +1886,7 @@ p.genres.muted {
 .log-level.muted { color: var(--faint); }
 
 /* Downloads: state filter chips, "Added" column, Seeding sort bar (SKADI-T-0686). */
-.dl-filters { padding: 0.5rem 0.75rem; background: var(--panel-2); border: 1px solid var(--border); border-top: none; border-bottom: none; }
-.dl-filters .filter-chip { padding: 0.15rem 0.65rem; font-size: 12px; }
-.dl-header, .dl-row-compact { grid-template-columns: 1fr 70px 100px 80px 80px 55px 55px 50px; }
-.dl-row-compact .dl-added { text-align: right; color: var(--muted); white-space: nowrap; }
 .seed-sort { display: flex; align-items: center; gap: 0.9rem; padding: 0.35rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
-.seed-sort > .sort-head { cursor: pointer; user-select: none; }
-.seed-sort > .sort-head:hover { color: var(--fg); }
 .seed-sort .sort-active { color: var(--fg-bright); }
 .seed-added { font-size: 0.75rem; min-width: 2.5rem; text-align: right; }
 
@@ -2009,29 +1895,16 @@ p.genres.muted {
    tinted and shows its message; a stalled row gets a warn edge. */
 .badge.warn { background: var(--gold-bg); color: var(--gold-fg); }
 .badge.bad { background: var(--bad-bg); color: var(--bad-fg); }
-.dl-badge { margin-right: 0.4rem; font-weight: 600; }
-.dl-row-compact.st-stalled, .seed-row.st-stalled { box-shadow: inset 2px 0 0 var(--gold); }
-.dl-row-compact.st-errored, .seed-row.st-errored { background: color-mix(in srgb, var(--bad) 7%, transparent); box-shadow: inset 2px 0 0 var(--bad); }
-.dl-row-compact.st-errored:hover, .seed-row.st-errored:hover { background: var(--bad-bg); }
-.dl-row-compact .dl-error { white-space: normal; overflow-wrap: anywhere; }
 .seed-row.st-errored { flex-wrap: wrap; }
 .seed-row .seed-error { flex-basis: 100%; font-size: 0.75rem; color: var(--bad); overflow-wrap: anywhere; }
 
 /* Downloads multi-select and bulk bar (SKADI-T-0688). A checkbox column leads
    the active table; the bar shows while any row on show is selected. */
-.dl-header, .dl-row-compact { grid-template-columns: 22px 1fr 70px 100px 80px 80px 55px 55px 50px; }
-.dl-check { display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.dl-check input { margin: 0; cursor: pointer; }
-.dl-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.6rem; margin: 0.4rem 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 0.82rem; }
-.dl-bulk-count { color: var(--fg-bright); margin-right: 0.4rem; }
-.dl-bulk .dl-toolbar-btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
-.dl-bulk .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
 
 /* Downloads manual import (SKADI-T-0689). The Import… button sits at the end
    of a seeding row; the preview, the importer's reason and the result open
    under the row, full width. */
 .seed-row:has(.seed-import-panel, .seed-import-msg, .seed-error) { flex-wrap: wrap; }
-.seed-import { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
 .seed-import-msg { flex-basis: 100%; font-size: 0.78rem; overflow-wrap: anywhere; }
 .seed-import-msg.ok { color: var(--ok); }
 .seed-import-msg.bad { color: var(--bad); }
@@ -2044,7 +1917,6 @@ p.genres.muted {
 .seed-plan-kind.place { color: var(--ok); }
 .seed-plan-kind.replace { color: var(--gold); }
 .seed-plan-kind.reject { color: var(--bad); }
-.seed-import-panel .dl-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
 /* Activity row actions (SKADI-T-0691): admin-only buttons at the row's end;
    the outcome line sits above the board, since a removed run leaves it. */
 .run-actions { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
@@ -2054,8 +1926,6 @@ p.genres.muted {
 .run-action-msg.bad { color: var(--bad); }
 
 /* Queue order (SKADI-T-0692): the place of a queued row and its moves. */
-.dl-qpos { display: inline-block; min-width: 1.8em; margin-right: 0.35rem; color: var(--muted); font-size: 0.75rem; }
-.dl-row-compact .dl-actions button.dl-qmove:disabled { opacity: 0.35; cursor: default; }
 
 /* The confirm dialog is Aurora's ConfirmDialog (SKADI-T-0719); the body
    keeps its line breaks. */

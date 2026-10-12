@@ -24,6 +24,7 @@ pub mod loading;
 pub mod movies;
 pub mod tv;
 pub mod tv_import;
+pub mod ui;
 pub mod wanted;
 pub mod watch;
 

@@ -6,10 +6,11 @@
 //! bin stays a thin mount point.
 
 use aurora_leptos::components::{
-    AppShell, AuthCard, Button, CenterScreen, Modal, PasswordInput, SideNav, SideNavGroup,
-    SideNavLink, TextInput,
+    AppShell, AuthCard, Button, Card, CenterScreen, Chip, Modal, PageHeader, PasswordInput, Pill,
+    Select, SideNav, SideNavGroup, SideNavLink, SortHeader, Table, TextInput,
 };
 use aurora_leptos::tokens::token;
+use aurora_leptos::widgets::Meter;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::{A, Route, Router, Routes};
@@ -33,6 +34,7 @@ use crate::movies::{MovieDetailPage, MoviesConfigPage, MoviesPage};
 use crate::settings::{ProviderSection, indexer_spec};
 use crate::tv::{SeriesDetailPage, TvPage};
 use crate::tv_import::TvImportPage;
+use crate::ui::{LevelDot, tone};
 
 /// Result of the startup health probe, rendered in the shell.
 #[derive(Clone)]
@@ -635,18 +637,16 @@ fn Sidebar() -> impl IntoView {
                 } else {
                     "ok"
                 };
+                // Aurora's Meter (SKADI-T-0719); a calm ice bar until it fills.
+                let color = if sev == "ok" { token::ICE } else { tone(sev) };
+                let label = format!("{} used", r.path);
                 view! {
                     <div class="storage-row">
                         <div class="storage-row-head mono">
                             <span class="storage-path">{r.path.clone()}</span>
                             <span class=format!("storage-pct {sev}")>{pct}"%"</span>
                         </div>
-                        <div class="storage-track">
-                            <div
-                                class=format!("storage-fill {sev}")
-                                style=format!("width:{pct}%")
-                            ></div>
-                        </div>
+                        <Meter value=pct as f64 color=color label=label/>
                     </div>
                 }
             })
@@ -740,14 +740,14 @@ fn HealthBadge() -> impl IntoView {
             {move || match state.get() {
                 HealthState::Pending => {
                     view! {
-                        <span class="health-dot muted"></span>
+                        <LevelDot level="muted"/>
                         <span class="muted">"checking daemon…"</span>
                     }
                         .into_any()
                 }
                 HealthState::Ok(version) => {
                     view! {
-                        <span class="health-dot ok"></span>
+                        <LevelDot level="ok"/>
                         <span class="ok">"daemon ok"</span>
                         <span class="faint">" · v" {version}</span>
                     }
@@ -755,7 +755,7 @@ fn HealthBadge() -> impl IntoView {
                 }
                 HealthState::Err(msg) => {
                     view! {
-                        <span class="health-dot bad"></span>
+                        <LevelDot level="bad"/>
                         <span class="bad">"daemon unreachable: " {msg}</span>
                     }
                         .into_any()
@@ -816,12 +816,12 @@ pub fn DownloadersPage() -> impl IntoView {
     let vpn_panel = move || match vpn.get() {
         None => ().into_any(),
         Some(v) if !v.reachable => view! {
-            <div class="vpn-panel">
-                <span class="health-dot muted"></span>
+            <Card class:vpn-panel=true>
+                <LevelDot level="muted"/>
                 <div class="vpn-text"><strong>"VPN status unavailable"</strong>
                     <span class="muted vpn-sub">"gluetun control API unreachable"</span>
                 </div>
-            </div>
+            </Card>
         }
         .into_any(),
         Some(v) => {
@@ -842,20 +842,15 @@ pub fn DownloadersPage() -> impl IntoView {
             } else {
                 "VPN disconnected"
             };
-            let cls = if connected {
-                "vpn-panel ok"
-            } else {
-                "vpn-panel bad"
-            };
             let dot = if connected { "ok" } else { "bad" };
             view! {
-                <div class=cls>
-                    <span class=format!("health-dot {dot}")></span>
+                <Card class:vpn-panel=true class:ok=connected class:bad=!connected>
+                    <LevelDot level=dot/>
                     <div class="vpn-text">
                         <strong>{title}</strong>
                         <span class="muted mono vpn-sub">{sub}</span>
                     </div>
-                </div>
+                </Card>
             }
             .into_any()
         }
@@ -869,10 +864,10 @@ pub fn DownloadersPage() -> impl IntoView {
                 "Checking the torrent worker…"
             };
             view! {
-                <div class="dl-engine">
-                    <span class="health-dot muted"></span>
+                <Card class:dl-engine=true>
+                    <LevelDot level="muted"/>
                     <div class="dl-engine-text"><strong>{msg}</strong></div>
-                </div>
+                </Card>
             }
             .into_any()
         }
@@ -888,13 +883,13 @@ pub fn DownloadersPage() -> impl IntoView {
                 .unwrap_or_default();
             let disk = fmt_free_disk(w.free_bytes, w.total_bytes);
             view! {
-                <div class="dl-engine ok">
-                    <span class="health-dot ok"></span>
+                <Card class:dl-engine=true class:ok=true>
+                    <LevelDot level="ok"/>
                     <div class="dl-engine-text">
                         <strong>"Torrent worker running"</strong>
                         <span class="muted mono dl-engine-sub">{format!("{seen}{ver} · VPN-isolated{disk}")}</span>
                     </div>
-                </div>
+                </Card>
             }
             .into_any()
         }
@@ -904,15 +899,15 @@ pub fn DownloadersPage() -> impl IntoView {
                 None => "never checked in".into(),
             };
             view! {
-                <div class="dl-engine bad">
-                    <span class="health-dot bad"></span>
+                <Card class:dl-engine=true class:bad=true>
+                    <LevelDot level="bad"/>
                     <div class="dl-engine-text">
                         <strong>"Torrent worker not running"</strong>
                         <span class="muted dl-engine-sub">
                             {format!("{detail} — new downloads can't start until it's back. It's VPN-isolated, so a down tunnel keeps it from starting.")}
                         </span>
                     </div>
-                </div>
+                </Card>
             }
             .into_any()
         }
@@ -920,7 +915,7 @@ pub fn DownloadersPage() -> impl IntoView {
 
     view! {
         <crate::subnav::SubNav/>
-        <div class="page-head"><h2>"Downloads"</h2></div>
+        <PageHeader title="Downloads" class:page-header=true/>
         <div class="dl-view">
             {vpn_panel}
             {engine_card}
@@ -968,8 +963,11 @@ fn added_label(created_at: Option<&str>, now_ms: f64) -> String {
 /// [`crate::downloads::row_badge`]; nothing for a healthy row.
 fn row_badge_view(d: &api::Download) -> Option<AnyView> {
     crate::downloads::row_badge(d).map(|b| {
-        let cls = format!("badge {} dl-badge", b.level);
-        view! { <span class=cls title=b.title>{b.label}</span> }.into_any()
+        let cls = format!("dl-badge {}", b.level);
+        view! {
+            <span class=cls title=b.title><Pill color=tone(b.level)>{b.label}</Pill></span>
+        }
+        .into_any()
     })
 }
 
@@ -1092,27 +1090,35 @@ fn DownloadsSection() -> impl IntoView {
         )
     });
 
-    // A clickable header cell for `sort` (shared by both lists).
+    // A sort control of the Seeding list (the active table has Aurora's
+    // SortHeader cells).
     let sort_header = move |sort: RwSignal<SortState>,
                             storage_key: &'static str,
                             key: SortKey,
                             label: &'static str| {
-        let on_click = move |_| {
+        let on_click = Callback::new(move |()| {
             let next = sort.get_untracked().clicked(key);
             sort.set(next);
             local_set(storage_key, &next.encode());
-        };
+        });
         view! {
-            // A real button, so Tab reaches it and Enter / Space sort (SKADI-T-0700).
-            <button
-                type="button"
-                class=move || if sort.get().key == key { "sort-head sort-active" } else { "sort-head" }
-                on:click=on_click
-            >
+            <Button variant="subtle" size="xs" button_type="button" on_click=on_click
+                class:sort-active=move || sort.get().key == key>
                 {label}<span aria-hidden="true">{move || sort.get().arrow(key)}</span>
-            </button>
+            </Button>
         }
     };
+    // The active table's sort as Aurora's SortState, both ways, so its
+    // SortHeader cells drive the stored Skadi sort.
+    let active_aurora_sort = RwSignal::new(aurora_sort(active_sort.get_untracked()));
+    Effect::new(move |_| {
+        if let Some(next) = skadi_sort(&active_aurora_sort.get())
+            && next != active_sort.get_untracked()
+        {
+            active_sort.set(next);
+            local_set(dlm::ACTIVE_SORT_STORAGE_KEY, &next.encode());
+        }
+    });
 
     // Run one bulk action over the selected rows on show that offer it: one call
     // of the per-row endpoint each, in turn, then one refetch (SKADI-T-0688).
@@ -1185,28 +1191,24 @@ fn DownloadsSection() -> impl IntoView {
             .into_iter()
             .map(|a| {
                 let n = dlm::bulk_targets(a, &sel, &v.active).len();
-                let cls = if a == BulkAction::RemoveWithFiles {
-                    "dl-toolbar-btn danger"
-                } else {
-                    "dl-toolbar-btn"
-                };
                 view! {
-                    <button type="button" class=cls disabled=busy || n == 0
-                        on:click=move |_| run_bulk(a)>
+                    <Button variant="default" size="xs" button_type="button"
+                        bad=a == BulkAction::RemoveWithFiles disabled=busy || n == 0
+                        on_click=Callback::new(move |()| run_bulk(a))>
                         {format!("{} ({n})", a.label())}
-                    </button>
+                    </Button>
                 }
             })
             .collect_view();
-        let on_clear = move |_| {
+        let on_clear = Callback::new(move |()| {
             selected.set(dlm::Selection::new());
             bulk_msg.set(None);
-        };
+        });
         view! {
             <div class="dl-bulk" role="toolbar" aria-label="Selected transfers">
                 <span class="dl-bulk-count">{format!("{picked} selected")}</span>
                 {buttons}
-                <button type="button" class="dl-toolbar-btn" on:click=on_clear>"Clear"</button>
+                <Button variant="subtle" size="xs" button_type="button" on_click=on_clear>"Clear"</Button>
                 {bulk_msg.get().map(|m| view! { <span class="bad">{m}</span> })}
             </div>
         }
@@ -1220,23 +1222,17 @@ fn DownloadsSection() -> impl IntoView {
             return ().into_any();
         }
         let current = filter.get();
+        // Aurora's Chips (SKADI-T-0719).
         let chips = dlm::state_counts(&js)
             .into_iter()
             .map(|(f, n)| {
-                let cls = if f == current {
-                    "filter-chip active"
-                } else {
-                    "filter-chip"
-                };
-                let on_click = move |_| {
+                let on_click = Callback::new(move |()| {
                     filter.set(f);
                     local_set(dlm::FILTER_STORAGE_KEY, f.key());
-                };
+                });
                 view! {
-                    <button type="button" class=cls on:click=on_click>
-                        {f.label()}
-                        <span class="chip-count mono">{n.to_string()}</span>
-                    </button>
+                    <Chip label=f.label() count=i32::try_from(n).unwrap_or(i32::MAX)
+                        active=f == current on_click=on_click/>
                 }
             })
             .collect_view();
@@ -1310,7 +1306,7 @@ fn DownloadsSection() -> impl IntoView {
                 // Remove still clears it.
                 let failed = j.status == "error";
                 let row_cls = format!(
-                    "dl-row-compact st-{}{}",
+                    "dl-row st-{}{}",
                     state.key(),
                     if paused { " paused" } else { "" }
                 );
@@ -1342,17 +1338,16 @@ fn DownloadsSection() -> impl IntoView {
                 // toggle does not rebuild the table.
                 let id_sel = j.id.clone();
                 let id_chk = j.id.clone();
+                // Aurora has no checkbox: a native one (AURORA-T-0013).
                 let check = view! {
-                    <label class="dl-check">
-                        <input type="checkbox" aria-label=format!("Select {full_name}")
-                            prop:checked=move || selected.with(|s| s.contains(&id_chk))
-                            on:change=move |_| selected.update(|s| dlm::toggle_selected(s, &id_sel))/>
-                    </label>
+                    <input type="checkbox" class="dl-check" aria-label=format!("Select {full_name}")
+                        prop:checked=move || selected.with(|s| s.contains(&id_chk))
+                        on:change=move |_| selected.update(|s| dlm::toggle_selected(s, &id_sel))/>
                 };
 
                 // Action handlers
                 let id_pr = j.id.clone();
-                let on_pause_resume = move |_| {
+                let on_pause_resume = move |()| {
                     let id = id_pr.clone();
                     spawn_local(async move {
                         let _ = if paused {
@@ -1365,7 +1360,7 @@ fn DownloadsSection() -> impl IntoView {
                 };
                 let label_rm = label.clone();
                 let id_rm = j.id.clone();
-                let on_remove = move |_| {
+                let on_remove = move |()| {
                     let body = format!(
                         "Remove \"{label_rm}\" from the download client? (keeps any downloaded files)"
                     );
@@ -1382,7 +1377,7 @@ fn DownloadsSection() -> impl IntoView {
                 };
                 let label_del = label.clone();
                 let id_del = j.id.clone();
-                let on_delete = move |_| {
+                let on_delete = move |()| {
                     let body = format!(
                         "Remove \"{label_del}\" AND delete its downloaded files? This can't be undone."
                     );
@@ -1410,51 +1405,76 @@ fn DownloadsSection() -> impl IntoView {
                     .map(|(m, enabled)| {
                         let id = j.id.clone();
                         view! {
-                            <button type="button" class="dl-qmove" title=m.title() aria-label=m.title()
+                            <Button variant="subtle" size="xs" button_type="button" class:dl-qmove=true
+                                title=m.title() aria_label=m.title()
                                 disabled=move || !enabled || queue_busy.get()
-                                on:click=move |_| run_move(id.clone(), m)>
+                                on_click=Callback::new(move |()| run_move(id.clone(), m))>
                                 {m.glyph()}
-                            </button>
+                            </Button>
                         }
                     })
                     .collect_view();
-                let error_row = dlm::error_message(&j)
-                    .map(|e| view! { <div class="dl-error" title=e.clone()>{e.clone()}</div> });
+                // A failed transfer's message, full width under its row.
+                let error_row = dlm::error_message(&j).map(|e| {
+                    view! {
+                        <tr class=format!("dl-error-row st-{}", state.key())>
+                            <td colspan="10"><div class="dl-error" title=e.clone()>{e.clone()}</div></td>
+                        </tr>
+                    }
+                });
+                let progress_label = format!("{full_name} progress");
 
                 view! {
-                    <div class=row_cls>
-                        {check}
-                        <span class="dl-name" title=full_name>{q_pos}{badge}{label}</span>
-                        <span class="dl-size mono tnum">{size_str}</span>
-                        <span class="dl-progress">
-                            <span class="dl-bar">
-                                <span class="dl-bar-fill" style=format!("width:{pct:.0}%")></span>
+                    <tr class=row_cls>
+                        <td class="dl-check-cell">{check}</td>
+                        <td class="dl-name" title=full_name>{q_pos}{badge}{label}</td>
+                        <td class="dl-size cl-num mono">{size_str}</td>
+                        <td>
+                            <span class="dl-progress">
+                                <span class="dl-bar">
+                                    <Meter value=pct color="var(--aurora-3)" label=progress_label/>
+                                </span>
+                                <span class="dl-pct tnum">{format!("{pct:.0}%")}</span>
                             </span>
-                            <span class="dl-pct tnum">{format!("{pct:.0}%")}</span>
-                        </span>
-                        <span class=down_cls>{down_str}</span>
-                        <span class=up_cls>{up_str}</span>
-                        <span class="dl-peers mono tnum">{peers_str}</span>
-                        <span class="dl-eta mono tnum">{eta_str}</span>
-                        <span class="dl-added mono tnum" title=added_title>{added_str}</span>
-                        <div class="dl-actions">
-                            {q_buttons}
-                            {(!failed).then(|| view! {
-                                <button type="button" title={if paused { "Resume" } else { "Pause" }} aria-label=pr_label on:click=on_pause_resume>
-                                    {if paused { "▶" } else { "⏸" }}
-                                </button>
-                            })}
-                            <button type="button" title="Remove (keep files)" aria-label=rm_label on:click=on_remove>"✕"</button>
-                            <button type="button" class="danger" title="Delete files" aria-label=del_label on:click=on_delete>"🗑"</button>
-                        </div>
-                        {error_row}
-                    </div>
+                        </td>
+                        <td class=format!("cl-num {down_cls}")>{down_str}</td>
+                        <td class=format!("cl-num {up_cls}")>{up_str}</td>
+                        <td class="dl-peers cl-num mono">{peers_str}</td>
+                        <td class="dl-eta cl-num mono">{eta_str}</td>
+                        <td class="dl-added cl-num mono" title=added_title>{added_str}</td>
+                        <td class="dl-actions-cell">
+                            <div class="dl-actions">
+                                {q_buttons}
+                                {(!failed).then(|| view! {
+                                    <Button variant="subtle" size="xs" button_type="button"
+                                        title=if paused { "Resume" } else { "Pause" } aria_label=pr_label
+                                        on_click=Callback::new(on_pause_resume)>
+                                        {if paused { "▶" } else { "⏸" }}
+                                    </Button>
+                                })}
+                                <Button variant="subtle" size="xs" button_type="button"
+                                    title="Remove (keep files)" aria_label=rm_label
+                                    on_click=Callback::new(on_remove)>"✕"</Button>
+                                <Button variant="subtle" size="xs" bad=true button_type="button"
+                                    title="Delete files" aria_label=del_label
+                                    on_click=Callback::new(on_delete)>"🗑"</Button>
+                            </div>
+                        </td>
+                    </tr>
+                    {error_row}
                 }
             })
             .collect_view();
+        // Aurora's Table and SortHeader (SKADI-T-0719).
         let header = dlm::ACTIVE_COLUMNS
             .into_iter()
-            .map(|(key, label)| sort_header(active_sort, dlm::ACTIVE_SORT_STORAGE_KEY, key, label))
+            .map(|(key, label)| {
+                let align_right = key != SortKey::Name && key != SortKey::Progress;
+                view! {
+                    <SortHeader label=label key=key.key() sort=active_aurora_sort
+                        align_right=align_right/>
+                }
+            })
             .collect_view();
         // Select-all over the rows on show only (the current filter).
         let all_state =
@@ -1463,18 +1483,21 @@ fn DownloadsSection() -> impl IntoView {
             shown.with_untracked(|v| selected.update(|s| dlm::toggle_all(s, &v.active)));
         };
         view! {
-            <div class="dl-table">
-                <div class="dl-header">
-                    <label class="dl-check">
-                        <input type="checkbox" aria-label="Select all shown"
-                            prop:checked=move || all_state() == SelectAll::All
-                            prop:indeterminate=move || all_state() == SelectAll::Some
-                            on:change=on_all/>
-                    </label>
-                    {header}
-                </div>
-                {rows}
-            </div>
+            <Table class:dl-table=true label="Active transfers">
+                <thead>
+                    <tr>
+                        <th class="dl-check-cell">
+                            <input type="checkbox" class="dl-check" aria-label="Select all shown"
+                                prop:checked=move || all_state() == SelectAll::All
+                                prop:indeterminate=move || all_state() == SelectAll::Some
+                                on:change=on_all/>
+                        </th>
+                        {header}
+                        <th><span class="sr-only">"Actions"</span></th>
+                    </tr>
+                </thead>
+                <tbody>{rows}</tbody>
+            </Table>
         }
         .into_any()
     };
@@ -1596,7 +1619,7 @@ fn DownloadsSection() -> impl IntoView {
                 let added_title = j.created_at.clone().unwrap_or_default();
                 let state = dlm::row_state(&j);
                 let row_cls = format!("seed-row st-{}", state.key());
-                let dot_cls = format!("health-dot {}", state.level());
+                let dot_level = state.level();
                 let badge = row_badge_view(&j);
                 let error_line = dlm::error_message(&j)
                     .map(|e| view! { <div class="dl-error seed-error" title=e.clone()>{e.clone()}</div> });
@@ -1615,8 +1638,10 @@ fn DownloadsSection() -> impl IntoView {
                 let import_btn = action.zip(facts.clone()).map(|(a, f)| {
                     let id = j.id.clone();
                     view! {
-                        <button type="button" class="dl-toolbar-btn seed-import"
-                            on:click=move |_| open_import(id.clone(), f.clone())>{a.label()}</button>
+                        <Button variant="default" size="xs" button_type="button" class:seed-import=true
+                            on_click=Callback::new(move |()| open_import(id.clone(), f.clone()))>
+                            {a.label()}
+                        </Button>
                     }
                 });
                 let panel = action
@@ -1646,8 +1671,8 @@ fn DownloadsSection() -> impl IntoView {
                 });
                 view! {
                     <div class=row_cls>
-                        <span class=dot_cls></span>
-                        <span class="tile-tag mono">{tag}</span>
+                        <LevelDot level=dot_level/>
+                        <Pill color=if tag == "BOOK" { token::TEAL } else { token::ICE }>{tag}</Pill>
                         <span class="seed-title">{badge}{label}</span>
                         <span class="seed-size mono">{size}</span>
                         <span class="seed-up mono gold">{up}</span>
@@ -1748,27 +1773,31 @@ fn DownloadsSection() -> impl IntoView {
             "↑ —".into()
         };
 
-        let on_pause_all = move |_| {
+        let on_pause_all = Callback::new(move |()| {
             spawn_local(async move {
                 let _ = api::pause_all().await;
                 refetch();
             })
-        };
-        let on_resume_all = move |_| {
+        });
+        let on_resume_all = Callback::new(move |()| {
             spawn_local(async move {
                 let _ = api::resume_all().await;
                 refetch();
             })
-        };
+        });
 
         view! {
             <div class="dl-toolbar">
                 <div class="dl-toolbar-controls">
                     {any_active.then(|| view! {
-                        <button type="button" class="dl-toolbar-btn" on:click=on_pause_all>"⏸ Pause All"</button>
+                        <Button variant="default" size="xs" button_type="button" on_click=on_pause_all>
+                            "⏸ Pause All"
+                        </Button>
                     })}
                     {any_paused.then(|| view! {
-                        <button type="button" class="dl-toolbar-btn" on:click=on_resume_all>"▶ Resume All"</button>
+                        <Button variant="default" size="xs" button_type="button" on_click=on_resume_all>
+                            "▶ Resume All"
+                        </Button>
                     })}
                 </div>
                 <div class="dl-toolbar-stats mono tnum">
@@ -1807,8 +1836,8 @@ fn import_panel_view(
     facts: &api::DownloadImport,
     plan: Option<Result<api::ImportPlan, String>>,
     busy: bool,
-    on_confirm: impl Fn() + 'static,
-    on_cancel: impl Fn() + 'static,
+    on_confirm: impl Fn() + Send + Sync + 'static,
+    on_cancel: impl Fn() + Send + Sync + 'static,
 ) -> AnyView {
     use crate::downloads::{ImportAction, plan_view};
     let body = match plan {
@@ -1845,10 +1874,10 @@ fn import_panel_view(
                 <p class="seed-plan-summary">{v.summary}</p>
                 {match_note.map(|n| view! { <p class="muted">{n}</p> })}
                 <ul class="seed-plan">{lines}</ul>
-                <button type="button" class="dl-toolbar-btn" disabled=!can
-                    on:click=move |_| on_confirm()>
+                <Button size="xs" button_type="button" disabled=!can
+                    on_click=Callback::new(move |()| on_confirm())>
                     {if busy { "Importing…" } else { action.confirm_label() }}
-                </button>
+                </Button>
             }
             .into_any()
         }
@@ -1859,10 +1888,30 @@ fn import_panel_view(
             <p class="muted">"For " <strong>{target.to_string()}</strong></p>
             <p class="mono faint" title=facts.path.clone()>{facts.path.clone()}</p>
             {body}
-            <button type="button" class="dl-toolbar-btn" on:click=move |_| on_cancel()>"Cancel"</button>
+            <Button variant="default" size="xs" button_type="button"
+                on_click=Callback::new(move |()| on_cancel())>"Cancel"</Button>
         </div>
     }
     .into_any()
+}
+
+/// A Downloads sort as Aurora's `SortState`, for its `SortHeader` cells.
+fn aurora_sort(s: crate::downloads::SortState) -> aurora_leptos::components::SortState {
+    use aurora_leptos::components::{SortDir, SortState};
+    SortState::by(
+        s.key.key(),
+        if s.asc { SortDir::Asc } else { SortDir::Desc },
+    )
+}
+
+/// Back from [`aurora_sort`]; `None` for a key the Downloads table does not
+/// know.
+fn skadi_sort(s: &aurora_leptos::components::SortState) -> Option<crate::downloads::SortState> {
+    let key = crate::downloads::SortKey::from_key(s.key.as_deref()?)?;
+    Some(crate::downloads::SortState {
+        key,
+        asc: s.dir == aurora_leptos::components::SortDir::Asc,
+    })
 }
 
 /// Bytes/sec → "KB/s" string for the form (`0` ⇒ "0", i.e. unlimited). Pure.
@@ -1906,7 +1955,7 @@ fn DownloadSettingsForm() -> impl IntoView {
         });
     });
 
-    let on_save = move |_| {
+    let on_save = move |()| {
         saving.set(true);
         msg.set(String::new());
         let s = api::DownloadSettings {
@@ -1929,49 +1978,40 @@ fn DownloadSettingsForm() -> impl IntoView {
     view! {
         <details class="dl-settings">
             <summary>"Settings — bandwidth · queue · seeding"</summary>
+            // Aurora's fields (SKADI-T-0719). The hints say what 0 means; a
+            // number field that may be left at 0 keeps its text, so it is a
+            // TextInput of type number, not Aurora's NumberInput.
             <div class="dl-settings-body">
-                <label class="dl-field">
-                    <span>"Max active downloads"</span>
-                    <input type="number" min="0" prop:value=move || max_active.get()
-                        on:input=move |ev| max_active.set(event_target_value(&ev)) />
+                <div class="dl-field">
+                    <TextInput label="Max active downloads" input_type="number" value=max_active/>
                     <span class="muted dl-hint">"0 = unlimited"</span>
-                </label>
-                <label class="dl-field">
-                    <span>"Download cap (KB/s)"</span>
-                    <input type="number" min="0" step="10" prop:value=move || down_kbps.get()
-                        on:input=move |ev| down_kbps.set(event_target_value(&ev)) />
+                </div>
+                <div class="dl-field">
+                    <TextInput label="Download cap (KB/s)" input_type="number" value=down_kbps/>
                     <span class="muted dl-hint">"0 = unlimited"</span>
-                </label>
-                <label class="dl-field">
-                    <span>"Upload cap (KB/s)"</span>
-                    <input type="number" min="0" step="10" prop:value=move || up_kbps.get()
-                        on:input=move |ev| up_kbps.set(event_target_value(&ev)) />
+                </div>
+                <div class="dl-field">
+                    <TextInput label="Upload cap (KB/s)" input_type="number" value=up_kbps/>
                     <span class="muted dl-hint">"0 = unlimited · default 100"</span>
-                </label>
-                <label class="dl-field">
-                    <span>"Seed ratio"</span>
-                    <input type="number" min="0" step="0.1" prop:value=move || seed_ratio.get()
-                        on:input=move |ev| seed_ratio.set(event_target_value(&ev)) />
+                </div>
+                <div class="dl-field">
+                    <TextInput label="Seed ratio" input_type="number" value=seed_ratio/>
                     <span class="muted dl-hint">"0 = no ratio limit"</span>
-                </label>
-                <label class="dl-field">
-                    <span>"Seed time (minutes)"</span>
-                    <input type="number" min="0" prop:value=move || seed_time.get()
-                        on:input=move |ev| seed_time.set(event_target_value(&ev)) />
+                </div>
+                <div class="dl-field">
+                    <TextInput label="Seed time (minutes)" input_type="number" value=seed_time/>
                     <span class="muted dl-hint">"0 = no time limit"</span>
-                </label>
-                <label class="dl-field">
-                    <span>"On seed limit"</span>
-                    <select prop:value=move || seed_action.get()
-                        on:change=move |ev| seed_action.set(event_target_value(&ev))>
-                        <option value="stop">"Stop seeding (keep data)"</option>
-                        <option value="remove">"Stop + remove torrent (keep data)"</option>
-                    </select>
-                </label>
+                </div>
+                <div class="dl-field">
+                    <Select label="On seed limit" value=seed_action option_pairs=vec![
+                        ("stop".to_string(), "Stop seeding (keep data)".to_string()),
+                        ("remove".to_string(), "Stop + remove torrent (keep data)".to_string()),
+                    ]/>
+                </div>
                 <div class="dl-settings-actions">
-                    <button type="button" on:click=on_save disabled=move || saving.get()>
+                    <Button button_type="button" loading=saving on_click=Callback::new(on_save)>
                         {move || if saving.get() { "Saving…" } else { "Save" }}
-                    </button>
+                    </Button>
                     <span class="muted dl-save-msg">{move || msg.get()}</span>
                 </div>
             </div>

@@ -9,6 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use aurora_leptos::components::{Alert, PageHeader, Pill, Table};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -25,6 +27,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
+use crate::ui::LevelDot;
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
 fn decode_entities(s: &str) -> String {
@@ -972,7 +975,7 @@ fn cover_tile_in(b: api::Book, sel: Option<Selection>) -> AnyView {
                 }}
                 {check}
                 {(status != "owned")
-                    .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
+                    .then(|| view! { <LevelDot level=dot class="status-dot" size=11/> })}
                 {wanted.then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}
             </div>
             <div class="tile-scrim">
@@ -1118,7 +1121,7 @@ fn missing_cover_tile<F: Fn() + Copy + 'static>(w: api::Work, reload: F) -> AnyV
                     Some(src) => view! { <img src=src alt=title.clone() loading="lazy"/> }.into_any(),
                     None => view! { <div class="poster-ph">{title.clone()}</div> }.into_any(),
                 }}
-                <span class="status-dot wanted"></span>
+                <LevelDot level="wanted" class="status-dot" size=11/>
             </div>
             <div class="tile-scrim">
                     <span class="tile-title">{format!("{pos}{title}")}</span>
@@ -1851,9 +1854,9 @@ pub fn QualityLadderTable(tiers: Vec<api::AudiobookQuality>) -> impl IntoView {
             .enumerate()
             .map(|(i, row)| {
                 let tag = if i == 0 {
-                    Some(view! { <span class="badge ok">"best"</span> })
+                    Some(view! { <Pill color=token::OK>"best"</Pill> }.into_any())
                 } else if i == last {
-                    Some(view! { <span class="badge muted">"fallback"</span> })
+                    Some(view! { <Pill color=token::MUTED>"fallback"</Pill> }.into_any())
                 } else {
                     None
                 };
@@ -1874,7 +1877,7 @@ pub fn QualityLadderTable(tiers: Vec<api::AudiobookQuality>) -> impl IntoView {
             .collect_view()
             .into_any()
     };
-    view! { <table class="history-table"><tbody>{rows}</tbody></table> }
+    view! { <Table class:history-table=true><tbody>{rows}</tbody></Table> }
 }
 
 /// Audiobooks-domain configuration (SKADI-T-0142): audiobooks rank by a built-in,
@@ -1908,16 +1911,14 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
 
     view! {
         <crate::subnav::SubNav/>
-        <div class="page-head">
-            <h2>"Audiobooks · Config"</h2>
-            <A href="/audiobooks">"← Library"</A>
-        </div>
+        <PageHeader title="Audiobooks · Config" back_href="/audiobooks" back_label="Library"
+            class:page-header=true/>
 
         {move || (enabled.get() == Some(false)).then(|| view! {
-            <p class="bad">
+            <Alert color=token::BAD>
                 "The audiobooks domain is disabled. Enable it under "
                 <A href="/config">"Config → Domains"</A>" before acquiring."
-            </p>
+            </Alert>
         })}
 
         <section class="provider-section">

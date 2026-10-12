@@ -8,6 +8,10 @@
 
 use std::collections::BTreeSet;
 
+use aurora_leptos::components::{
+    Button, Card, CopyButton, Modal, PasswordInput, Pill, SecretReveal, Select, TextInput,
+};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde_json::{Value, json};
@@ -15,6 +19,26 @@ use serde_json::{Value, json};
 use crate::api::{self, MaxRating, Member, Policy};
 use crate::confirm::{ConfirmSpec, confirm};
 use crate::loading::{ListLoad, SkeletonKind};
+use crate::ui::mirror;
+
+/// The hue of a role's pill.
+fn role_tone(role: &str) -> &'static str {
+    match role {
+        "admin" => token::ICE,
+        "kid" => token::GOLD,
+        "contributor" => token::TEAL,
+        _ => token::OK,
+    }
+}
+
+/// The hue of a media kind's tag (`film`, `tv`, `book`), as in the library.
+pub fn kind_tone(kind: &str) -> &'static str {
+    match kind {
+        "film" => token::ICE,
+        "tv" => token::GOLD,
+        _ => token::TEAL,
+    }
+}
 
 /// The ordered US scales (skadi-core `rating`): a ceiling is one of these.
 #[must_use]
@@ -295,7 +319,7 @@ pub fn HouseholdPage() -> impl IntoView {
         });
     });
 
-    let open_add = move |_| {
+    let open_add = move |()| {
         name.set(String::new());
         role.set("kid".to_string());
         pin.set(String::new());
@@ -315,12 +339,12 @@ pub fn HouseholdPage() -> impl IntoView {
         form_error.set(None);
         editor.set(Editor::Edit(m.id.clone()));
     };
-    let cancel = move |_| {
+    let cancel = move |()| {
         editor.set(Editor::Closed);
         form_error.set(None);
     };
 
-    let submit = move |_| {
+    let submit = move |()| {
         let mode = editor.get_untracked();
         let n = name.get_untracked().trim().to_string();
         if n.is_empty() {
@@ -486,7 +510,8 @@ pub fn HouseholdPage() -> impl IntoView {
                     .as_deref()
                     .map(|t| format!("seen {}", t.get(..10).unwrap_or(t)))
                     .unwrap_or_else(|| "never paired".to_string());
-                let role_class = format!("pill role-{}", m.role);
+                let role_color = role_tone(&m.role);
+                let role_text = role_label(&m.role);
                 let m_edit = m.clone();
                 let m_qr = m.id.clone();
                 let m_re = m.clone();
@@ -501,19 +526,13 @@ pub fn HouseholdPage() -> impl IntoView {
                         (Some(p), _) => {
                             let link = p.url.clone();
                             let link_copy = link.clone();
-                            let copied = RwSignal::new(false);
                             view! {
                                 <div class="pair-qr" inner_html=p.qr_svg.clone()></div>
                                 // The same payload as a link: send it to the phone by
                                 // any message and tap it there — no scanning, no typing.
                                 <div class="pair-link-row">
                                     <code class="pair-link">{link}</code>
-                                    <button type="button" on:click=move |_| {
-                                        if let Some(w) = web_sys::window() {
-                                            let _ = w.navigator().clipboard().write_text(&link_copy);
-                                            copied.set(true);
-                                        }
-                                    }>{move || if copied.get() { "Copied" } else { "Copy link" }}</button>
+                                    <CopyButton value=Signal::stored(link_copy) label="Copy link"/>
                                 </div>
                             }
                             .into_any()
@@ -529,15 +548,14 @@ pub fn HouseholdPage() -> impl IntoView {
                         <div class="pair-card">
                             {body}
                             <div class="pair-url-row">
-                                <input
-                                    class="path-field mono"
-                                    r#type="text"
-                                    placeholder="host override, e.g. http://<tailscale-ip>:8080"
-                                    prop:value=move || qr_url.get()
-                                    on:input=move |ev| qr_url.set(event_target_value(&ev))
-                                    on:change=move |_| fetch_qr(refetch_id.clone())
-                                />
-                                <button type="button" on:click=move |_| fetch_qr(refetch_id2.clone())>"Update"</button>
+                                <div class="pair-url-field">
+                                    <TextInput value=qr_url mono=true spellcheck=false
+                                        aria_label="Host override"
+                                        placeholder="host override, e.g. http://<tailscale-ip>:8080"
+                                        on_change=Callback::new(move |_| fetch_qr(refetch_id.clone()))/>
+                                </div>
+                                <Button variant="default" button_type="button"
+                                    on_click=Callback::new(move |()| fetch_qr(refetch_id2.clone()))>"Update"</Button>
                             </div>
                             <p class="muted">"Scan it from the app's pairing screen, or send the link to the phone and open it there. Either way the phone pairs as this member."</p>
                         </div>
@@ -545,14 +563,14 @@ pub fn HouseholdPage() -> impl IntoView {
                     .into_any()
                 };
                 view! {
-                    <div class="card member-card">
+                    <Card class:card=true class:member-card=true>
                         <div class="card-main">
                             <strong>{m.name.clone()}</strong>
-                            <span class=role_class>{role_label(&m.role)}</span>
-                            {m.has_pin.then(|| view! { <span class="pill">"PIN"</span> })}
+                            <Pill color=role_color>{role_text}</Pill>
+                            {m.has_pin.then(|| view! { <Pill color=token::MUTED>"PIN"</Pill> })}
                             {(!m.has_password && !is_admin).then(|| view! {
-                                <span class="pill" title="Set a password so they can sign in">
-                                    "no password"
+                                <span title="Set a password so they can sign in">
+                                    <Pill color=token::GOLD>"no password"</Pill>
                                 </span>
                             })}
                             <span class="muted summary">{seen}</span>
@@ -561,22 +579,29 @@ pub fn HouseholdPage() -> impl IntoView {
                             })}
                         </div>
                         <div class="card-actions">
-                            <button on:click=move |_| open_edit(m_edit.clone())>"Edit"</button>
+                            <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| open_edit(m_edit.clone()))>"Edit"</Button>
                             {(!is_admin).then(|| {
                                 let id = m.id.clone();
-                                view! { <button on:click=move |_| toggle_qr(id.clone())>"Pair phone"</button> }
+                                view! {
+                                    <Button variant="default" size="xs"
+                                        on_click=Callback::new(move |()| toggle_qr(id.clone()))>"Pair phone"</Button>
+                                }
                             })}
                             {(!is_admin).then(|| view! {
-                                <button on:click=move |_| reissue(m_re.clone())>"Re-issue token"</button>
+                                <Button variant="default" size="xs"
+                                    on_click=Callback::new(move |()| reissue(m_re.clone()))>"Re-issue token"</Button>
                             })}
                             {(m.devices > 0).then(|| {
                                 let m_so = m.clone();
                                 view! {
-                                    <button on:click=move |_| signout(m_so.clone())>"Sign out devices"</button>
+                                    <Button variant="default" size="xs"
+                                        on_click=Callback::new(move |()| signout(m_so.clone()))>"Sign out devices"</Button>
                                 }
                             })}
                             {(!is_admin).then(|| view! {
-                                <button class="danger" on:click=move |_| revoke(m_rv.clone())>"Remove"</button>
+                                <Button variant="default" size="xs" bad=true
+                                    on_click=Callback::new(move |()| revoke(m_rv.clone()))>"Remove"</Button>
                             })}
                         </div>
                         <div class="member-policy">
@@ -586,25 +611,33 @@ pub fn HouseholdPage() -> impl IntoView {
                             {summary.into_iter().map(|s| view! { <span>{s}</span> }).collect_view()}
                         </div>
                         {qr_panel}
-                    </div>
+                    </Card>
                 }
             })
             .collect_view()
     };
 
-    let token_panel = move || {
-        fresh_token.get().map(|(who, tok)| {
-            view! {
-                <div class="token-once">
-                    <strong>{format!("{who}'s token")}</strong>
-                    <code>{tok}</code>
-                    <p class="muted">"Shown once. Pair the phone with the QR on their row, or type the server address and this token on the app's pairing screen."</p>
-                    <div class="form-actions">
-                        <button on:click=move |_| fresh_token.set(None)>"Done"</button>
-                    </div>
-                </div>
-            }
-        })
+    // A new token, shown once: Aurora's SecretReveal in a Modal
+    // (SKADI-T-0719). Closing it drops the token from memory.
+    let token_open = RwSignal::new(false);
+    Effect::new(move |_| token_open.set(fresh_token.with(Option::is_some)));
+    let token_title = Signal::derive(move || {
+        fresh_token
+            .with(|t| t.as_ref().map(|(who, _)| format!("{who}'s token")))
+            .unwrap_or_default()
+    });
+    let token_secret = Signal::derive(move || {
+        fresh_token
+            .with(|t| t.as_ref().map(|(_, tok)| tok.clone()))
+            .unwrap_or_default()
+    });
+    let token_panel = view! {
+        <Modal open=token_open title=token_title close_on_scrim=false
+            on_close=Callback::new(move |()| fresh_token.set(None))>
+            <SecretReveal secret=token_secret label="Token" done_label="Done"
+                warning="Shown once. Pair the phone with the QR on their row, or type the server address and this token on the app's pairing screen."
+                on_done=Callback::new(move |()| fresh_token.set(None))/>
+        </Modal>
     };
 
     let form_panel = move || {
@@ -615,52 +648,42 @@ pub fn HouseholdPage() -> impl IntoView {
         let editing = matches!(mode, Editor::Edit(_));
         let editing_admin = editing && role.get() == "admin";
         let title = if editing { "Edit member" } else { "Add member" };
+        let roles = vec![
+            (
+                "kid".to_string(),
+                "Kid — sees only what the policy allows".to_string(),
+            ),
+            (
+                "member".to_string(),
+                "Member — sees and plays everything".to_string(),
+            ),
+            (
+                "contributor".to_string(),
+                "Contributor — also adds media and starts searches".to_string(),
+            ),
+        ];
         view! {
             <div class="form policy-form">
                 <h4>{title}</h4>
                 <div class="policy-grid">
                     <div class="field">
-                        <label>"Name"</label>
-                        <input
-                            r#type="text"
-                            prop:value=move || name.get()
-                            on:input=move |ev| name.set(event_target_value(&ev))
-                        />
+                        <TextInput label="Name" value=name/>
                     </div>
                     {(!editing_admin).then(|| view! {
                         <div class="field">
-                            <label>"Role"</label>
-                            <select
-                                prop:value=move || role.get()
-                                on:change=move |ev| role.set(event_target_value(&ev))
-                            >
-                                <option value="kid" selected=move || role.get() == "kid">"Kid — sees only what the policy allows"</option>
-                                <option value="member" selected=move || role.get() == "member">"Member — sees and plays everything"</option>
-                                <option value="contributor" selected=move || role.get() == "contributor">"Contributor — also adds media and starts searches"</option>
-                            </select>
+                            <Select label="Role" option_pairs=roles value=role/>
                         </div>
                     })}
                     {editing.then(|| view! {
                         <div class="field">
-                            <label>"Signs in as"</label>
-                            <input
-                                r#type="text"
-                                prop:value=move || username.get()
-                                on:input=move |ev| username.set(event_target_value(&ev))
-                            />
+                            <TextInput label="Signs in as" value=username/>
                             <p class="muted">"Renaming them changes this too, unless you set it apart."</p>
                         </div>
                     })}
                     <div class="field">
-                        <label>
-                            {if editing { "New password (leave blank to keep)" } else { "Password" }}
-                        </label>
-                        <input
-                            r#type="password"
-                            autocomplete="new-password"
-                            prop:value=move || password.get()
-                            on:input=move |ev| password.set(event_target_value(&ev))
-                        />
+                        <PasswordInput
+                            label=if editing { "New password (leave blank to keep)" } else { "Password" }
+                            autocomplete="new-password" value=password/>
                         {move || (editing && !password.get().trim().is_empty()).then(|| view! {
                             <p class="muted">
                                 "Saving signs their devices out — which is the point when a password
@@ -669,21 +692,18 @@ pub fn HouseholdPage() -> impl IntoView {
                         })}
                     </div>
                     <div class="field">
-                        <label>{if editing { "New PIN (leave blank to keep)" } else { "PIN (optional)" }}</label>
-                        <input
-                            r#type="password"
-                            prop:value=move || pin.get()
-                            on:input=move |ev| pin.set(event_target_value(&ev))
-                        />
+                        <PasswordInput
+                            label=if editing { "New PIN (leave blank to keep)" } else { "PIN (optional)" }
+                            autocomplete="off" value=pin/>
                     </div>
                 </div>
                 {(!editing_admin).then(|| policy_editor(policy, library))}
                 {move || form_error.get().map(|e| view! { <p class="bad">{e}</p> })}
                 <div class="form-actions">
-                    <button on:click=submit disabled=move || busy.get()>
+                    <Button loading=busy on_click=Callback::new(submit)>
                         {if editing { "Save" } else { "Create" }}
-                    </button>
-                    <button on:click=cancel>"Cancel"</button>
+                    </Button>
+                    <Button variant="default" on_click=Callback::new(cancel)>"Cancel"</Button>
                 </div>
             </div>
         }
@@ -701,7 +721,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     <h3>"Members"</h3>
                     <p class="muted">"Everyone who can pair the app. Members see and play everything; kids see only what their policy allows; only the operator changes the library."</p>
                 </div>
-                <button on:click=open_add>"+ Add member"</button>
+                <Button variant="default" on_click=Callback::new(open_add)>"+ Add member"</Button>
             </div>
             {move || action_error.get().map(|e| view! { <p class="bad">{e}</p> })}
             {token_panel}
@@ -731,20 +751,15 @@ fn policy_editor(policy: RwSignal<PolicyForm>, library: RwSignal<Library>) -> An
                    kind: &'static str,
                    get: fn(&PolicyForm) -> String,
                    set: fn(&mut PolicyForm, String)| {
-        let options = rating_options(kind);
+        let options = rating_options(kind)
+            .iter()
+            .map(|o| ((*o).to_string(), format!("Up to {o}")))
+            .collect::<Vec<_>>();
+        let value = mirror(move || get(&policy.get()));
         view! {
             <div class="field">
-                <label>{label}</label>
-                <select
-                    prop:value=move || get(&policy.get())
-                    on:change=move |ev| policy.update(|p| set(p, event_target_value(&ev)))
-                >
-                    <option value="" selected=move || get(&policy.get()).is_empty()>"No ceiling"</option>
-                    {options.iter().map(|o| {
-                        let o = *o;
-                        view! { <option value=o selected=move || get(&policy.get()) == o>{format!("Up to {o}")}</option> }
-                    }).collect_view()}
-                </select>
+                <Select label=label option_pairs=options value=value placeholder="No ceiling"
+                    on_change=Callback::new(move |v: String| policy.update(|p| set(p, v)))/>
             </div>
         }
     };
@@ -844,11 +859,13 @@ fn picker(
                 view! {
                     <span class="chip">
                         {label}
-                        <button type="button" title="Remove" aria-label=format!("Remove {label_for_btn}") on:click=move |_| {
-                            let mut now = picked.get_untracked();
-                            now.retain(|x| x != &id2);
-                            set.run(now);
-                        }>"×"</button>
+                        <Button variant="subtle" size="xs" button_type="button" title="Remove"
+                            aria_label=format!("Remove {label_for_btn}")
+                            on_click=Callback::new(move |()| {
+                                let mut now = picked.get_untracked();
+                                now.retain(|x| x != &id2);
+                                set.run(now);
+                            })>"×"</Button>
                     </span>
                 }
             })
@@ -856,13 +873,7 @@ fn picker(
     };
     view! {
         <div class="field picker">
-            <label>{label}</label>
-            <input
-                r#type="text"
-                placeholder=placeholder
-                prop:value=move || query.get()
-                on:input=move |ev| query.set(event_target_value(&ev))
-            />
+            <TextInput label=label placeholder=placeholder value=query/>
             <div class="picker-hits">
                 {move || hits().into_iter().map(|t| {
                     let id = t.id.clone();
@@ -875,7 +886,7 @@ fn picker(
                             query.set(String::new());
                         }>
                             <span>{t.label.clone()}</span>
-                            <span class=format!("tag {kind}")>{t.kind}</span>
+                            <Pill color=kind_tone(kind)>{t.kind}</Pill>
                         </button>
                     }
                 }).collect_view()}

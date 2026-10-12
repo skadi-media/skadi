@@ -21,6 +21,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class, tmdb_img};
+use crate::ui::LevelDot;
 
 /// The series wall's status chips; a series with every episode is "Complete".
 pub const TV_CHIPS: &[(&str, &str)] = &[
@@ -248,7 +249,7 @@ fn series_tile(s: api::Series, sel: Option<Selection>) -> AnyView {
                 }}
                 {check}
                 {(status != "owned")
-                    .then(|| view! { <span class=format!("status-dot {dot}")></span> })}
+                    .then(|| view! { <LevelDot level=dot class="status-dot" size=11/> })}
                 {wanted.then(|| view! { <div class="tile-wanted"><span>"+"</span></div> })}
             </div>
             <div class="tile-scrim">

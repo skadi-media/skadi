@@ -1,6 +1,6 @@
 /* Skadi's own layout, on Aurora's tokens (SKADI-T-0717, SKADI-T-0719).
 
-   Aurora 0.5 (colliery-io-aurora) owns the colours, the type, the radii, the
+   Aurora 0.6 (colliery-io-aurora) owns the colours, the type, the radii, the
    light / dark / hyper themes and the components: buttons, fields, selects,
    switches, chips, pills, dots, cards, panels, alerts, tables, dialogs,
    toasts, tabs, stat tiles, meters, feeds and detail lists. Its stylesheets
@@ -135,12 +135,9 @@ a { color: var(--ice); text-decoration: none; }
 /* Aurora's <main> carries Skadi's `main` class and id (AppFrame). Cap the
    content to a comfortable measure and center it, so wide viewports don't
    strand everything in the top-left corner (SKADI-T-0144). */
-/* Not a dialog: an Aurora Modal is drawn where it is mounted, and its fixed
-   scrim must stay as wide as the window. */
+/* Not a dialog: Aurora 0.6 moves an open dialog to the end of <body>, but
+   one kept in place must keep its fixed scrim as wide as the window. */
 .main > :where(:not(.cl-modal-overlay, .cl-drawer-overlay)) { max-width: 1180px; margin-inline: auto; }
-/* Workaround, Aurora defect: tokens.css gives `#main` `height: 100%` (a page
-   id it assumes), which would clamp Skadi's <main id="main"> to the grid row. */
-#main { height: auto; }
 
 /* Aurora's PageHeader (SKADI-T-0719) gets the page's space under it, and
    stays above a detail page's pulled-up hero so its back link is clickable
@@ -1450,15 +1447,6 @@ p.genres.muted {
   text-align: center;
 }
 .tile-check.on { background: var(--ice); border-color: var(--ice); color: var(--on-accent); }
-
-/* --- Responsive shell (SKADI-T-0697; Aurora's AppShell since SKADI-T-0717) ---
-   Under 768px Aurora's sidebar is a drawer behind the top bar's menu button.
-   The open drawer locks the page scroll under it, so a swipe scrolls the
-   drawer and not the page. */
-@media (max-width: 768px) {
-  html:has(.cl-appshell--nav-open),
-  html:has(.cl-appshell--nav-open) body { overflow: hidden; }
-}
 
 /* Narrow tables become stacked cards, one "label  value" line per cell; the
    label is the cell's data-label (SKADI-T-0697). */

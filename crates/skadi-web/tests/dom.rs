@@ -514,6 +514,12 @@ async fn ask(
     (host, trigger, answer, Box::new(handle))
 }
 
+/// The whole page: an Aurora dialog moves to the end of `<body>` when it
+/// opens (Aurora 0.6), out of the test's host.
+fn page() -> HtmlElement {
+    document().body().unwrap()
+}
+
 fn find(host: &HtmlElement, selector: &str) -> HtmlElement {
     host.query_selector(selector)
         .unwrap()
@@ -556,9 +562,9 @@ async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
     use skadi_web::confirm::ConfirmSpec;
     let spec = ConfirmSpec::destructive("Delete the movie?", "Dune and its files go.")
         .confirm_label("Delete");
-    let (host, trigger, answer, _handle) = ask("confirm-trigger-ok", spec).await;
+    let (_host, trigger, answer, _handle) = ask("confirm-trigger-ok", spec).await;
 
-    let dialog = find(&host, "[role=dialog]");
+    let dialog = find(&page(), "[role=dialog]");
     assert_eq!(dialog.get_attribute("aria-modal").as_deref(), Some("true"));
     assert_eq!(
         dialog.get_attribute("aria-label").as_deref(),
@@ -570,7 +576,7 @@ async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
             .unwrap()
             .contains("Dune and its files go.")
     );
-    let (cancel, ok) = confirm_buttons(&host);
+    let (cancel, ok) = confirm_buttons(&page());
     assert!(ok.class_list().contains("cl-btn--bad"));
     assert_eq!(ok.text_content().as_deref(), Some("Delete"));
     // The first focus is on Cancel, so a stray Enter cancels.
@@ -580,7 +586,7 @@ async fn confirm_dialog_confirm_resolves_true_and_gives_focus_back() {
     ok.click();
     settle_dom().await;
     assert_eq!(answer.get(), Some(true));
-    assert_eq!(count(&host, "[role=dialog]"), 0, "dialog stayed open");
+    assert_eq!(count(&page(), "[role=dialog]"), 0, "dialog stayed open");
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
 }
 
@@ -589,21 +595,21 @@ async fn confirm_dialog_cancel_button_and_esc_resolve_false() {
     use skadi_web::confirm::ConfirmSpec;
     // The Cancel button.
     let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
-    let (host, trigger, answer, handle) = ask("confirm-trigger-cancel", spec).await;
-    confirm_buttons(&host).0.click();
+    let (_host, trigger, answer, handle) = ask("confirm-trigger-cancel", spec).await;
+    confirm_buttons(&page()).0.click();
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
-    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert_eq!(count(&page(), "[role=dialog]"), 0);
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
     drop(handle);
 
     // Esc, pressed inside the dialog.
     let spec = ConfirmSpec::destructive("Remove the member?", "Ann's phone stops working.");
-    let (host, trigger, answer, _handle) = ask("confirm-trigger-esc", spec).await;
-    key(&find(&host, "[role=dialog]"), "Escape", false);
+    let (_host, trigger, answer, _handle) = ask("confirm-trigger-esc", spec).await;
+    key(&find(&page(), "[role=dialog]"), "Escape", false);
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
-    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert_eq!(count(&page(), "[role=dialog]"), 0);
     assert_eq!(active_element().as_ref(), Some(trigger.as_ref()));
 }
 
@@ -611,9 +617,9 @@ async fn confirm_dialog_cancel_button_and_esc_resolve_false() {
 async fn confirm_dialog_traps_tab_and_a_backdrop_click_cancels() {
     use skadi_web::confirm::ConfirmSpec;
     let spec = ConfirmSpec::new("Grab a season pack?", "It satisfies every episode.");
-    let (host, _trigger, answer, _handle) = ask("confirm-trigger-tab", spec).await;
-    let (cancel, ok) = confirm_buttons(&host);
-    let close = find(&host, ".cl-modal__close");
+    let (_host, _trigger, answer, _handle) = ask("confirm-trigger-tab", spec).await;
+    let (cancel, ok) = confirm_buttons(&page());
+    let close = find(&page(), ".cl-modal__close");
     assert!(!ok.class_list().contains("cl-btn--bad"), "not danger");
     assert_eq!(ok.text_content().as_deref(), Some("Continue"));
     assert_eq!(active_element().as_ref(), Some(cancel.as_ref()));
@@ -628,10 +634,10 @@ async fn confirm_dialog_traps_tab_and_a_backdrop_click_cancels() {
     assert_eq!(answer.get(), None);
 
     // A click on the dialog itself does nothing; one on the backdrop cancels.
-    press(&find(&host, ".confirm-body"));
+    press(&find(&page(), ".confirm-body"));
     settle_dom().await;
     assert_eq!(answer.get(), None);
-    press(&find(&host, ".cl-modal-overlay"));
+    press(&find(&page(), ".cl-modal-overlay"));
     settle_dom().await;
     assert_eq!(answer.get(), Some(false));
 }
@@ -859,18 +865,18 @@ async fn bulk_delete_names_the_count_and_asks_once() {
 
     button_with_text(&host, "Delete + files").click();
     settle_dom().await;
-    assert_eq!(count(&host, "[role=dialog]"), 1, "one question");
-    let dialog = find(&host, "[role=dialog]");
+    assert_eq!(count(&page(), "[role=dialog]"), 1, "one question");
+    let dialog = find(&page(), "[role=dialog]");
     assert_eq!(
         dialog.get_attribute("aria-label").as_deref(),
         Some("Delete 3 movies?")
     );
     assert!(dialog.text_content().unwrap().contains("deleted from disk"));
-    let (cancel, ok) = confirm_buttons(&host);
+    let (cancel, ok) = confirm_buttons(&page());
     assert_eq!(ok.text_content().as_deref(), Some("Delete 3"));
     cancel.click();
     settle_dom().await;
-    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert_eq!(count(&page(), "[role=dialog]"), 0);
     assert_eq!(done.get_untracked(), 0, "a cancelled delete sends nothing");
     assert_eq!(sel.ids.get_untracked().len(), 4, "the selection is kept");
 }
@@ -1712,6 +1718,9 @@ async fn a_provider_form_refuses_a_blank_required_field_before_it_saves() {
         Some("provider-field-name-help")
     );
 
+    // The page reads the same address when it mounts: let that read end
+    // before counting, or it lands in the wait below.
+    gloo_timers::future::TimeoutFuture::new(300).await;
     let writes_before = fetches_of("/api/v1/settings/indexers");
     find(&form(), ".form-actions button").click();
     settle_dom().await;
@@ -1815,8 +1824,9 @@ async fn the_skip_link_is_the_first_stop_and_moves_focus_to_main() {
     );
 }
 
-/// The open drawer locks the page scroll (a `:has()` rule in style.css on
-/// Aurora's open class, SKADI-T-0717), and nothing is left locked after.
+/// The open drawer locks the page scroll (Aurora 0.6's `:has()` rule on its
+/// open class sets `overflow: hidden` on `<html>`), and nothing is left
+/// locked after.
 #[wasm_bindgen_test]
 async fn the_open_drawer_locks_the_page_scroll_and_unmount_releases_it() {
     let (frame, body) = narrow_frame(375).await;
@@ -1835,23 +1845,111 @@ async fn the_open_drawer_locks_the_page_scroll_and_unmount_releases_it() {
         view! { <Router><AppFrame><p class="page">"Page"</p></AppFrame></Router> }
     });
     settle_dom().await;
+    let html = doc.document_element().expect("the frame's <html>");
     let menu: HtmlElement = body.query_selector(MENU).unwrap().unwrap().unchecked_into();
-    assert_ne!(overflow(&body), "hidden");
+    assert_ne!(overflow(&html), "hidden");
     menu.click();
     settle_dom().await;
-    assert_eq!(overflow(&body), "hidden", "open drawer locks the page");
+    assert_eq!(overflow(&html), "hidden", "open drawer locks the page");
     menu.click();
     settle_dom().await;
-    assert_ne!(overflow(&body), "hidden", "closed drawer unlocks it");
+    assert_ne!(overflow(&html), "hidden", "closed drawer unlocks it");
     menu.click();
     settle_dom().await;
     drop(handle);
     settle_dom().await;
     assert_ne!(
-        overflow(&body),
+        overflow(&html),
         "hidden",
         "unmount never leaves the page locked"
     );
+    frame.remove();
+}
+
+/// A button that changes the route the way a shortcut does.
+#[component]
+fn GoElsewhere() -> impl IntoView {
+    let navigate = leptos_router::hooks::use_navigate();
+    view! {
+        <button type="button" class="go-elsewhere"
+            on:click=move |_| navigate("/skadi-test-route-change", Default::default())>
+            "Elsewhere"
+        </button>
+    }
+}
+
+/// A route change from the page closes the open drawer (Aurora 0.6's
+/// `nav_open`, set by AppFrame) and takes the focus to `<main>`.
+#[wasm_bindgen_test]
+async fn a_route_change_closes_the_drawer_and_focuses_main() {
+    let host = host();
+    let _handle = mount_to(host.clone(), || {
+        view! {
+            <Router>
+                <AppFrame>
+                    <GoElsewhere/>
+                </AppFrame>
+            </Router>
+        }
+    });
+    settle_dom().await;
+    let app = find(&host, SHELL);
+    let menu = find(&host, MENU);
+    let main = find(&host, &format!("main#{MAIN_ID}"));
+    menu.click();
+    settle_dom().await;
+    assert!(app.class_list().contains(OPEN), "the drawer is open");
+    find(&host, "button.go-elsewhere").click();
+    settle_dom().await;
+    next_frame().await;
+    assert!(
+        !app.class_list().contains(OPEN),
+        "a new page closes the drawer"
+    );
+    assert_eq!(attr(&menu, "aria-expanded").as_deref(), Some("false"));
+    assert!(is_active(&main), "a new page puts the focus in <main>");
+    host.remove();
+    // Let the frame's own requests (health, domains, ...) finish: the next
+    // test counts the requests that end while it runs.
+    gloo_timers::future::TimeoutFuture::new(300).await;
+}
+
+/// `<main>` grows with its page, so the page scrolls (Aurora 0.5 gave
+/// `#main` `height: 100%`; Skadi undid it until Aurora 0.6 dropped the rule).
+#[wasm_bindgen_test]
+async fn main_grows_with_a_long_page_and_the_page_scrolls() {
+    let (frame, body) = narrow_frame(1024).await;
+    let doc: Document = js_sys::Reflect::get(&frame, &"contentDocument".into())
+        .unwrap()
+        .unchecked_into();
+    let handle = mount_to(body.clone(), || {
+        view! {
+            <Router>
+                <AppFrame><div class="tall" style="height:3000px">"Long page"</div></AppFrame>
+            </Router>
+        }
+    });
+    settle_dom().await;
+    let main: HtmlElement = body
+        .query_selector(&format!("main#{MAIN_ID}"))
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    assert!(
+        main.offset_height() >= 3000,
+        "<main> holds the whole page, got {}px",
+        main.offset_height()
+    );
+    let root = doc
+        .scrolling_element()
+        .expect("the frame's scrolling element");
+    assert!(
+        root.scroll_height() > root.client_height(),
+        "the page scrolls ({} > {})",
+        root.scroll_height(),
+        root.client_height()
+    );
+    drop(handle);
     frame.remove();
 }
 
@@ -1875,7 +1973,7 @@ async fn slash_focuses_the_search_field_but_not_while_typing_or_with_ctrl() {
     assert!(!key_mod(filter.as_ref(), "/", false));
     assert!(!key_mod(filter.as_ref(), "?", false));
     settle_dom().await;
-    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert_eq!(count(&page(), "[role=dialog]"), 0);
 }
 
 #[wasm_bindgen_test]
@@ -1887,7 +1985,7 @@ async fn question_mark_lists_the_shortcuts_and_esc_gives_focus_back() {
     opener.focus().unwrap();
     key_mod(opener.as_ref(), "?", false);
     settle_dom().await;
-    let dialog = find(&host, "[role=dialog]");
+    let dialog = find(&page(), "[role=dialog]");
     assert_eq!(attr(&dialog, "aria-modal").as_deref(), Some("true"));
     assert_eq!(
         attr(&dialog, "aria-label").as_deref(),
@@ -1909,7 +2007,7 @@ async fn question_mark_lists_the_shortcuts_and_esc_gives_focus_back() {
     assert!(is_active(&close));
     key(&close, "Escape", false);
     settle_dom().await;
-    assert_eq!(count(&host, "[role=dialog]"), 0);
+    assert_eq!(count(&page(), "[role=dialog]"), 0);
     assert!(is_active(&opener), "focus is back where it was");
 }
 

@@ -233,10 +233,10 @@ pub fn UploadPage() -> impl IntoView {
             <div class="upload-controls">
                 <div class="upload-kind">
                     <Select label="What is it?" value=kind
-                        option_pairs=kinds
+                        option_pairs={kinds
                             .iter()
                             .map(|(v, label)| ((*v).to_string(), (*label).to_string()))
-                            .collect()/>
+                            .collect::<Vec<_>>()}/>
                 </div>
                 // Aurora has no file input: the label wears Aurora's button
                 // classes, and the input is hidden only from sight, so Tab

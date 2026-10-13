@@ -48,7 +48,6 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: REPO }],
 			editLink: { baseUrl: `${REPO}/edit/main/docs/` },
 			plugins: [starlightAurora({ hyper: true })],
-			expressiveCode: { frames: { extractFileNameFromCode: false } },
 			sidebar: [
 				{ label: 'Home', link: '/' },
 				{

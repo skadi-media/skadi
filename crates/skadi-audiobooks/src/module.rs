@@ -256,8 +256,9 @@ impl DomainModule for AudiobooksModule {
 
         // Contributor-role normalisation (SKADI-T-0652): rewrites role-suffixed
         // author strings stored before ingest parsed them. Runs once per start and
-        // exits; idempotent, so there is nothing to track. Workers are spawned
-        // concurrently, so this does NOT finish before discovery's first pass; that
+        // exits; idempotent, so there is nothing to track. It is `one_shot`, so the
+        // supervisor does not count that exit as a failure (SKADI-T-0728). Workers
+        // are spawned concurrently, so this does NOT finish before discovery's first pass; that
         // pass may query one role-suffixed name once. Harmless: `name_key` strips
         // roles, so matching is unaffected, and the next pass sees clean names.
         workers.push(Box::new(crate::roles::AuthorMaintenanceWorker::new(

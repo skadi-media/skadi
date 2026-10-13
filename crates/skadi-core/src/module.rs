@@ -33,6 +33,14 @@ pub trait Worker: Send + Sync {
     /// Implementations should select on `cancel.cancelled()` and return
     /// promptly once it fires.
     fn run(self: Box<Self>, cancel: CancellationToken) -> BoxFuture<'static, ()>;
+
+    /// `true` for a worker that does one pass and returns by design (a start-up
+    /// repair, say). The supervisor does not count its clean return as a
+    /// failure and does not run it again until the domain restarts; a panic
+    /// still counts (SKADI-T-0728).
+    fn one_shot(&self) -> bool {
+        false
+    }
 }
 
 /// A type-erased [`Worker`].

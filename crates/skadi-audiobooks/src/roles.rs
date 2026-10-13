@@ -291,6 +291,10 @@ where
         "audiobooks-author-maintenance"
     }
 
+    fn one_shot(&self) -> bool {
+        true
+    }
+
     fn run(
         self: Box<Self>,
         _cancel: tokio_util::sync::CancellationToken,

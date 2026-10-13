@@ -14,7 +14,7 @@
 #   - project `skadi-lab`: separate containers, network and named volumes; the
 #     prod `skadi` project is never touched. `angreal lab reset` (`down -v`) is
 #     the ONLY place a volume wipe is allowed, and it is pinned to this project.
-#   - NO VPN: gluetun, flaresolverr, autoheal and the vpn-watchdog sit behind the
+#   - NO VPN: gluetun, flaresolverr, indexer-proxy, autoheal and the vpn-watchdog sit behind the
 #     `vpn` profile and are not started. The worker therefore runs on the plain
 #     compose network WITHOUT the kill switch — the lab is for local / synthetic
 #     torrents only (SKADI-T-0392 memory profiling, upgrade rehearsals). Do not
@@ -33,6 +33,8 @@ services:
   gluetun:
     profiles: ["vpn"]
   flaresolverr:
+    profiles: ["vpn"]
+  indexer-proxy:
     profiles: ["vpn"]
   autoheal:
     profiles: ["vpn"]

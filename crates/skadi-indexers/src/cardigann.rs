@@ -67,6 +67,28 @@ pub(crate) fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
     out
 }
 
+/// Send, and send once more if the first try failed while connecting
+/// (SKADI-T-0731). Through gluetun's HTTP proxy, some tunnels carry stray bytes
+/// under parallel load, so a TLS handshake fails at random; a second tunnel
+/// almost always works. Only connect-stage errors (DNS, TCP, proxy tunnel, TLS
+/// handshake) are retried: the request has not reached the tracker then, so a
+/// retry cannot repeat a search or a login. An HTTP status is never retried.
+async fn send_with_retry(
+    rb: reqwest::RequestBuilder,
+) -> std::result::Result<reqwest::Response, reqwest::Error> {
+    let again = rb.try_clone();
+    match rb.send().await {
+        Err(e) if e.is_connect() => match again {
+            Some(again) => {
+                tracing::debug!(error = %error_chain(&e), "cardigann request: connect failed, trying once more");
+                again.send().await
+            }
+            None => Err(e),
+        },
+        other => other,
+    }
+}
+
 impl HttpFetcher {
     /// Tie this fetcher's counters to an indexer (SKADI-T-0552).
     pub fn track_as(&self, id: skadi_core::IndexerId) {
@@ -94,10 +116,7 @@ impl HttpFetcher {
         if let Some(e) = &self.setup_error {
             return Err(e.clone());
         }
-        let resp = self
-            .client
-            .get(url)
-            .send()
+        let resp = send_with_retry(self.client.get(url))
             .await
             .map_err(|e| format!("GET {url}: {}", error_chain(&e)))?;
         let status = resp.status().as_u16();
@@ -226,7 +245,9 @@ impl EngineFetcher for HttpFetcher {
         for (k, v) in &req.headers {
             rb = rb.header(k, v);
         }
-        let resp = rb.send().await.map_err(|e| FetchError(error_chain(&e)))?;
+        let resp = send_with_retry(rb)
+            .await
+            .map_err(|e| FetchError(error_chain(&e)))?;
         let status = resp.status().as_u16();
         let final_url = resp.url().to_string();
         let body = resp.text().await.map_err(|e| FetchError(error_chain(&e)))?;
@@ -328,6 +349,19 @@ impl CardigannIndexer {
             logged_in: Mutex::new(false),
             flags: crate::config::IndexerFlags::default(),
         }
+    }
+
+    /// Use `url` as the site instead of the definition's first link
+    /// (SKADI-T-0730). It is the base of every request and `.Config.sitelink`.
+    /// For a tracker that moved or broke a domain the definition still lists
+    /// first: EBookBay's `https://ebb.la/` serves another site's certificate,
+    /// and `http://ebb.la/` works.
+    #[must_use]
+    pub fn with_site_url(mut self, url: &str) -> Self {
+        self.base_url = url.to_string();
+        self.config
+            .insert("sitelink".into(), TVal::Str(with_trailing_slash(url)));
+        self
     }
 
     /// Apply the stored per-indexer flags (SKADI-T-0505).
@@ -1454,6 +1488,66 @@ mod fetcher_tests {
         );
     }
 
+    /// A fake proxy that answers every CONNECT with a reply that is not HTTP,
+    /// so each tunnel fails at the connect stage. Returns its URL and a count
+    /// of the connections it took.
+    async fn broken_proxy() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = count.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(b"\x16\x03 not http\r\n\r\n").await;
+            }
+        });
+        (format!("http://{addr}"), count)
+    }
+
+    /// SKADI-T-0731: a connect-stage failure is tried once more, not more.
+    #[tokio::test]
+    async fn a_failed_tunnel_is_tried_once_more() {
+        let (proxy, connections) = broken_proxy().await;
+        let fetcher = HttpFetcher::new(None, Some(&proxy));
+        let err = fetcher
+            .fetch(get("https://tracker.example/q".into()))
+            .await
+            .expect_err("the proxy never opens a tunnel");
+        assert!(!err.0.is_empty());
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let (proxy, connections) = broken_proxy().await;
+        let fetcher = HttpFetcher::new(None, Some(&proxy));
+        let _ = fetcher
+            .fetch_bytes("https://tracker.example/t.torrent")
+            .await;
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// SKADI-T-0731: an HTTP status is an answer, not a connect failure.
+    #[tokio::test]
+    async fn an_http_error_status_is_not_retried() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let tracker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&tracker)
+            .await;
+        let fetcher = HttpFetcher::new(None, None);
+        let resp = fetcher
+            .fetch(get(format!("{}/q", tracker.uri())))
+            .await
+            .unwrap();
+        assert_eq!(resp.status, 500);
+    }
+
     #[test]
     fn error_chain_skips_a_repeated_message() {
         #[derive(Debug)]
@@ -1473,5 +1567,107 @@ mod fetcher_tests {
             Some(Box::new(E("inner", Some(Box::new(E("root", None)))))),
         );
         assert_eq!(error_chain(&e), "outer: inner: root");
+    }
+}
+
+/// A per-indexer site URL in place of the definition's first link (SKADI-T-0730).
+#[cfg(test)]
+mod site_url_tests {
+    use super::*;
+
+    const DEF: &str = r#"
+id: synthsite
+name: SynthSite
+type: public
+caps:
+  categorymappings: [{id: "1", cat: Movies}]
+  modes: {search: [q]}
+search:
+  paths:
+    - path: "search?q={{ .Keywords }}"
+      response: {type: json}
+  rows: {selector: "$"}
+  fields:
+    title: {selector: name}
+    download: {selector: link}
+    size: {selector: size}
+    seeders: {selector: seeders}
+    category: {selector: category}
+"#;
+
+    struct Q(Vec<String>, skadi_core::ExternalIds);
+    impl SearchQuery for Q {
+        fn kind(&self) -> MediaKind {
+            MediaKind::Movie
+        }
+        fn titles(&self) -> &[String] {
+            &self.0
+        }
+        fn year(&self) -> Option<u16> {
+            None
+        }
+        fn external_ids(&self) -> &skadi_core::ExternalIds {
+            &self.1
+        }
+        fn categories(&self) -> &[Category] {
+            &[]
+        }
+    }
+
+    #[tokio::test]
+    async fn search_and_download_links_use_the_site_url_not_the_first_link() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        let body = r#"[{"name":"Some Book 2020","link":"get/1.torrent","size":"1000","seeders":"5","category":"1"}]"#;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .expect(1)
+            .mount(&site)
+            .await;
+
+        let mut def = skadi_cardigann::parse_definition(DEF).unwrap();
+        // The first link is a closed port: a request there would fail.
+        def.links = vec!["http://127.0.0.1:1/".into()];
+        let idx = CardigannIndexer::new(
+            IndexerId::new(),
+            Arc::new(def),
+            &BTreeMap::new(),
+            None,
+            None,
+            None,
+        )
+        .with_site_url(&format!("{}/", site.uri()));
+
+        let q = Q(vec!["Some Book".into()], Default::default());
+        let releases = idx.search(&q).await.expect("search goes to the site URL");
+        assert_eq!(releases.len(), 1);
+        match &releases[0].fetch {
+            ReleaseFetch::TorrentUrl(u) => {
+                assert_eq!(u, &format!("{}/get/1.torrent", site.uri()));
+            }
+            other => panic!("expected a torrent URL on the site URL, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_site_url_is_the_sitelink_of_templates() {
+        let def = skadi_cardigann::parse_definition(DEF).unwrap();
+        let idx = CardigannIndexer::new(
+            IndexerId::new(),
+            Arc::new(def),
+            &BTreeMap::new(),
+            None,
+            None,
+            None,
+        )
+        .with_site_url("http://ebb.la");
+        assert_eq!(idx.base_url, "http://ebb.la");
+        assert_eq!(
+            idx.config.get("sitelink"),
+            Some(&TVal::Str("http://ebb.la/".into()))
+        );
     }
 }

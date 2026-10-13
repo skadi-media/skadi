@@ -204,6 +204,11 @@ pub struct CardigannConfig {
     /// settings (login password/cookie) are sealed separately (SKADI-T-0258).
     #[serde(default)]
     pub settings: BTreeMap<String, String>,
+    /// The site to use instead of the definition's first link (SKADI-T-0730),
+    /// like the Base URL of Prowlarr and Jackett. Usually one of the
+    /// definition's `links` or `legacylinks`. `None` or blank ⇒ the first link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_url: Option<String>,
     /// Steady-state request rate cap (requests/minute). `None` ⇒ the gentle
     /// [`DEFAULT_RATE_PER_MINUTE`]; `Some(0)` ⇒ no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -211,6 +216,17 @@ pub struct CardigannConfig {
     /// Sonarr's per-indexer flags (SKADI-T-0505).
     #[serde(flatten, default)]
     pub flags: IndexerFlags,
+}
+
+impl CardigannConfig {
+    /// The site URL override, if one is set (blank counts as unset).
+    #[must_use]
+    pub fn site_url(&self) -> Option<&str> {
+        self.site_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 /// Configuration for the built-in [`StubIndexer`] — just a display name.
@@ -355,7 +371,16 @@ impl IndexerConfig {
                 "build_cardigann called on a non-cardigann config".into(),
             ));
         };
-        if definition.links.is_empty() {
+        let site_url = cfg.site_url().map(str::to_string);
+        if let Some(url) = &site_url
+            && !(url.starts_with("http://") || url.starts_with("https://"))
+        {
+            return Err(AppError::Validation(format!(
+                "cardigann indexer {:?}: site_url must be an http(s) URL",
+                cfg.name
+            )));
+        }
+        if definition.links.is_empty() && site_url.is_none() {
             return Err(AppError::Validation(format!(
                 "cardigann indexer {:?}: definition '{}' has no site link",
                 cfg.name, cfg.definition_id
@@ -363,17 +388,19 @@ impl IndexerConfig {
         }
         let rate = cfg.rate_per_minute.unwrap_or(DEFAULT_RATE_PER_MINUTE);
         // The sealed secret is a JSON object of secret settings (login creds).
-        let inner = Box::new(
-            CardigannIndexer::new(
-                id,
-                definition,
-                &cfg.settings,
-                secret.as_deref(),
-                flaresolverr_url,
-                proxy_url,
-            )
-            .with_flags(cfg.flags),
-        );
+        let mut indexer = CardigannIndexer::new(
+            id,
+            definition,
+            &cfg.settings,
+            secret.as_deref(),
+            flaresolverr_url,
+            proxy_url,
+        )
+        .with_flags(cfg.flags);
+        if let Some(url) = &site_url {
+            indexer = indexer.with_site_url(url);
+        }
+        let inner = Box::new(indexer);
         Ok(indexer_health_tracked(indexer_rate_limited(inner, rate)))
     }
 }
@@ -602,12 +629,79 @@ mod tests {
         );
     }
 
+    fn cardigann_with_site_url(site_url: Option<&str>) -> IndexerConfig {
+        IndexerConfig::Cardigann(CardigannConfig {
+            name: "EBookBay".into(),
+            definition_id: "thepiratebay".into(),
+            settings: BTreeMap::new(),
+            site_url: site_url.map(str::to_string),
+            rate_per_minute: None,
+            flags: Default::default(),
+        })
+    }
+
+    /// SKADI-T-0730.
+    #[test]
+    fn a_cardigann_site_url_must_be_http() {
+        let def = Arc::new(skadi_cardigann::parse_definition(PUBLIC_DEF).unwrap());
+        assert!(matches!(
+            cardigann_with_site_url(Some("ebb.la")).build_cardigann(
+                IndexerId::new(),
+                def.clone(),
+                None,
+                None,
+                None
+            ),
+            Err(AppError::Validation(m)) if m.contains("site_url")
+        ));
+        for ok in [None, Some(""), Some("  "), Some("http://ebb.la/")] {
+            assert!(
+                cardigann_with_site_url(ok)
+                    .build_cardigann(IndexerId::new(), def.clone(), None, None, None)
+                    .is_ok(),
+                "{ok:?}"
+            );
+        }
+    }
+
+    /// SKADI-T-0730: blank is unset, and an unset field is not written back.
+    #[test]
+    fn a_blank_site_url_is_unset_and_round_trips() {
+        let IndexerConfig::Cardigann(c) = cardigann_with_site_url(Some(" ")) else {
+            unreachable!()
+        };
+        assert_eq!(c.site_url(), None);
+        let json = serde_json::to_value(cardigann_with_site_url(None)).unwrap();
+        assert!(json.get("site_url").is_none());
+        let back: IndexerConfig = serde_json::from_value(serde_json::json!({
+            "kind": "cardigann", "name": "E", "definition_id": "ebookbay",
+            "site_url": "http://ebb.la/"
+        }))
+        .unwrap();
+        let IndexerConfig::Cardigann(c) = back else {
+            unreachable!()
+        };
+        assert_eq!(c.site_url(), Some("http://ebb.la/"));
+    }
+
+    /// SKADI-T-0730: a definition with no link works when a site URL is set.
+    #[test]
+    fn a_site_url_stands_in_for_a_definition_without_links() {
+        let def = Arc::new(skadi_cardigann::parse_definition("id: nolinks\nname: N\n").unwrap());
+        assert!(
+            cardigann_with_site_url(Some("https://mirror.example/"))
+                .build_cardigann(IndexerId::new(), def, None, None, None)
+                .is_ok()
+        );
+    }
+
     #[test]
     fn build_cardigann_rejects_definition_without_links() {
         let cfg = IndexerConfig::Cardigann(CardigannConfig {
             name: "x".into(),
             definition_id: "nolinks".into(),
             settings: BTreeMap::new(),
+            site_url: None,
             rate_per_minute: None,
             flags: Default::default(),
         });
@@ -624,6 +718,7 @@ mod tests {
             name: "x".into(),
             definition_id: "d".into(),
             settings: BTreeMap::new(),
+            site_url: None,
             rate_per_minute: None,
             flags: Default::default(),
         });

@@ -7,12 +7,13 @@ One `docker compose up -d` brings up the whole appliance:
 | `skadi` | the daemon (HTTP API **+ web UI**) | `0.0.0.0:8080` (LAN — see note) |
 | `skadi-downloader-worker` | built-in torrent client (librqbit) | **no port** — lives inside gluetun, driven via the DB |
 | `postgres` | backing store | compose network only |
-| `gluetun` | VPN tunnel + firewall + HTTP proxy | the daemon's native indexer searches egress through it (port 8888) |
+| `gluetun` | VPN tunnel + firewall | owns the namespace of the worker, FlareSolverr and indexer-proxy |
+| `indexer-proxy` | HTTP proxy (gost) for native indexer searches | **no network of its own** — lives inside gluetun (port 3128) |
 | `flaresolverr` | CloudFlare solver for native indexers | **no network of its own** — lives inside gluetun (port 8191) |
 
 > **Indexers are native**: Skadi's built-in Cardigann engine
 > replaces Prowlarr — add trackers from the catalog in the UI (**Indexers →
-> "+ Add tracker"**). Their searches ride gluetun's VPN proxy; CloudFlare-gated
+> "+ Add tracker"**). Their searches ride the VPN through indexer-proxy; CloudFlare-gated
 > ones are solved by FlareSolverr from the same VPN exit IP.
 
 The daemon serves a web UI at **`http://<host>:8080/`** (the same origin as

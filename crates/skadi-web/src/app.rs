@@ -265,33 +265,6 @@ pub fn nav_active(href: &str, path: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Aurora's `AppShell`, found from the skip link just before it.
-fn shell_of(skip: &web_sys::HtmlAnchorElement) -> Option<web_sys::Element> {
-    skip.next_element_sibling()
-        .filter(|e| e.class_list().contains("cl-appshell"))
-}
-
-/// Closes Aurora's drawer if it is open.
-///
-/// Workaround, Aurora defect: `AppShell` keeps its open state to itself (no
-/// prop, no context), so a product cannot close the drawer when the route
-/// changes another way (a shortcut, a link in the page) or when the window
-/// grows. Its own menu button is the one switch, so press it.
-fn close_drawer(shell: &web_sys::Element) {
-    use wasm_bindgen::JsCast;
-    if !shell.class_list().contains("cl-appshell--nav-open") {
-        return;
-    }
-    if let Some(menu) = shell
-        .query_selector(":scope > .cl-appshell__header > .cl-appshell__menu")
-        .ok()
-        .flatten()
-        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-    {
-        menu.click();
-    }
-}
-
 /// The shell's frame: Aurora's `AppShell` (SKADI-T-0717) with Skadi's brand
 /// and top-bar tools in its header, the [`Sidebar`] as its `SideNav`, and the
 /// routed pages in its `<main>`.
@@ -300,32 +273,22 @@ fn close_drawer(shell: &web_sys::Element) {
 /// a drawer behind the menu button, which has `aria-expanded` /
 /// `aria-controls`; focus moves to its first link, Tab stays inside it, and
 /// Esc, a click on the scrim or a click on a link closes it (Esc gives focus
-/// back to the menu button). Skadi adds:
+/// back to the menu button). Since Aurora 0.6 it also closes the drawer when
+/// the window grows past the breakpoint, locks the page scroll under the open
+/// drawer, and gives `<main>` the `main` id, class and `tabindex="-1"`.
+/// Skadi adds:
 /// - a skip link before the frame, the first Tab stop (SKADI-T-0700);
-/// - the `main` id, class and `tabindex="-1"` on Aurora's `<main>`, so the
-///   skip link and a new page can focus it;
-/// - focus to `<main>` after a route change, and the drawer closed then and
-///   when the window grows past the breakpoint;
-/// - the page scroll locked under the open drawer (in `style.css`).
+/// - focus to `<main>` after a route change, and the drawer closed then.
+///
+/// Skadi keeps its own skip link, not Aurora's `skip_link`: Aurora's is a
+/// plain `<a href="#main">`, which `leptos_router` takes as a navigation (the
+/// URL gets `#main`) and the focus does not move.
 ///
 /// Must sit inside a `<Router>` (it watches the location).
 #[component]
 pub fn AppFrame(children: Children) -> impl IntoView {
-    let skip_ref = NodeRef::<leptos::html::A>::new();
-
-    // Workaround, Aurora defect: `AppShell` takes no id, class or tabindex
-    // for its `<main>`, and the skip link, the focus-after-navigation and the
-    // tests all need one. Set them once the frame is in the page.
-    Effect::new(move |_| {
-        let Some(shell) = skip_ref.get().as_ref().and_then(shell_of) else {
-            return;
-        };
-        if let Some(main) = shell.query_selector(":scope > main").ok().flatten() {
-            main.set_id(MAIN_ID);
-            let _ = main.set_attribute("tabindex", "-1");
-            let _ = main.class_list().add_1("main");
-        }
-    });
+    // The drawer's open state, Aurora's `nav_open`: the frame closes it.
+    let nav_open = RwSignal::new(false);
 
     // A new page closes the drawer and takes the keyboard focus to <main>
     // (SKADI-T-0700): the link that was used stays in the sidebar, or is gone
@@ -335,33 +298,25 @@ pub fn AppFrame(children: Children) -> impl IntoView {
     Effect::new(move |prev: Option<String>| {
         let path = location.pathname.get();
         if prev.is_some_and(|p| p != path) {
-            if let Some(shell) = skip_ref.get_untracked().as_ref().and_then(shell_of) {
-                close_drawer(&shell);
+            if nav_open.get_untracked() {
+                nav_open.set(false);
             }
             request_animation_frame(focus_main_after_navigation);
         }
         path
     });
-    let resize = window_event_listener(leptos::ev::resize, move |_| {
-        let wide = window()
-            .inner_width()
-            .ok()
-            .and_then(|w| w.as_f64())
-            .is_some_and(|w| w > 768.0);
-        if wide && let Some(shell) = skip_ref.get_untracked().as_ref().and_then(shell_of) {
-            close_drawer(&shell);
-        }
-    });
-    on_cleanup(move || resize.remove());
 
     view! {
-        <a class="skip-link" node_ref=skip_ref href=format!("#{MAIN_ID}") on:click=skip_to_main>
+        <a class="skip-link" href=format!("#{MAIN_ID}") on:click=skip_to_main>
             "Skip to content"
         </a>
         <AppShell
             brand=std::sync::Arc::new(|| view! { <Snowflake/><span class="brand-name">"Skadi"</span> }.into_any())
             header=Box::new(|| view! { <TopBarTools/> }.into_any())
             navbar=Box::new(|| view! { <Sidebar/> }.into_any())
+            nav_open=nav_open
+            main_id=MAIN_ID
+            main_class="main"
         >
             <crate::shortcuts::ShortcutsHost/>
             {children()}
@@ -392,7 +347,7 @@ fn TopBarTools() -> impl IntoView {
             {move || can_contribute().then(|| view! {
                 <Button on_click=go_add class:add-media=true>"+ Add media"</Button>
             })}
-            // Workaround, Aurora defect: Aurora 0.5 has no gear icon, so the
+            // Workaround, Aurora defect: Aurora 0.6 has no gear icon, so the
             // glyph the library pages use, named for screen readers.
             <Button variant="subtle" href=crate::preferences::PREFERENCES_PATH
                 title="Settings" aria_label="Settings" class:topbar-gear=true>"⚙"</Button>

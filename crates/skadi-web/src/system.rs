@@ -281,10 +281,10 @@ fn SystemPanels() -> impl IntoView {
                 </div>
                 <div class="page-head-actions">
                     <Select aria_label="Log level" value=log_min
-                        option_pairs=LOG_FILTERS
+                        option_pairs={LOG_FILTERS
                             .iter()
                             .map(|(v, label)| ((*v).to_string(), (*label).to_string()))
-                            .collect()/>
+                            .collect::<Vec<_>>()}/>
                     <Button variant="default" loading=logs_loading
                         on_click=Callback::new(move |()| load_logs())>
                         {move || if logs_loading.get() { "Refreshing…" } else { "Refresh" }}

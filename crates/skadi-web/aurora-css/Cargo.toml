@@ -14,4 +14,4 @@ publish = false
 
 [dependencies]
 # No default features: the stylesheet consts only, no Leptos for the host.
-colliery-io-aurora = { version = "0.5.0", default-features = false }
+colliery-io-aurora = { version = "0.6.1", default-features = false }

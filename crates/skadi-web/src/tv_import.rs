@@ -1808,10 +1808,10 @@ fn unmapped_block(
                     })}
                     <div class="unmapped-pick">
                         <Select aria_label=format!("Season of {file_name}") placeholder="Season"
-                            option_pairs=season_opts
+                            option_pairs={season_opts
                                 .into_iter()
                                 .map(|s| (s.number.to_string(), season_label(s.number)))
-                                .collect()
+                                .collect::<Vec<_>>()}
                             value=season_value on_change=Callback::new(on_season)/>
                     </div>
                     {ep_select}

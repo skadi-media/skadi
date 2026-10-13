@@ -23,7 +23,7 @@ def _docs_plissken():
     """Write the API reference. A missing plissken is a warning, not an error."""
     if not shutil.which("plissken"):
         print("Warning: plissken not found; the site builds with no API reference "
-              "(cargo install plissken --version 0.2.0)")
+              "(cargo install plissken --version 0.2.1)")
         return 0
     print("Generating API documentation with plissken...")
     return subprocess.run(["plissken", "render"], cwd=cwd).returncode

@@ -658,6 +658,8 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
     // The Name error, next to the Name input (SKADI-T-0699).
     let name_err = RwSignal::new(None::<String>);
     let refreshing = RwSignal::new(false);
+    // The site address, when the definition offers more than one (SKADI-T-0730).
+    let site = RwSignal::new(String::new());
 
     let load = move || {
         loading.set(true);
@@ -690,6 +692,7 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
     let pick = move |d: api::CatalogDef| {
         let mut f = HashMap::new();
         f.insert("name".to_string(), d.name.clone());
+        site.set(d.links.first().cloned().unwrap_or_default());
         for s in &d.settings {
             if let Some(def) = &s.default {
                 f.insert(s.name.clone(), def.clone());
@@ -733,6 +736,12 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
             "definition_id": def.id,
             "settings": Value::Object(settings),
         });
+        // Only a choice other than the default is stored, so the indexer keeps
+        // following the definition's first link otherwise (SKADI-T-0730).
+        let chosen = site.get_untracked();
+        if !chosen.is_empty() && def.links.first() != Some(&chosen) {
+            body["site_url"] = Value::String(chosen);
+        }
         if !secrets.is_empty() {
             body["api_key"] =
                 Value::String(serde_json::to_string(&Value::Object(secrets)).unwrap_or_default());
@@ -807,6 +816,21 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
             .collect_view();
         let title = def.name.clone();
         let needs_login = def.needs_login;
+        let site_field = (def.links.len() > 1).then(|| {
+            let options = def
+                .links
+                .iter()
+                .map(|l| (l.clone(), l.clone()))
+                .collect::<Vec<_>>();
+            view! {
+                <div class="field">
+                    <Select label="Site" option_pairs=options value=site/>
+                    <p class="field-help muted">
+                        "The address to use. Pick another one when the first does not work."
+                    </p>
+                </div>
+            }
+        });
         view! {
             <div class="form">
                 <div class="catalog-form-head">
@@ -840,6 +864,7 @@ fn CardigannAddPanel(on_added: Callback<()>) -> impl IntoView {
                     {move || name_err.get().map(|e| view! { <p class="cl-field__error field-error" role="alert">{e}</p> })}
                 </div>
                 {fields}
+                {site_field}
                 {move || form_err.get().map(|e| view! { <p class="bad">{e}</p> })}
                 <div class="form-actions">
                     <Button loading=busy on_click=Callback::new(save)>
@@ -1017,12 +1042,22 @@ fn row_view(
     } else {
         variant.summary_key
     };
-    let summary = item
+    let mut summary = item
         .body
         .get(summary_key)
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    // A cardigann row on another site address says so (SKADI-T-0730).
+    if is_cardigann
+        && let Some(site) = item
+            .body
+            .get("site_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+    {
+        summary = format!("{summary} · {site}");
+    }
     let has_secret = item.has_secret.unwrap_or(false);
 
     let edit_id = id.clone();

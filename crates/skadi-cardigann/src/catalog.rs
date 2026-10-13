@@ -43,6 +43,9 @@ pub struct CatalogEntry {
     pub categories: Vec<String>,
     /// Supported search modes (`search`, `movie-search`, …).
     pub search_modes: Vec<String>,
+    /// The site addresses an indexer can use (SKADI-T-0730): `links` first, then
+    /// `legacylinks`, without repeats. The first is the default.
+    pub links: Vec<String>,
 }
 
 /// Summarize a definition for the catalog.
@@ -58,6 +61,12 @@ pub fn summarize(def: &Definition) -> CatalogEntry {
     categories.dedup();
     let mut search_modes: Vec<String> = def.caps.modes.keys().cloned().collect();
     search_modes.sort();
+    let mut links: Vec<String> = Vec::new();
+    for l in def.links.iter().chain(&def.legacylinks) {
+        if !links.contains(l) {
+            links.push(l.clone());
+        }
+    }
 
     CatalogEntry {
         id: def.id.clone(),
@@ -89,6 +98,7 @@ pub fn summarize(def: &Definition) -> CatalogEntry {
             .collect(),
         categories,
         search_modes,
+        links,
     }
 }
 
@@ -294,6 +304,19 @@ mod tests {
         assert!(tpb.settings.iter().all(|s| s.kind != "info"));
         // The full definition is retrievable for building an indexer.
         assert!(cat.get("thepiratebay").is_some());
+    }
+
+    /// SKADI-T-0730: the catalog offers links then legacy links, once each.
+    #[test]
+    fn the_catalog_lists_links_then_legacy_links_without_repeats() {
+        let def = crate::parse_definition(
+            "id: ebb\nname: EBB\nlinks:\n  - https://ebb.la/\nlegacylinks:\n  - http://ebb.la/\n  - https://ebb.la/\n",
+        )
+        .unwrap();
+        assert_eq!(
+            summarize(&def).links,
+            vec!["https://ebb.la/".to_string(), "http://ebb.la/".to_string()]
+        );
     }
 
     #[test]

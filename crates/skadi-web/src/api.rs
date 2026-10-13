@@ -300,6 +300,10 @@ pub struct CatalogDef {
     pub categories: Vec<String>,
     #[serde(default)]
     pub search_modes: Vec<String>,
+    /// Site addresses: links, then legacy links; the first is the default
+    /// (SKADI-T-0730). Empty from an older daemon.
+    #[serde(default)]
+    pub links: Vec<String>,
 }
 
 /// `GET /indexers/definitions` — the synced cardigann definition catalog.

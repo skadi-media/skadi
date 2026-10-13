@@ -43,6 +43,28 @@ pub struct HttpFetcher {
     /// `OnceLock` rather than a mutex: it is written once at construction and
     /// read on every fetch, so there is no guard to hold across an await.
     indexer: std::sync::OnceLock<skadi_core::IndexerId>,
+    /// Why the configured proxy could not be applied (SKADI-T-0729). When set,
+    /// every fetch fails with this reason instead of going out without the
+    /// proxy: tracker traffic must not leave outside the VPN unseen.
+    setup_error: Option<String>,
+}
+
+/// A reqwest error with its source chain, so a log says why a request failed.
+/// reqwest's own message stops at "error sending request for url (...)", which
+/// hides whether it was DNS, connect, the proxy, TLS or a timeout (SKADI-T-0729).
+pub(crate) fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = e.to_string();
+    let mut source = e.source();
+    while let Some(s) = source {
+        let msg = s.to_string();
+        // hyper and reqwest repeat the inner message in the outer one.
+        if !out.contains(&msg) {
+            out.push_str(": ");
+            out.push_str(&msg);
+        }
+        source = s.source();
+    }
+    out
 }
 
 impl HttpFetcher {
@@ -69,17 +91,20 @@ impl HttpFetcher {
     /// the same client, and therefore the same cookie jar and login state, so a
     /// download link that only works while signed in works here too.
     pub async fn fetch_bytes(&self, url: &str) -> std::result::Result<(u16, Vec<u8>), String> {
+        if let Some(e) = &self.setup_error {
+            return Err(e.clone());
+        }
         let resp = self
             .client
             .get(url)
             .send()
             .await
-            .map_err(|e| format!("GET {url}: {e}"))?;
+            .map_err(|e| format!("GET {url}: {}", error_chain(&e)))?;
         let status = resp.status().as_u16();
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| format!("reading {url}: {e}"))?
+            .map_err(|e| format!("reading {url}: {}", error_chain(&e)))?
             .to_vec();
         Ok((status, bytes))
     }
@@ -94,12 +119,35 @@ impl HttpFetcher {
         // Route tracker requests via the (VPN) proxy so they share FlareSolverr's
         // exit IP. The FlareSolverr client itself is direct (it talks to the
         // solver service, which already egresses via the VPN).
-        if let Some(p) = proxy_url.filter(|s| !s.trim().is_empty())
-            && let Ok(proxy) = reqwest::Proxy::all(p)
-        {
-            builder = builder.proxy(proxy);
+        //
+        // A proxy that is configured but cannot be applied is an error, not a
+        // reason to go direct (SKADI-T-0729): the client used to drop a bad URL
+        // and fall back to `Client::new()` on a build failure, both silently,
+        // which would send tracker traffic outside the VPN.
+        let mut setup_error = None;
+        if let Some(p) = proxy_url.filter(|s| !s.trim().is_empty()) {
+            match reqwest::Proxy::all(p) {
+                Ok(proxy) => builder = builder.proxy(proxy),
+                Err(e) => {
+                    setup_error = Some(format!(
+                        "the indexer proxy is configured but not valid: {}",
+                        error_chain(&e)
+                    ));
+                }
+            }
         }
-        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
+        let client = match builder.build() {
+            Ok(client) => client,
+            Err(e) => {
+                setup_error.get_or_insert_with(|| {
+                    format!("the indexer HTTP client did not start: {}", error_chain(&e))
+                });
+                reqwest::Client::new()
+            }
+        };
+        if let Some(e) = &setup_error {
+            tracing::error!(error = %e, "cardigann requests are refused until this is fixed");
+        }
         let flaresolverr = flaresolverr_url
             .filter(|s| !s.trim().is_empty())
             .map(FlareSolverr::new);
@@ -109,6 +157,7 @@ impl HttpFetcher {
             flaresolverr,
             solved_ua: Mutex::new(HashMap::new()),
             indexer: std::sync::OnceLock::new(),
+            setup_error,
         }
     }
 
@@ -144,6 +193,9 @@ impl EngineFetcher for HttpFetcher {
         req: FetchReq,
     ) -> std::result::Result<FetchResp, skadi_cardigann::FetchError> {
         use skadi_cardigann::FetchError;
+        if let Some(e) = &self.setup_error {
+            return Err(FetchError(e.clone()));
+        }
         // Replay the solved UA for this host (keeps cf_clearance valid).
         let host = req
             .url
@@ -174,10 +226,10 @@ impl EngineFetcher for HttpFetcher {
         for (k, v) in &req.headers {
             rb = rb.header(k, v);
         }
-        let resp = rb.send().await.map_err(|e| FetchError(e.to_string()))?;
+        let resp = rb.send().await.map_err(|e| FetchError(error_chain(&e)))?;
         let status = resp.status().as_u16();
         let final_url = resp.url().to_string();
-        let body = resp.text().await.map_err(|e| FetchError(e.to_string()))?;
+        let body = resp.text().await.map_err(|e| FetchError(error_chain(&e)))?;
 
         // On a CloudFlare/DDoS-Guard challenge, solve via FlareSolverr (if any)
         // and return the rendered page; later requests reuse the injected cookie.
@@ -1330,5 +1382,96 @@ mod magnet_in_download_field_tests {
             ReleaseFetch::Magnet(m) => assert_eq!(m, magnet),
             other => panic!("expected the magnet to be recovered, got {other:?}"),
         }
+    }
+}
+
+/// The HTTP client: proxy set-up and error causes (SKADI-T-0729).
+#[cfg(test)]
+mod fetcher_tests {
+    use super::*;
+
+    fn get(url: String) -> FetchReq {
+        FetchReq {
+            method: EngineMethod::Get,
+            url,
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    /// SKADI-T-0729: a proxy that cannot be applied refuses every fetch, with
+    /// the reason, rather than sending the request out directly.
+    #[tokio::test]
+    async fn an_invalid_proxy_refuses_fetches_instead_of_going_direct() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let tracker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .expect(0)
+            .mount(&tracker)
+            .await;
+
+        let fetcher = HttpFetcher::new(None, Some("http://[not a proxy"));
+        let err = fetcher
+            .fetch(get(format!("{}/q", tracker.uri())))
+            .await
+            .expect_err("no request without the proxy");
+        assert!(
+            err.0.contains("proxy is configured but not valid"),
+            "names the cause: {}",
+            err.0
+        );
+        let err = fetcher
+            .fetch_bytes(&format!("{}/t.torrent", tracker.uri()))
+            .await
+            .expect_err("no download without the proxy");
+        assert!(err.contains("proxy is configured but not valid"), "{err}");
+        // `expect(0)` is checked when the server drops.
+    }
+
+    /// SKADI-T-0729: a failed request names its cause, not only reqwest's
+    /// "error sending request for url (...)".
+    #[tokio::test]
+    async fn a_failed_fetch_names_its_cause() {
+        // Bind then drop a listener, so the port is closed.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let fetcher = HttpFetcher::new(None, None);
+        let err = fetcher
+            .fetch(get(format!("http://127.0.0.1:{port}/q")))
+            .await
+            .expect_err("closed port");
+        assert!(err.0.contains("error sending request"), "{}", err.0);
+        assert!(
+            err.0.to_lowercase().contains("refused"),
+            "the source chain is kept: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn error_chain_skips_a_repeated_message() {
+        #[derive(Debug)]
+        struct E(&'static str, Option<Box<E>>);
+        impl std::fmt::Display for E {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+        impl std::error::Error for E {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                self.1.as_deref().map(|e| e as _)
+            }
+        }
+        let e = E(
+            "outer: inner",
+            Some(Box::new(E("inner", Some(Box::new(E("root", None)))))),
+        );
+        assert_eq!(error_chain(&e), "outer: inner: root");
     }
 }

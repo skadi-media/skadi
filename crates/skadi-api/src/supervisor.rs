@@ -31,7 +31,14 @@ pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5);
 /// One spawned worker plus the token that stops it.
 struct RunningWorker {
     cancel: CancellationToken,
-    handle: JoinHandle<()>,
+    /// `None` once the worker has ended and been reaped (SKADI-T-0728).
+    handle: Option<JoinHandle<()>>,
+    /// The worker said it does one pass and returns ([`Worker::one_shot`]).
+    ///
+    /// [`Worker::one_shot`]: skadi_core::Worker::one_shot
+    one_shot: bool,
+    /// A one-shot worker that returned cleanly: its job is done.
+    done: bool,
 }
 
 /// Reconciles compiled-in domains' workers against their runtime enable state,
@@ -223,9 +230,15 @@ impl Supervisor {
         let mut spawned = Vec::new();
         for worker in module.workers() {
             let cancel = CancellationToken::new();
+            let one_shot = worker.one_shot();
             let fut = worker.run(cancel.clone());
-            let handle = tokio::spawn(fut);
-            spawned.push(RunningWorker { cancel, handle });
+            let handle = Some(tokio::spawn(fut));
+            spawned.push(RunningWorker {
+                cancel,
+                handle,
+                one_shot,
+                done: false,
+            });
         }
         let count = spawned.len();
         self.running.lock().await.insert(name.to_string(), spawned);
@@ -245,7 +258,9 @@ impl Supervisor {
             w.cancel.cancel();
         }
         for w in workers {
-            let _ = w.handle.await;
+            if let Some(handle) = w.handle {
+                let _ = handle.await;
+            }
         }
         tracing::info!(domain = name, "domain disabled — workers stopped");
     }
@@ -307,15 +322,22 @@ impl Supervisor {
         let mut failures = self.failures.lock().await;
         let mut emptied = Vec::new();
         for (name, workers) in running.iter_mut() {
-            let mut alive = Vec::with_capacity(workers.len());
-            for w in std::mem::take(workers) {
-                if !w.handle.is_finished() {
-                    alive.push(w);
+            // Ended workers keep their slot with no handle, so the domain still
+            // knows what it had: a domain whose only workers are one-shots that
+            // finished cleanly is done, not dead (SKADI-T-0728).
+            for w in workers.iter_mut() {
+                let Some(handle) = w.handle.take_if(|h| h.is_finished()) else {
                     continue;
-                }
+                };
                 // Already finished, so this returns immediately — no await on a
                 // live worker while holding the lock.
-                match w.handle.await {
+                match handle.await {
+                    // A one-shot worker returning is its job done, not a failure.
+                    Ok(()) if w.one_shot => {
+                        tracing::debug!(domain = %name, "one-shot worker finished");
+                        w.done = true;
+                        continue;
+                    }
                     Ok(()) => tracing::warn!(
                         domain = %name,
                         "worker returned on its own; it should run until cancelled"
@@ -329,8 +351,9 @@ impl Supervisor {
                 }
                 *failures.entry(name.clone()).or_insert(0) += 1;
             }
-            *workers = alive;
-            if workers.is_empty() {
+            let none_running = workers.iter().all(|w| w.handle.is_none());
+            let all_done = workers.iter().all(|w| w.done);
+            if none_running && !all_done {
                 emptied.push(name.clone());
             }
         }

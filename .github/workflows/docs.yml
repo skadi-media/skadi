@@ -51,16 +51,19 @@ jobs:
         with:
           toolchain: "1.93"
 
-      - name: Cache plissken
-        id: plissken-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/plissken
-          key: plissken-0.1.0-${{ runner.os }}
-
+      # The release binary, pinned by version and sha256.
       - name: Install plissken
-        if: steps.plissken-cache.outputs.cache-hit != 'true'
-        run: cargo install plissken --version 0.1.0 --locked
+        env:
+          PLISSKEN_VERSION: "0.2.0"
+          PLISSKEN_SHA256: "2166e15d69bd891959704a0f70c60724ccae4615584a70b4e524ed4c9460e253"
+        run: |
+          tarball="plissken-${PLISSKEN_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/colliery-io/plissken/releases/download/v${PLISSKEN_VERSION}/${tarball}"
+          echo "${PLISSKEN_SHA256}  /tmp/${tarball}" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "/tmp/${tarball}" -C "$HOME/.local/bin" plissken
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Generate API docs
         run: plissken render

@@ -228,19 +228,16 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Coverage is a report, not a gate. It failed every run for months while
-    # every test job passed, which made red the resting state of this workflow —
-    # so a real regression looked exactly like the standing failure, and telling
-    # them apart cost a per-job inspection every time (twice while cutting
-    # 0.1.1). Nothing has ever depended on it: `images` deliberately omits it
-    # from its `needs:`, which is why sha- tags exist for commits whose run is
-    # red. Making that explicit here means the run's conclusion reports the
-    # tests, and red means something again.
+    # Coverage is a report, not a gate (SKADI-T-0644, 2026-09-25). Nothing
+    # depends on it: `images` deliberately omits it from its `needs:`, so the
+    # run's conclusion reports the tests and red means something.
+    # `continue-on-error` stays for that reason, not because the job is broken.
     #
-    # This does not fix the job — it still dies with its step left in_progress
-    # and no retrievable log, the signature of the runner agent going down
-    # rather than cargo reporting a failure. SKADI-T-0644 holds the decision
-    # about whether to scope it down so it fits, or drop it.
+    # It was broken until SKADI-T-0732: `-- --test-threads=1` reaches every
+    # test binary, and the cucumber `bdd` targets (`harness = false`) reject
+    # the flag with "unexpected argument", so cargo stopped at the first of
+    # them and no report was made. RUST_TEST_THREADS=1 limits libtest the same
+    # way, and the other harnesses ignore it.
     continue-on-error: true
     needs:
       [
@@ -265,8 +262,10 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage
+        env:
+          RUST_TEST_THREADS: "1"
         run: |
-          cargo llvm-cov --workspace --no-report -- --test-threads=1
+          cargo llvm-cov --workspace --no-report
           cargo llvm-cov report --workspace --html --output-dir coverage/
           cargo llvm-cov report --workspace --lcov --output-path coverage/lcov.info
           cargo llvm-cov report --workspace

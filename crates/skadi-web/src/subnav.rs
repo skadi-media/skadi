@@ -73,21 +73,48 @@ pub fn visible(role: Option<&str>, sections: &'static [Section]) -> Vec<Section>
     match role {
         // Unknown role (still loading, or open mode with no household): show
         // everything rather than flash a truncated strip.
-        Some("admin") => sections.to_vec(),
         None => sections
             .iter()
             .copied()
             .filter(|(href, _)| !KNOWN_ADMIN_ONLY.contains(href))
             .collect(),
-        // A contributor may see what is missing and send a file in, but not the
-        // hunter's running jobs. Mirrors `path_allowed` (SKADI-T-0630).
-        Some("contributor") => sections
-            .iter()
-            .copied()
-            .filter(|(href, _)| matches!(*href, "/wanted" | "/upload"))
-            .collect(),
-        Some(_) => Vec::new(),
+        // A known role sees the sections whose page it can use, decided by the
+        // one surface table every request is gated on (SKADI-T-0642), not by a
+        // third copy of it.
+        Some(r) => {
+            let role = crate::surface::Role::parse(r);
+            sections
+                .iter()
+                .copied()
+                .filter(|(href, _)| {
+                    page_call(href).is_some_and(|(m, p)| crate::surface::allowed(role, m, p))
+                })
+                .collect()
+        }
     }
+}
+
+/// The API call that says whether a role can use a section's page
+/// (SKADI-T-0642): the page's own read, or for a configuration page the write
+/// it exists for. A section missing here is drawn for nobody but the admin.
+fn page_call(href: &str) -> Option<(&'static str, &'static str)> {
+    Some(match href {
+        "/indexers" => ("GET", "/settings/indexers"),
+        "/downloaders" => ("GET", "/settings/downloaders"),
+        "/config" => ("GET", "/config"),
+        "/naming" => ("GET", "/naming/settings"),
+        // The profile editors: readable by a contributor (the add flow picks a
+        // profile), but the page is for changing them.
+        "/movies/config" | "/audiobooks/config" => ("POST", "/settings/profiles"),
+        "/household" => ("GET", "/members"),
+        "/players" => ("GET", "/players"),
+        "/listen" => ("GET", "/listen"),
+        "/system" => ("GET", "/system/status"),
+        "/activity" => ("GET", "/activity"),
+        "/wanted" => ("GET", "/wanted"),
+        "/upload" => ("POST", "/uploads"),
+        _ => return None,
+    })
 }
 
 /// The title of the Settings strip.
@@ -161,6 +188,17 @@ mod tests {
             .into_iter()
             .map(|(h, _)| h)
             .collect()
+    }
+
+    /// SKADI-T-0642: every section names the call its page makes, so a new
+    /// section cannot silently vanish for the roles that should see it.
+    #[test]
+    fn every_section_names_its_page_call() {
+        for (_, sections) in TABLES {
+            for (href, _) in *sections {
+                assert!(page_call(href).is_some(), "{href} has no page call");
+            }
+        }
     }
 
     #[test]

@@ -43,6 +43,7 @@ mod setup;
 pub mod shortcuts;
 pub mod sorting;
 pub mod subnav;
+pub mod surface;
 pub mod system;
 pub mod upload;
 

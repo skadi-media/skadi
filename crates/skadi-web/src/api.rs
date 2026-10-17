@@ -50,10 +50,42 @@ pub fn store_token(token: &str) {
     clear_auth_expired();
 }
 
-/// Forget the token this browser holds.
+/// Forget the token this browser holds, and the role it was signed in as.
 pub fn forget_token() {
     if let Some(s) = storage() {
         let _ = s.remove_item(TOKEN_KEY);
+    }
+    set_role(None);
+}
+
+thread_local! {
+    /// The signed-in member's role, as `GET /me` last answered (SKADI-T-0642).
+    /// Every request consults it in [`gate`]. A thread-local, not a signal:
+    /// the helpers run inside `spawn_local` where no reactive scope is in
+    /// hand, and the wasm UI is single-threaded.
+    static ROLE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Record the role the request gate checks against (SKADI-T-0642).
+pub fn set_role(role: Option<String>) {
+    ROLE.with(|r| *r.borrow_mut() = role);
+}
+
+/// The role the request gate checks against; `None` until `/me` answers.
+#[must_use]
+pub fn current_role() -> Option<String> {
+    ROLE.with(|r| r.borrow().clone())
+}
+
+/// The one choke point every request passes (SKADI-T-0642): a request the
+/// signed-in role may not make is answered here with
+/// [`ApiError::not_available`] instead of being sent to a sure 403.
+fn gate(method: &str, url: &str) -> Result<(), ApiError> {
+    let role = current_role();
+    if crate::surface::may_send(role.as_deref(), method, url) {
+        Ok(())
+    } else {
+        Err(ApiError::not_available())
     }
 }
 
@@ -118,26 +150,49 @@ fn authed(builder: RequestBuilder) -> RequestBuilder {
     }
 }
 
-fn get(url: &str) -> RequestBuilder {
-    authed(Request::get(url))
+fn get(url: &str) -> Result<RequestBuilder, ApiError> {
+    gate("GET", url)?;
+    Ok(authed(Request::get(url)))
 }
-fn post(url: &str) -> RequestBuilder {
-    authed(Request::post(url))
+fn post(url: &str) -> Result<RequestBuilder, ApiError> {
+    gate("POST", url)?;
+    Ok(authed(Request::post(url)))
 }
-fn put(url: &str) -> RequestBuilder {
-    authed(Request::put(url))
+fn put(url: &str) -> Result<RequestBuilder, ApiError> {
+    gate("PUT", url)?;
+    Ok(authed(Request::put(url)))
 }
-fn patch(url: &str) -> RequestBuilder {
-    authed(Request::patch(url))
+fn patch(url: &str) -> Result<RequestBuilder, ApiError> {
+    gate("PATCH", url)?;
+    Ok(authed(Request::patch(url)))
 }
-fn delete(url: &str) -> RequestBuilder {
-    authed(Request::delete(url))
+fn delete(url: &str) -> Result<RequestBuilder, ApiError> {
+    gate("DELETE", url)?;
+    Ok(authed(Request::delete(url)))
 }
 
 /// Anything that can go wrong talking to the API, flattened to a message the UI
 /// can render. Kept deliberately simple for v1.
 #[derive(Debug, Clone)]
 pub struct ApiError(pub String);
+
+/// The message of a request the gate did not send (SKADI-T-0642).
+const NOT_AVAILABLE: &str = "not available to your account";
+
+impl ApiError {
+    /// A request this role may not make, answered without sending it.
+    #[must_use]
+    pub fn not_available() -> Self {
+        ApiError(NOT_AVAILABLE.to_string())
+    }
+
+    /// Whether this is [`ApiError::not_available`], so a component can render
+    /// "not available to you" rather than an error or a spinner.
+    #[must_use]
+    pub fn is_not_available(&self) -> bool {
+        self.0 == NOT_AVAILABLE
+    }
+}
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -165,7 +220,7 @@ pub struct Health {
 /// the whole serve/embed pipeline.
 pub async fn health() -> Result<Health, ApiError> {
     let url = format!("{API_BASE}/health");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("health returned HTTP {}", resp.status())));
     }
@@ -216,7 +271,7 @@ pub struct TestResult {
 /// `GET /settings/{kind}` — list stored documents for a kind.
 pub async fn list_settings(kind: &str) -> Result<Vec<Setting>, ApiError> {
     let url = format!("{API_BASE}/settings/{kind}");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list {kind} -> HTTP {}", resp.status())));
     }
@@ -227,7 +282,7 @@ pub async fn list_settings(kind: &str) -> Result<Vec<Setting>, ApiError> {
 /// including the secret field when the user supplied one.
 pub async fn create_setting(kind: &str, body: &Value) -> Result<Setting, ApiError> {
     let url = format!("{API_BASE}/settings/{kind}");
-    let resp = post(&url).json(body)?.send().await.noted()?;
+    let resp = post(&url)?.json(body)?.send().await.noted()?;
     read_setting_response(kind, resp).await
 }
 
@@ -235,14 +290,14 @@ pub async fn create_setting(kind: &str, body: &Value) -> Result<Setting, ApiErro
 /// `body` to keep the stored credential; include it (non-empty) to rotate it.
 pub async fn update_setting(kind: &str, id: &str, body: &Value) -> Result<Setting, ApiError> {
     let url = format!("{API_BASE}/settings/{kind}/{id}");
-    let resp = put(&url).json(body)?.send().await.noted()?;
+    let resp = put(&url)?.json(body)?.send().await.noted()?;
     read_setting_response(kind, resp).await
 }
 
 /// `DELETE /settings/{kind}/{id}` — remove a document (cascades its credential).
 pub async fn delete_setting(kind: &str, id: &str) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/settings/{kind}/{id}");
-    let resp = delete(&url).send().await.noted()?;
+    let resp = delete(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!(
             "delete {kind}/{id} -> HTTP {}",
@@ -255,7 +310,7 @@ pub async fn delete_setting(kind: &str, id: &str) -> Result<(), ApiError> {
 /// `POST /settings/{kind}/{id}/test` — run the provider's connectivity check.
 pub async fn test_setting(kind: &str, id: &str) -> Result<TestResult, ApiError> {
     let url = format!("{API_BASE}/settings/{kind}/{id}/test");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!(
             "test {kind}/{id} -> HTTP {}",
@@ -309,7 +364,7 @@ pub struct CatalogDef {
 /// `GET /indexers/definitions` — the synced cardigann definition catalog.
 pub async fn list_definitions() -> Result<Vec<CatalogDef>, ApiError> {
     let url = format!("{API_BASE}/indexers/definitions");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("definitions -> HTTP {}", resp.status())));
     }
@@ -320,7 +375,7 @@ pub async fn list_definitions() -> Result<Vec<CatalogDef>, ApiError> {
 /// of definitions written.
 pub async fn refresh_definitions() -> Result<usize, ApiError> {
     let url = format!("{API_BASE}/indexers/definitions/refresh");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("refresh -> HTTP {}", resp.status())));
     }
@@ -382,7 +437,7 @@ pub struct Domain {
 
 /// `GET /domains` — list domains with their enabled state.
 pub async fn list_domains() -> Result<Vec<Domain>, ApiError> {
-    let resp = get(&format!("{API_BASE}/domains")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/domains"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list domains -> HTTP {}", resp.status())));
     }
@@ -392,7 +447,7 @@ pub async fn list_domains() -> Result<Vec<Domain>, ApiError> {
 /// `PUT /domains/{name}` — toggle a domain on/off.
 pub async fn set_domain_enabled(name: &str, enabled: bool) -> Result<Domain, ApiError> {
     let url = format!("{API_BASE}/domains/{name}");
-    let resp = put(&url)
+    let resp = put(&url)?
         .json(&serde_json::json!({ "enabled": enabled }))?
         .send()
         .await?;
@@ -424,7 +479,7 @@ pub struct QualityDef {
 
 /// `GET /quality/definitions` — the named qualities a profile can allow.
 pub async fn list_quality_definitions() -> Result<Vec<QualityDef>, ApiError> {
-    let resp = get(&format!("{API_BASE}/quality/definitions"))
+    let resp = get(&format!("{API_BASE}/quality/definitions"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -455,7 +510,7 @@ pub struct EditionKind {
 
 /// `GET /edition-kinds` — list the registry.
 pub async fn list_edition_kinds() -> Result<Vec<EditionKind>, ApiError> {
-    let resp = get(&format!("{API_BASE}/edition-kinds"))
+    let resp = get(&format!("{API_BASE}/edition-kinds"))?
         .send()
         .await
         .noted()?;
@@ -471,7 +526,7 @@ pub async fn list_edition_kinds() -> Result<Vec<EditionKind>, ApiError> {
 /// `POST /edition-kinds` — create a user edition kind. Body:
 /// `{ name, normalized_tag, match_patterns }`.
 pub async fn create_edition_kind(body: &Value) -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/edition-kinds"))
+    let resp = post(&format!("{API_BASE}/edition-kinds"))?
         .json(body)?
         .send()
         .await?;
@@ -480,7 +535,7 @@ pub async fn create_edition_kind(body: &Value) -> Result<(), ApiError> {
 
 /// `PUT /edition-kinds/{id}` — update a user edition kind.
 pub async fn update_edition_kind(id: &str, body: &Value) -> Result<(), ApiError> {
-    let resp = put(&format!("{API_BASE}/edition-kinds/{id}"))
+    let resp = put(&format!("{API_BASE}/edition-kinds/{id}"))?
         .json(body)?
         .send()
         .await?;
@@ -489,7 +544,7 @@ pub async fn update_edition_kind(id: &str, body: &Value) -> Result<(), ApiError>
 
 /// `DELETE /edition-kinds/{id}` — remove a user edition kind (builtins refuse).
 pub async fn delete_edition_kind(id: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/edition-kinds/{id}"))
+    let resp = delete(&format!("{API_BASE}/edition-kinds/{id}"))?
         .send()
         .await?;
     write_ok("delete edition-kind", resp).await
@@ -643,7 +698,7 @@ pub struct MovieSearchResult {
 
 /// `GET /movies` — list the movie library (works regardless of domain enabled).
 pub async fn list_movies() -> Result<Vec<Movie>, ApiError> {
-    let resp = get(&format!("{API_BASE}/movies")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/movies"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list movies -> HTTP {}", resp.status())));
     }
@@ -660,7 +715,7 @@ pub async fn get_if_changed<T: serde::de::DeserializeOwned>(
     what: &str,
     last: &mut Option<String>,
 ) -> Result<Option<T>, ApiError> {
-    let resp = get(url).send().await.noted()?;
+    let resp = get(url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("{what} -> HTTP {}", resp.status())));
     }
@@ -682,7 +737,7 @@ pub async fn get_movie_if_changed(
 }
 
 pub async fn get_movie(id: &str) -> Result<Movie, ApiError> {
-    let resp = get(&format!("{API_BASE}/movies/{id}"))
+    let resp = get(&format!("{API_BASE}/movies/{id}"))?
         .send()
         .await
         .noted()?;
@@ -698,7 +753,7 @@ pub async fn search_movies(q: &str, year: Option<u16>) -> Result<Vec<MovieSearch
     if let Some(y) = year {
         url.push_str(&format!("&year={y}"));
     }
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("movie search -> HTTP {}", resp.status())));
     }
@@ -712,7 +767,7 @@ pub async fn add_movie(tmdb_id: u64, profile: &str) -> Result<(), ApiError> {
         "tmdb_id": tmdb_id,
         "profile": profile,
     });
-    let resp = post(&format!("{API_BASE}/movies"))
+    let resp = post(&format!("{API_BASE}/movies"))?
         .json(&body)?
         .send()
         .await?;
@@ -721,7 +776,7 @@ pub async fn add_movie(tmdb_id: u64, profile: &str) -> Result<(), ApiError> {
 
 /// `PATCH /movies/{id}` — toggle the monitored flag.
 pub async fn set_movie_monitored(id: &str, monitored: bool) -> Result<(), ApiError> {
-    let resp = patch(&format!("{API_BASE}/movies/{id}"))
+    let resp = patch(&format!("{API_BASE}/movies/{id}"))?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -732,7 +787,7 @@ pub async fn set_movie_monitored(id: &str, monitored: bool) -> Result<(), ApiErr
 pub async fn delete_movie(id: &str, delete_files: bool) -> Result<(), ApiError> {
     let resp = delete(&format!(
         "{API_BASE}/movies/{id}?delete_files={delete_files}"
-    ))
+    ))?
     .send()
     .await?;
     write_ok("delete movie", resp).await
@@ -742,7 +797,7 @@ pub async fn delete_movie(id: &str, delete_files: bool) -> Result<(), ApiError> 
 /// Surfaces the 409 "domain disabled" message when movies isn't enabled.
 pub async fn acquire_edition(at: &AcquirablePath) -> Result<(), ApiError> {
     let url = at.url("acquire");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     write_ok("acquire", resp).await
 }
 
@@ -750,7 +805,7 @@ pub async fn acquire_edition(at: &AcquirablePath) -> Result<(), ApiError> {
 /// non-terminal acquire state, returning it to Missing (SKADI-T-0112).
 pub async fn reset_edition(at: &AcquirablePath) -> Result<(), ApiError> {
     let url = at.url("reset");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     write_ok("reset", resp).await
 }
 
@@ -859,7 +914,7 @@ pub struct SeriesSearchResult {
 /// this deserialises unchanged. Use `get_series` for the detail page, which does
 /// need the full episode.
 pub async fn list_series() -> Result<Vec<Series>, ApiError> {
-    let resp = get(&format!("{API_BASE}/series?view=summary"))
+    let resp = get(&format!("{API_BASE}/series?view=summary"))?
         .send()
         .await
         .noted()?;
@@ -879,7 +934,7 @@ pub async fn get_series_if_changed(
 }
 
 pub async fn get_series(id: &str) -> Result<Series, ApiError> {
-    let resp = get(&format!("{API_BASE}/series/{id}"))
+    let resp = get(&format!("{API_BASE}/series/{id}"))?
         .send()
         .await
         .noted()?;
@@ -892,7 +947,7 @@ pub async fn get_series(id: &str) -> Result<Series, ApiError> {
 /// `GET /series/lookup?q=` — series metadata search for the add flow.
 pub async fn search_series(q: &str) -> Result<Vec<SeriesSearchResult>, ApiError> {
     let url = format!("{API_BASE}/series/lookup?q={}", encode(q));
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("series search -> HTTP {}", resp.status())));
     }
@@ -908,7 +963,7 @@ pub async fn add_series(tvdb_id: u64, profile: &str, monitor: &str) -> Result<()
         "profile": profile,
         "monitor": monitor,
     });
-    let resp = post(&format!("{API_BASE}/series"))
+    let resp = post(&format!("{API_BASE}/series"))?
         .json(&body)?
         .send()
         .await?;
@@ -917,7 +972,7 @@ pub async fn add_series(tvdb_id: u64, profile: &str, monitor: &str) -> Result<()
 
 /// `PATCH /series/{id}` — toggle the series monitored flag.
 pub async fn set_series_monitored(id: &str, monitored: bool) -> Result<(), ApiError> {
-    let resp = patch(&format!("{API_BASE}/series/{id}"))
+    let resp = patch(&format!("{API_BASE}/series/{id}"))?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -928,7 +983,7 @@ pub async fn set_series_monitored(id: &str, monitored: bool) -> Result<(), ApiEr
 pub async fn delete_series(id: &str, delete_files: bool) -> Result<(), ApiError> {
     let resp = delete(&format!(
         "{API_BASE}/series/{id}?delete_files={delete_files}"
-    ))
+    ))?
     .send()
     .await?;
     write_ok("delete series", resp).await
@@ -938,7 +993,7 @@ pub async fn delete_series(id: &str, delete_files: bool) -> Result<(), ApiError>
 /// its episodes server-side).
 pub async fn monitor_season(series_id: &str, season: u16, monitored: bool) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/series/{series_id}/seasons/{season}/monitor");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -952,7 +1007,7 @@ pub async fn monitor_episode(
     monitored: bool,
 ) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/series/{series_id}/episodes/{episode_id}/monitor");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -1014,7 +1069,7 @@ pub struct WantedResponse {
 
 /// `GET /wanted` — every monitored item with an unsatisfied edition, all domains.
 pub async fn wanted() -> Result<WantedResponse, ApiError> {
-    let resp = get(&format!("{API_BASE}/wanted")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/wanted"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("wanted -> HTTP {}", resp.status())));
     }
@@ -1106,7 +1161,7 @@ impl AcquirablePath {
 /// `GET …/releases` — live interactive search for one acquirable.
 pub async fn list_releases(at: &AcquirablePath) -> Result<Vec<ReleaseCandidate>, ApiError> {
     let url = at.url("releases");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         let status = resp.status();
         let detail = resp
@@ -1127,7 +1182,7 @@ pub async fn list_releases(at: &AcquirablePath) -> Result<Vec<ReleaseCandidate>,
 /// `POST …/grab` — grab a specific release.
 pub async fn grab_release(at: &AcquirablePath, release: &Value) -> Result<(), ApiError> {
     let url = at.url("grab");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "release": release }))?
         .send()
         .await?;
@@ -1142,7 +1197,7 @@ pub async fn grab_link(
     title: Option<&str>,
 ) -> Result<(), ApiError> {
     let url = at.url("grab-link");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "link": link, "title": title }))?
         .send()
         .await?;
@@ -1162,7 +1217,7 @@ pub async fn list_blocklist(acquirable: Option<&str>) -> Result<Vec<BlocklistEnt
         Some(a) => format!("{API_BASE}/blocklist?acquirable={}", encode(a)),
         None => format!("{API_BASE}/blocklist"),
     };
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!(
             "list blocklist -> HTTP {}",
@@ -1194,7 +1249,7 @@ pub async fn block_release_because(
         "acquirable_ref": acquirable_ref,
         "reason": reason,
     });
-    let resp = post(&format!("{API_BASE}/blocklist"))
+    let resp = post(&format!("{API_BASE}/blocklist"))?
         .json(&body)?
         .send()
         .await?;
@@ -1203,7 +1258,7 @@ pub async fn block_release_because(
 
 /// `DELETE /blocklist/{id}` — clear one blocklist entry.
 pub async fn unblock_release(id: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/blocklist/{id}"))
+    let resp = delete(&format!("{API_BASE}/blocklist/{id}"))?
         .send()
         .await
         .noted()?;
@@ -1268,7 +1323,7 @@ pub struct RootFolder {
 
 /// `GET /health/checks` — aggregated daemon/db/domain/provider health.
 pub async fn health_checks() -> Result<Vec<HealthCheck>, ApiError> {
-    let resp = get(&format!("{API_BASE}/health/checks"))
+    let resp = get(&format!("{API_BASE}/health/checks"))?
         .send()
         .await
         .noted()?;
@@ -1287,7 +1342,7 @@ pub async fn run_health_check(id: &str) -> Result<Vec<HealthCheck>, ApiError> {
         "{API_BASE}/health/checks/run?id={}",
         js_sys::encode_uri_component(id)
     );
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("test {id} -> HTTP {}", resp.status())));
     }
@@ -1297,7 +1352,7 @@ pub async fn run_health_check(id: &str) -> Result<Vec<HealthCheck>, ApiError> {
 /// `POST /health/checks/run` — run every check now and return them all, as
 /// `GET /health/checks` would (SKADI-T-0680). Admin only.
 pub async fn run_health_checks() -> Result<Vec<HealthCheck>, ApiError> {
-    let resp = post(&format!("{API_BASE}/health/checks/run"))
+    let resp = post(&format!("{API_BASE}/health/checks/run"))?
         .send()
         .await
         .noted()?;
@@ -1367,7 +1422,7 @@ pub struct LogLine {
 
 /// `GET /system/status` — version, commit, uptime, database, library root.
 pub async fn system_status() -> Result<SystemStatus, ApiError> {
-    let resp = get(&format!("{API_BASE}/system/status"))
+    let resp = get(&format!("{API_BASE}/system/status"))?
         .send()
         .await
         .noted()?;
@@ -1379,7 +1434,7 @@ pub async fn system_status() -> Result<SystemStatus, ApiError> {
 
 /// `GET /system/task` — the recurring jobs and their cadence.
 pub async fn system_tasks() -> Result<Vec<SystemTask>, ApiError> {
-    let resp = get(&format!("{API_BASE}/system/task"))
+    let resp = get(&format!("{API_BASE}/system/task"))?
         .send()
         .await
         .noted()?;
@@ -1391,7 +1446,7 @@ pub async fn system_tasks() -> Result<Vec<SystemTask>, ApiError> {
 
 /// `GET /log?pageSize=n` — the newest `page_size` log lines, newest first.
 pub async fn system_log(page_size: usize) -> Result<Vec<LogLine>, ApiError> {
-    let resp = get(&format!("{API_BASE}/log?pageSize={page_size}"))
+    let resp = get(&format!("{API_BASE}/log?pageSize={page_size}"))?
         .send()
         .await
         .noted()?;
@@ -1403,7 +1458,7 @@ pub async fn system_log(page_size: usize) -> Result<Vec<LogLine>, ApiError> {
 
 /// `GET /root-folders` — per root folder free/total bytes + writability.
 pub async fn root_folders() -> Result<Vec<RootFolder>, ApiError> {
-    let resp = get(&format!("{API_BASE}/root-folders"))
+    let resp = get(&format!("{API_BASE}/root-folders"))?
         .send()
         .await
         .noted()?;
@@ -1505,7 +1560,7 @@ pub struct CommitResult {
 /// `POST /library-import/scan` — scan `path` into proposed candidates (read-only).
 pub async fn library_import_scan(path: &str) -> Result<Vec<ScanCandidate>, ApiError> {
     let body = serde_json::json!({ "path": path });
-    let resp = post(&format!("{API_BASE}/library-import/scan"))
+    let resp = post(&format!("{API_BASE}/library-import/scan"))?
         .json(&body)?
         .send()
         .await?;
@@ -1552,7 +1607,7 @@ pub async fn library_import_match(items: &[MatchQuery]) -> Result<Vec<MatchResul
         })
         .collect();
     let body = serde_json::json!({ "items": items });
-    let resp = post(&format!("{API_BASE}/library-import/match"))
+    let resp = post(&format!("{API_BASE}/library-import/match"))?
         .json(&body)?
         .send()
         .await?;
@@ -1588,7 +1643,7 @@ pub async fn library_import_commit(items: &[CommitItem]) -> Result<CommitResult,
     let body = serde_json::json!({
         "items": items,
     });
-    let resp = post(&format!("{API_BASE}/library-import/commit"))
+    let resp = post(&format!("{API_BASE}/library-import/commit"))?
         .json(&body)?
         .send()
         .await?;
@@ -1669,7 +1724,7 @@ pub struct AbMatchResult {
 /// `POST /audiobooks/library-import/scan` — scan `path` into candidates (read-only).
 pub async fn ab_library_import_scan(path: &str) -> Result<Vec<AbScanCandidate>, ApiError> {
     let body = serde_json::json!({ "path": path });
-    let resp = post(&format!("{API_BASE}/audiobooks/library-import/scan"))
+    let resp = post(&format!("{API_BASE}/audiobooks/library-import/scan"))?
         .json(&body)?
         .send()
         .await?;
@@ -1706,7 +1761,7 @@ pub async fn ab_library_import_match(
         .map(|q| serde_json::json!({ "path": q.path, "asin": q.asin }))
         .collect();
     let body = serde_json::json!({ "items": items });
-    let resp = post(&format!("{API_BASE}/audiobooks/library-import/match"))
+    let resp = post(&format!("{API_BASE}/audiobooks/library-import/match"))?
         .json(&body)?
         .send()
         .await?;
@@ -1746,7 +1801,7 @@ pub async fn ab_library_import_commit(
         "profile": profile,
         "items": items,
     });
-    let resp = post(&format!("{API_BASE}/audiobooks/library-import/commit"))
+    let resp = post(&format!("{API_BASE}/audiobooks/library-import/commit"))?
         .json(&body)?
         .send()
         .await?;
@@ -1850,7 +1905,7 @@ pub struct TvMatchResult {
 /// `POST /tv/library-import/scan` — scan `path` into proposed candidates (read-only).
 pub async fn tv_library_import_scan(path: &str) -> Result<Vec<TvScanCandidate>, ApiError> {
     let body = serde_json::json!({ "path": path });
-    let resp = post(&format!("{API_BASE}/tv/library-import/scan"))
+    let resp = post(&format!("{API_BASE}/tv/library-import/scan"))?
         .json(&body)?
         .send()
         .await?;
@@ -1887,7 +1942,7 @@ pub async fn tv_library_import_match(
     items: &[TvMatchQuery],
 ) -> Result<Vec<TvMatchResult>, ApiError> {
     let body = serde_json::json!({ "items": items });
-    let resp = post(&format!("{API_BASE}/tv/library-import/match"))
+    let resp = post(&format!("{API_BASE}/tv/library-import/match"))?
         .json(&body)?
         .send()
         .await?;
@@ -1947,7 +2002,7 @@ pub struct TvSeriesStructure {
 /// every episode (mapped or not). Read-only; never touches the library DB.
 pub async fn tv_import_series_structure(tvdb: u64) -> Result<TvSeriesStructure, ApiError> {
     let url = format!("{API_BASE}/tv/library-import/series-structure?tvdb={tvdb}");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!(
             "series-structure -> HTTP {}",
@@ -1968,7 +2023,7 @@ pub async fn tv_library_import_commit(
         "profile": profile,
         "items": items,
     });
-    let resp = post(&format!("{API_BASE}/tv/library-import/commit"))
+    let resp = post(&format!("{API_BASE}/tv/library-import/commit"))?
         .json(&body)?
         .send()
         .await?;
@@ -2040,7 +2095,7 @@ pub struct ActivityRun {
 /// `POST /activity/{ref}/retry` — drop a live run's transfer and search for
 /// the item again at once (SKADI-T-0691). Admin only.
 pub async fn retry_activity_run(acquirable_ref: &str) -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/activity/{acquirable_ref}/retry"))
+    let resp = post(&format!("{API_BASE}/activity/{acquirable_ref}/retry"))?
         .send()
         .await
         .noted()?;
@@ -2060,7 +2115,7 @@ pub struct DecisionRow {
 
 /// `GET /decisions?acquirable=` — the decisions for one item, newest first.
 pub async fn decisions_for(acquirable_ref: &str) -> Result<Vec<DecisionRow>, ApiError> {
-    let resp = get(&format!("{API_BASE}/decisions?acquirable={acquirable_ref}"))
+    let resp = get(&format!("{API_BASE}/decisions?acquirable={acquirable_ref}"))?
         .send()
         .await
         .noted()?;
@@ -2092,7 +2147,7 @@ pub struct HistoryRow {
 
 /// `GET /activity` — in-flight acquire runs (empty when idle).
 pub async fn activity() -> Result<Vec<ActivityRun>, ApiError> {
-    let resp = get(&format!("{API_BASE}/activity")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/activity"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("activity -> HTTP {}", resp.status())));
     }
@@ -2101,7 +2156,7 @@ pub async fn activity() -> Result<Vec<ActivityRun>, ApiError> {
 
 /// `GET /history?limit=` — persistent acquisition history, newest first.
 pub async fn history(limit: u32) -> Result<Vec<HistoryRow>, ApiError> {
-    let resp = get(&format!("{API_BASE}/history?limit={limit}"))
+    let resp = get(&format!("{API_BASE}/history?limit={limit}"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -2114,7 +2169,7 @@ pub async fn history(limit: u32) -> Result<Vec<HistoryRow>, ApiError> {
 /// first: its grabbed / imported / failed events, with failure reason codes (SKADI-T-0315).
 pub async fn item_history(acquirable_ref: &str, limit: u32) -> Result<Vec<HistoryRow>, ApiError> {
     let url = format!("{API_BASE}/history?acquirable={acquirable_ref}&limit={limit}");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("item history -> HTTP {}", resp.status())));
     }
@@ -2146,7 +2201,7 @@ pub struct TraceRow {
 
 /// `GET /traces?limit=` — the hunter's structured per-step trace stream, newest first.
 pub async fn traces(limit: u32) -> Result<Vec<TraceRow>, ApiError> {
-    let resp = get(&format!("{API_BASE}/traces?limit={limit}"))
+    let resp = get(&format!("{API_BASE}/traces?limit={limit}"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -2161,7 +2216,7 @@ pub async fn item_traces(acquirable: &str) -> Result<Vec<TraceRow>, ApiError> {
     // Refs are UUIDs or `season-<uuid>-<n>` — URL-safe as-is, same as
     // `item_history` above.
     let url = format!("{API_BASE}/traces?acquirable={acquirable}");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("item traces -> HTTP {}", resp.status())));
     }
@@ -2172,7 +2227,7 @@ pub async fn item_traces(acquirable: &str) -> Result<Vec<TraceRow>, ApiError> {
 /// SKADI-T-0315).
 pub async fn blocklist_and_search(history_id: &str) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/history/{history_id}/blocklist-and-search");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     write_ok("blocklist-and-search", resp).await
 }
 
@@ -2310,7 +2365,7 @@ async fn post_json<T: serde::de::DeserializeOwned>(
     url: &str,
     body: &impl Serialize,
 ) -> Result<T, ApiError> {
-    let resp = post(url).json(body)?.send().await.noted()?;
+    let resp = post(url)?.json(body)?.send().await.noted()?;
     if !resp.ok() {
         let status = resp.status();
         let detail = resp
@@ -2422,7 +2477,10 @@ pub async fn bulk(collection: &str, req: &BulkRequest) -> Result<BulkReport, Api
 /// `GET /downloads` — the active download queue (queued + downloading) with live
 /// torrent metrics. Empty when nothing is downloading.
 pub async fn list_downloads() -> Result<Vec<Download>, ApiError> {
-    let resp = get(&format!("{API_BASE}/downloads")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/downloads"))?
+        .send()
+        .await
+        .noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("downloads -> HTTP {}", resp.status())));
     }
@@ -2450,7 +2508,7 @@ pub struct WorkerStatus {
 
 /// `GET /downloads/worker` — is the built-in torrent worker alive?
 pub async fn worker_status() -> Result<WorkerStatus, ApiError> {
-    let resp = get(&format!("{API_BASE}/downloads/worker"))
+    let resp = get(&format!("{API_BASE}/downloads/worker"))?
         .send()
         .await
         .noted()?;
@@ -2478,7 +2536,7 @@ pub struct VpnStatus {
 /// `GET /downloads/vpn` — gluetun tunnel state + exit IP/location (read-only;
 /// the VPN is always-on by design — no disable control).
 pub async fn vpn_status() -> Result<VpnStatus, ApiError> {
-    let resp = get(&format!("{API_BASE}/downloads/vpn"))
+    let resp = get(&format!("{API_BASE}/downloads/vpn"))?
         .send()
         .await
         .noted()?;
@@ -2494,7 +2552,7 @@ pub async fn vpn_status() -> Result<VpnStatus, ApiError> {
 pub async fn remove_download(id: &str, delete_data: bool) -> Result<(), ApiError> {
     let resp = delete(&format!(
         "{API_BASE}/downloads/{id}?delete_data={delete_data}"
-    ))
+    ))?
     .send()
     .await?;
     write_ok("remove download", resp).await
@@ -2502,7 +2560,7 @@ pub async fn remove_download(id: &str, delete_data: bool) -> Result<(), ApiError
 
 /// `POST /downloads/{id}/pause` — pause an active download (SKADI-T-0168).
 pub async fn pause_download(id: &str) -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/downloads/{id}/pause"))
+    let resp = post(&format!("{API_BASE}/downloads/{id}/pause"))?
         .send()
         .await?;
     write_ok("pause download", resp).await
@@ -2510,7 +2568,7 @@ pub async fn pause_download(id: &str) -> Result<(), ApiError> {
 
 /// `POST /downloads/{id}/resume` — resume a paused download (SKADI-T-0168).
 pub async fn resume_download(id: &str) -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/downloads/{id}/resume"))
+    let resp = post(&format!("{API_BASE}/downloads/{id}/resume"))?
         .send()
         .await?;
     write_ok("resume download", resp).await
@@ -2531,7 +2589,7 @@ pub async fn move_download(id: &str, how: &str) -> Result<(), ApiError> {
 
 /// `POST /downloads/pause-all` — pause every in-flight transfer (SKADI-T-0290).
 pub async fn pause_all() -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/downloads/pause-all"))
+    let resp = post(&format!("{API_BASE}/downloads/pause-all"))?
         .send()
         .await?;
     write_ok("pause all", resp).await
@@ -2539,7 +2597,7 @@ pub async fn pause_all() -> Result<(), ApiError> {
 
 /// `POST /downloads/resume-all` — resume every paused transfer (SKADI-T-0290).
 pub async fn resume_all() -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/downloads/resume-all"))
+    let resp = post(&format!("{API_BASE}/downloads/resume-all"))?
         .send()
         .await?;
     write_ok("resume all", resp).await
@@ -2559,7 +2617,7 @@ pub struct DownloadSettings {
 
 /// `GET /downloads/settings` — current worker settings.
 pub async fn download_settings() -> Result<DownloadSettings, ApiError> {
-    let resp = get(&format!("{API_BASE}/downloads/settings"))
+    let resp = get(&format!("{API_BASE}/downloads/settings"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -2578,7 +2636,7 @@ pub async fn set_download_settings(s: &DownloadSettings) -> Result<(), ApiError>
         "seed_time_mins": s.seed_time_mins,
         "seed_action": s.seed_action,
     });
-    let resp = put(&format!("{API_BASE}/downloads/settings"))
+    let resp = put(&format!("{API_BASE}/downloads/settings"))?
         .json(&body)?
         .send()
         .await?;
@@ -2599,7 +2657,7 @@ pub struct NamingSettings {
 
 /// `GET /naming/settings` — current naming templates (defaults where unset).
 pub async fn naming_settings() -> Result<NamingSettings, ApiError> {
-    let resp = get(&format!("{API_BASE}/naming/settings"))
+    let resp = get(&format!("{API_BASE}/naming/settings"))?
         .send()
         .await
         .noted()?;
@@ -2620,7 +2678,7 @@ pub async fn set_naming_settings(s: &NamingSettings) -> Result<(), ApiError> {
         "audiobook_file": s.audiobook_file,
         "space": s.space,
     });
-    let resp = put(&format!("{API_BASE}/naming/settings"))
+    let resp = put(&format!("{API_BASE}/naming/settings"))?
         .json(&body)?
         .send()
         .await?;
@@ -2638,7 +2696,7 @@ pub async fn naming_preview(
     let body = serde_json::json!({
         "domain": domain, "folder": folder, "file": file, "space": space,
     });
-    let resp = post(&format!("{API_BASE}/naming/preview"))
+    let resp = post(&format!("{API_BASE}/naming/preview"))?
         .json(&body)?
         .send()
         .await?;
@@ -2780,7 +2838,7 @@ pub async fn list_authors(monitored: Option<bool>) -> Result<Vec<Author>, ApiErr
         Some(m) => format!("{API_BASE}/authors?monitored={m}"),
         None => format!("{API_BASE}/authors"),
     };
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list authors -> HTTP {}", resp.status())));
     }
@@ -2789,7 +2847,7 @@ pub async fn list_authors(monitored: Option<bool>) -> Result<Vec<Author>, ApiErr
 
 /// `GET /authors/{id}` — fetch one author for the detail page.
 pub async fn get_author(id: &str) -> Result<Author, ApiError> {
-    let resp = get(&format!("{API_BASE}/authors/{id}"))
+    let resp = get(&format!("{API_BASE}/authors/{id}"))?
         .send()
         .await
         .noted()?;
@@ -2802,7 +2860,7 @@ pub async fn get_author(id: &str) -> Result<Author, ApiError> {
 /// `GET /authors/lookup?name=` — author search candidates for the add flow.
 pub async fn lookup_authors(name: &str) -> Result<Vec<AuthorLookupResult>, ApiError> {
     let url = format!("{API_BASE}/authors/lookup?name={}", encode(name));
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("author lookup -> HTTP {}", resp.status())));
     }
@@ -2811,7 +2869,7 @@ pub async fn lookup_authors(name: &str) -> Result<Vec<AuthorLookupResult>, ApiEr
 
 /// `POST /authors` — add (or return existing) author by Audnexus ASIN.
 pub async fn add_author(asin: &str) -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/authors"))
+    let resp = post(&format!("{API_BASE}/authors"))?
         .json(&serde_json::json!({ "asin": asin }))?
         .send()
         .await?;
@@ -2821,7 +2879,7 @@ pub async fn add_author(asin: &str) -> Result<(), ApiError> {
 /// `PATCH /authors/{id}` — toggle whether the author is monitored (a monitored
 /// author has their new releases auto-discovered + added, SKADI-T-0132).
 pub async fn set_author_monitored(id: &str, monitored: bool) -> Result<(), ApiError> {
-    let resp = patch(&format!("{API_BASE}/authors/{id}"))
+    let resp = patch(&format!("{API_BASE}/authors/{id}"))?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -2830,7 +2888,7 @@ pub async fn set_author_monitored(id: &str, monitored: bool) -> Result<(), ApiEr
 
 /// `DELETE /authors/{id}` — remove an author (library rows only).
 pub async fn delete_author(id: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/authors/{id}"))
+    let resp = delete(&format!("{API_BASE}/authors/{id}"))?
         .send()
         .await
         .noted()?;
@@ -2854,7 +2912,7 @@ pub async fn list_books(
     } else {
         format!("{API_BASE}/books?{}", params.join("&"))
     };
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list books -> HTTP {}", resp.status())));
     }
@@ -2871,7 +2929,7 @@ pub async fn get_book_if_changed(
 }
 
 pub async fn get_book(id: &str) -> Result<Book, ApiError> {
-    let resp = get(&format!("{API_BASE}/books/{id}"))
+    let resp = get(&format!("{API_BASE}/books/{id}"))?
         .send()
         .await
         .noted()?;
@@ -2894,7 +2952,7 @@ pub struct Chapter {
 /// `GET /books/{id}/files/{fid}/chapters` — embedded chapter marks (empty when
 /// the file has none; the player falls back to a plain seek bar).
 pub async fn book_chapters(id: &str, fid: &str) -> Result<Vec<Chapter>, ApiError> {
-    let resp = get(&format!("{API_BASE}/books/{id}/files/{fid}/chapters"))
+    let resp = get(&format!("{API_BASE}/books/{id}/files/{fid}/chapters"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -2941,7 +2999,10 @@ pub struct SubtitleTrack {
 /// still plays.
 pub async fn video_subtitles(video_path: &str) -> Vec<SubtitleTrack> {
     let url = format!("{}/subtitles", video_path.trim_end_matches("/video"));
-    match get(&url).send().await {
+    let Ok(req) = get(&url) else {
+        return Vec::new();
+    };
+    match req.send().await {
         Ok(r) if r.ok() => r.json().await.unwrap_or_default(),
         _ => Vec::new(),
     }
@@ -3003,7 +3064,7 @@ pub struct ApkInstall {
 /// `GET /pair/apk` — install QR for the published APK (`available:false` when
 /// none is published).
 pub async fn pair_apk() -> Result<ApkInstall, ApiError> {
-    let resp = get(&format!("{API_BASE}/pair/apk")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/pair/apk"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("pair apk -> HTTP {}", resp.status())));
     }
@@ -3013,7 +3074,7 @@ pub async fn pair_apk() -> Result<ApkInstall, ApiError> {
 /// `GET /pair/qr` — QR for `url` (the pair card always passes one explicitly,
 /// so what's rendered is exactly what the operator sees in the field).
 pub async fn pair_qr(url: &str) -> Result<PairQr, ApiError> {
-    let resp = get(&format!("{API_BASE}/pair/qr?url={}", encode(url)))
+    let resp = get(&format!("{API_BASE}/pair/qr?url={}", encode(url)))?
         .send()
         .await?;
     if !resp.ok() {
@@ -3030,7 +3091,7 @@ pub async fn pair_app_qr(url: &str) -> Result<PairQr, ApiError> {
     } else {
         format!("{API_BASE}/pair/app?url={}", encode(url))
     };
-    let resp = get(&path).send().await.noted()?;
+    let resp = get(&path)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("pair app -> HTTP {}", resp.status())));
     }
@@ -3041,7 +3102,7 @@ pub async fn pair_app_qr(url: &str) -> Result<PairQr, ApiError> {
 /// has no title search, so the add flow is keyed by ASIN).
 pub async fn lookup_book(asin: &str) -> Result<BookLookup, ApiError> {
     let url = format!("{API_BASE}/books/lookup?asin={}", encode(asin));
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         let status = resp.status();
         let detail = resp
@@ -3067,7 +3128,7 @@ pub async fn add_book(asin: &str, profile: Option<&str>, search: bool) -> Result
     if let Some(p) = profile {
         body["profile"] = serde_json::json!(p);
     }
-    let resp = post(&format!("{API_BASE}/books"))
+    let resp = post(&format!("{API_BASE}/books"))?
         .json(&body)?
         .send()
         .await?;
@@ -3094,7 +3155,7 @@ pub struct SeriesRollup {
 /// `GET /audiobooks/series` — per-series owned-of-total rollups + watch state.
 #[allow(dead_code)]
 pub async fn list_book_series() -> Result<Vec<SeriesRollup>, ApiError> {
-    let resp = get(&format!("{API_BASE}/audiobooks/series"))
+    let resp = get(&format!("{API_BASE}/audiobooks/series"))?
         .send()
         .await
         .noted()?;
@@ -3106,7 +3167,7 @@ pub async fn list_book_series() -> Result<Vec<SeriesRollup>, ApiError> {
 
 /// `PUT /watchers/{scope}/{key}` — start watching (author/series/book) for acquire.
 pub async fn set_watcher(scope: &str, key: &str) -> Result<(), ApiError> {
-    let resp = put(&format!("{API_BASE}/watchers/{scope}/{}", encode(key)))
+    let resp = put(&format!("{API_BASE}/watchers/{scope}/{}", encode(key)))?
         .send()
         .await?;
     write_ok("set watcher", resp).await
@@ -3114,7 +3175,7 @@ pub async fn set_watcher(scope: &str, key: &str) -> Result<(), ApiError> {
 
 /// `DELETE /watchers/{scope}/{key}` — stop watching.
 pub async fn clear_watcher(scope: &str, key: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/watchers/{scope}/{}", encode(key)))
+    let resp = delete(&format!("{API_BASE}/watchers/{scope}/{}", encode(key)))?
         .send()
         .await?;
     write_ok("clear watcher", resp).await
@@ -3131,7 +3192,7 @@ pub struct Watcher {
 /// `GET /watchers` — all active watchers, so the UI can reflect current state of
 /// author/series/book toggles.
 pub async fn list_watchers() -> Result<Vec<Watcher>, ApiError> {
-    let resp = get(&format!("{API_BASE}/watchers")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/watchers"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list watchers -> HTTP {}", resp.status())));
     }
@@ -3165,7 +3226,7 @@ pub struct Work {
 /// known-works store is refreshed for every library author (SKADI-T-0160). Returns
 /// once the pass is *queued* (it runs in the background on the server).
 pub async fn refresh_catalog() -> Result<(), ApiError> {
-    let resp = post(&format!("{API_BASE}/audiobooks/catalog/refresh"))
+    let resp = post(&format!("{API_BASE}/audiobooks/catalog/refresh"))?
         .send()
         .await?;
     write_ok("refresh catalog", resp).await
@@ -3177,7 +3238,7 @@ pub async fn list_works_by_author(asin: &str) -> Result<Vec<Work>, ApiError> {
     let resp = get(&format!(
         "{API_BASE}/audiobooks/works?author={}",
         encode(asin)
-    ))
+    ))?
     .send()
     .await?;
     if !resp.ok() {
@@ -3193,7 +3254,7 @@ pub async fn list_works_by_series(asin: &str) -> Result<Vec<Work>, ApiError> {
     let resp = get(&format!(
         "{API_BASE}/audiobooks/works?series={}",
         encode(asin)
-    ))
+    ))?
     .send()
     .await?;
     if !resp.ok() {
@@ -3205,7 +3266,7 @@ pub async fn list_works_by_series(asin: &str) -> Result<Vec<Work>, ApiError> {
 /// `GET /audiobooks/discover?limit=N` (SKADI-T-0317) — library-driven recommendations: unowned
 /// known works ranked upcoming → recently-released → undated. Reuses the [`Work`] shape.
 pub async fn discover_audiobooks(limit: u32) -> Result<Vec<Work>, ApiError> {
-    let resp = get(&format!("{API_BASE}/audiobooks/discover?limit={limit}"))
+    let resp = get(&format!("{API_BASE}/audiobooks/discover?limit={limit}"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -3227,7 +3288,7 @@ pub struct BookSearchResult {
 
 /// `GET /books/search?q=` — free-text title/author search over the Audible catalog.
 pub async fn search_books(q: &str) -> Result<Vec<BookSearchResult>, ApiError> {
-    let resp = get(&format!("{API_BASE}/books/search?q={}", encode(q)))
+    let resp = get(&format!("{API_BASE}/books/search?q={}", encode(q)))?
         .send()
         .await?;
     if !resp.ok() {
@@ -3248,7 +3309,7 @@ pub struct AudiobookQuality {
 /// `GET /audiobooks/quality` — the built-in, format-first audiobook quality
 /// ladder (best → fallback). Read-only; the Audiobooks · Config page displays it.
 pub async fn audiobook_quality() -> Result<Vec<AudiobookQuality>, ApiError> {
-    let resp = get(&format!("{API_BASE}/audiobooks/quality"))
+    let resp = get(&format!("{API_BASE}/audiobooks/quality"))?
         .send()
         .await?;
     if !resp.ok() {
@@ -3262,7 +3323,7 @@ pub async fn audiobook_quality() -> Result<Vec<AudiobookQuality>, ApiError> {
 
 /// `PATCH /books/{id}` — toggle the monitored flag.
 pub async fn set_book_monitored(id: &str, monitored: bool) -> Result<(), ApiError> {
-    let resp = patch(&format!("{API_BASE}/books/{id}"))
+    let resp = patch(&format!("{API_BASE}/books/{id}"))?
         .json(&serde_json::json!({ "monitored": monitored }))?
         .send()
         .await?;
@@ -3273,7 +3334,7 @@ pub async fn set_book_monitored(id: &str, monitored: bool) -> Result<(), ApiErro
 pub async fn delete_book(id: &str, delete_files: bool) -> Result<(), ApiError> {
     let resp = delete(&format!(
         "{API_BASE}/books/{id}?delete_files={delete_files}"
-    ))
+    ))?
     .send()
     .await?;
     write_ok("delete book", resp).await
@@ -3282,14 +3343,14 @@ pub async fn delete_book(id: &str, delete_files: bool) -> Result<(), ApiError> {
 /// `POST /books/{id}/files/{fid}/acquire` — trigger a manual acquire.
 pub async fn acquire_book_file(book_id: &str, file_id: &str) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/acquire");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     write_ok("acquire", resp).await
 }
 
 /// `POST /books/{id}/files/{fid}/reset` — unwedge a file back to Missing.
 pub async fn reset_book_file(book_id: &str, file_id: &str) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/reset");
-    let resp = post(&url).send().await.noted()?;
+    let resp = post(&url)?.send().await.noted()?;
     write_ok("reset", resp).await
 }
 
@@ -3312,7 +3373,7 @@ pub async fn book_file_location(
     file_id: &str,
 ) -> Result<Option<BookFileLocation>, ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/location");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if resp.status() == 404 {
         return Ok(None);
     }
@@ -3351,7 +3412,7 @@ pub async fn fs_browse(path: Option<&str>) -> Result<FsListing, ApiError> {
         }
         _ => format!("{API_BASE}/fs/browse"),
     };
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("browse -> HTTP {}", resp.status())));
     }
@@ -3364,7 +3425,7 @@ pub async fn list_book_releases(
     file_id: &str,
 ) -> Result<Vec<ReleaseCandidate>, ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/releases");
-    let resp = get(&url).send().await.noted()?;
+    let resp = get(&url)?.send().await.noted()?;
     if !resp.ok() {
         let status = resp.status();
         let detail = resp
@@ -3389,7 +3450,7 @@ pub async fn grab_book_release(
     release: &Value,
 ) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/grab");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "release": release }))?
         .send()
         .await?;
@@ -3405,7 +3466,7 @@ pub async fn grab_link_book(
     title: Option<&str>,
 ) -> Result<(), ApiError> {
     let url = format!("{API_BASE}/books/{book_id}/files/{file_id}/grab-link");
-    let resp = post(&url)
+    let resp = post(&url)?
         .json(&serde_json::json!({ "link": link, "title": title }))?
         .send()
         .await?;
@@ -3495,7 +3556,7 @@ impl ConfigKey {
 
 /// `GET /config` — every registry key with its value, default, kind and tier.
 pub async fn list_config() -> Result<Vec<ConfigKey>, ApiError> {
-    let resp = get(&format!("{API_BASE}/config")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/config"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("list config -> HTTP {}", resp.status())));
     }
@@ -3504,7 +3565,7 @@ pub async fn list_config() -> Result<Vec<ConfigKey>, ApiError> {
 
 /// `PUT /config/{key}` — set one key.
 pub async fn set_config(key: &str, value: &str) -> Result<(), ApiError> {
-    let resp = put(&format!("{API_BASE}/config/{key}"))
+    let resp = put(&format!("{API_BASE}/config/{key}"))?
         .json(&serde_json::json!({ "value": value }))?
         .send()
         .await?;
@@ -3517,7 +3578,7 @@ pub async fn set_config(key: &str, value: &str) -> Result<(), ApiError> {
 /// happens to equal the default today and would not follow it if the default
 /// changed.
 pub async fn clear_config(key: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/config/{key}")).send().await?;
+    let resp = delete(&format!("{API_BASE}/config/{key}"))?.send().await?;
     write_ok("clear config", resp).await
 }
 
@@ -3631,15 +3692,18 @@ pub struct CreatedMember {
 
 /// `GET /me` — who this browser is signed in as.
 pub async fn me() -> Result<Member, ApiError> {
-    let resp = get(&format!("{API_BASE}/me")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/me"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("me -> HTTP {}", resp.status())));
     }
-    Ok(resp.json::<Member>().await?)
+    let me = resp.json::<Member>().await?;
+    // The request gate reads the role from here (SKADI-T-0642).
+    set_role(Some(me.role.clone()));
+    Ok(me)
 }
 
 pub async fn list_members() -> Result<Vec<Member>, ApiError> {
-    let resp = get(&format!("{API_BASE}/members")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/members"))?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("members -> HTTP {}", resp.status())));
     }
@@ -3672,7 +3736,7 @@ async fn read_json<T: serde::de::DeserializeOwned>(
 }
 
 pub async fn create_member(body: &Value) -> Result<CreatedMember, ApiError> {
-    let resp = post(&format!("{API_BASE}/members"))
+    let resp = post(&format!("{API_BASE}/members"))?
         .header("content-type", "application/json")
         .body(body.to_string())?
         .send()
@@ -3682,7 +3746,7 @@ pub async fn create_member(body: &Value) -> Result<CreatedMember, ApiError> {
 }
 
 pub async fn update_member(id: &str, body: &Value) -> Result<Member, ApiError> {
-    let resp = patch(&format!("{API_BASE}/members/{}", encode(id)))
+    let resp = patch(&format!("{API_BASE}/members/{}", encode(id)))?
         .header("content-type", "application/json")
         .body(body.to_string())?
         .send()
@@ -3692,7 +3756,7 @@ pub async fn update_member(id: &str, body: &Value) -> Result<Member, ApiError> {
 }
 
 pub async fn reissue_member_token(id: &str) -> Result<CreatedMember, ApiError> {
-    let resp = post(&format!("{API_BASE}/members/{}/token", encode(id)))
+    let resp = post(&format!("{API_BASE}/members/{}/token", encode(id)))?
         .send()
         .await
         .noted()?;
@@ -3700,7 +3764,7 @@ pub async fn reissue_member_token(id: &str) -> Result<CreatedMember, ApiError> {
 }
 
 pub async fn delete_member(id: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/members/{}", encode(id)))
+    let resp = delete(&format!("{API_BASE}/members/{}", encode(id)))?
         .send()
         .await
         .noted()?;
@@ -3714,7 +3778,7 @@ pub async fn pair_app_qr_for(member: &str, url: &str) -> Result<PairQr, ApiError
     if !url.trim().is_empty() {
         path.push_str(&format!("&url={}", encode(url)));
     }
-    let resp = get(&path).send().await.noted()?;
+    let resp = get(&path)?.send().await.noted()?;
     if !resp.ok() {
         return Err(ApiError(format!("pair app -> HTTP {}", resp.status())));
     }
@@ -3755,13 +3819,15 @@ pub async fn login(username: &str, password: &str) -> Result<Member, ApiError> {
 /// local half happens even if the call fails, because the alternative is a
 /// button that visibly does nothing.
 pub async fn logout() {
-    let _ = post(&format!("{API_BASE}/auth/logout")).send().await;
+    if let Ok(req) = post(&format!("{API_BASE}/auth/logout")) {
+        let _ = req.send().await;
+    }
     forget_token();
 }
 
 /// `POST /members/{id}/signout` — sign every one of a member's devices out.
 pub async fn signout_member(id: &str) -> Result<Member, ApiError> {
-    let resp = post(&format!("{API_BASE}/members/{}/signout", encode(id)))
+    let resp = post(&format!("{API_BASE}/members/{}/signout", encode(id)))?
         .send()
         .await
         .noted()?;
@@ -3774,7 +3840,7 @@ pub async fn signout_member(id: &str) -> Result<Member, ApiError> {
 /// point: you are cutting off whoever learned the old one.
 pub async fn change_password(current: &str, new: &str) -> Result<(), ApiError> {
     let body = serde_json::json!({ "current": current, "new": new });
-    let resp = post(&format!("{API_BASE}/auth/password"))
+    let resp = post(&format!("{API_BASE}/auth/password"))?
         .header("content-type", "application/json")
         .body(body.to_string())?
         .send()
@@ -3837,7 +3903,7 @@ pub async fn open_upload(
     kind: &str,
 ) -> Result<UploadSession, ApiError> {
     let body = open_upload_body(filename, size_bytes, kind);
-    let resp = post(&format!("{API_BASE}/uploads"))
+    let resp = post(&format!("{API_BASE}/uploads"))?
         .header("content-type", "application/json")
         .body(body.to_string())?
         .send()
@@ -3848,13 +3914,13 @@ pub async fn open_upload(
 
 /// Sessions this browser's account still has in flight.
 pub async fn list_uploads() -> Result<Vec<UploadSession>, ApiError> {
-    let resp = get(&format!("{API_BASE}/uploads")).send().await.noted()?;
+    let resp = get(&format!("{API_BASE}/uploads"))?.send().await.noted()?;
     read_json("uploads", resp).await
 }
 
 /// How much the server holds — the resume point after a drop.
 pub async fn upload_status(id: &str) -> Result<UploadSession, ApiError> {
-    let resp = get(&format!("{API_BASE}/uploads/{id}"))
+    let resp = get(&format!("{API_BASE}/uploads/{id}"))?
         .send()
         .await
         .noted()?;
@@ -3874,7 +3940,7 @@ pub async fn put_upload_chunk(
     // `as u64` for the same reason as the body above: an offset is a byte
     // count, and a query string carrying `offset=8022.5` is nonsense.
     let offset = offset as u64;
-    let resp = put(&format!("{API_BASE}/uploads/{id}/chunk?offset={offset}"))
+    let resp = put(&format!("{API_BASE}/uploads/{id}/chunk?offset={offset}"))?
         .header("content-type", "application/octet-stream")
         .body(blob.clone())?
         .send()
@@ -3885,7 +3951,7 @@ pub async fn put_upload_chunk(
 
 /// Verify, probe and publish. Answers the staging path.
 pub async fn complete_upload(id: &str) -> Result<UploadDone, ApiError> {
-    let resp = post(&format!("{API_BASE}/uploads/{id}/complete"))
+    let resp = post(&format!("{API_BASE}/uploads/{id}/complete"))?
         .send()
         .await
         .noted()?;
@@ -3894,7 +3960,7 @@ pub async fn complete_upload(id: &str) -> Result<UploadDone, ApiError> {
 
 /// Abandon a session and remove its bytes.
 pub async fn delete_upload(id: &str) -> Result<(), ApiError> {
-    let resp = delete(&format!("{API_BASE}/uploads/{id}"))
+    let resp = delete(&format!("{API_BASE}/uploads/{id}"))?
         .send()
         .await
         .noted()?;

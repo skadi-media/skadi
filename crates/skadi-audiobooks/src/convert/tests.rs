@@ -88,6 +88,9 @@ async fn imported_book(
     });
     file.quality = Some(mp3);
     store.upsert_book_file(&file).await.unwrap();
+    // As stored: the database keeps microseconds, and a Linux clock gives
+    // nanoseconds, so the in-memory row would not compare equal to a read.
+    let file = store.get_book_file(file.id).await.unwrap().unwrap();
     if acquired {
         store
             .record_history(&HistoryEntry {

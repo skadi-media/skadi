@@ -11,4 +11,5 @@ All notable changes to this project will be documented in this file.
 - Docs: plissken 0.2.1 (was 0.2.0): intra-doc links resolve by the whole path (SKADI-T-0727).
 
 ### Added
+- Optional conversion of a downloaded audiobook to one M4B with chapters (`import.audiobook_convert_to_m4b`, off by default). The image now has a small static `ffmpeg` for it (SKADI-T-0139).
 - Initial project structure

@@ -21,8 +21,8 @@
 #
 # This build is **2.77 MB, fully static**, with only the two demuxers skadi probes
 # and the parsers that expose DV side data. No encoders, no filters, no network,
-# no external codecs — so the transcoder is not merely unused here, it does not
-# exist in the image. SKADI-T-0139 (MP3→M4B) stays a separate, unmade decision.
+# no external codecs. The one transcoder the image carries is the separate
+# `ffmpeg` below, for the opt-in M4B conversion (SKADI-T-0139).
 FROM debian:bookworm-slim AS ffprobe-build
 ARG FFMPEG_VERSION=7.1.1
 # `nasm` is needed on x86 only: ffmpeg's configure refuses to build its x86
@@ -68,6 +68,41 @@ RUN ./configure \
     # the whole point, since the runtime stage carries none of these libraries.
     && ./ffprobe -version > /dev/null \
     && ! ldd ffprobe 2>&1 | grep -q "=>"
+
+# --- ffmpeg stage --------------------------------------------------------
+# A minimal, static `ffmpeg` for ONE job: the opt-in audiobook conversion to a
+# chapterized M4B (SKADI-T-0139, `import.audiobook_convert_to_m4b`, off by
+# default). Probing stays pure Rust plus the ffprobe above; nothing else runs it.
+#
+# Same source tree and the same reasoning as ffprobe: Debian's package would add
+# hundreds of MB. This build has the audiobook inputs (MP3, AAC/M4A, FLAC,
+# Ogg/Opus, WAV), the concat and ffmetadata inputs that join files and carry
+# chapters, the native AAC encoder, and the ipod (M4B) muxer. Nothing else: no
+# video, no network, no external codecs.
+FROM ffprobe-build AS ffmpeg-build
+RUN make distclean \
+    && ./configure \
+        --disable-everything \
+        --disable-doc --disable-htmlpages --disable-manpages --disable-podpages --disable-txtpages \
+        --disable-network --disable-autodetect --disable-iconv --disable-alsa \
+        --disable-sdl2 --disable-xlib --disable-zlib --disable-bzlib --disable-lzma \
+        --disable-ffplay --disable-ffprobe --enable-ffmpeg \
+        --enable-protocol=file,pipe \
+        --enable-demuxer=concat,ffmetadata,mp3,mov,aac,flac,ogg,wav \
+        --enable-decoder=mp3,mp3float,aac,alac,flac,vorbis,opus,pcm_s16le,pcm_s24le \
+        --enable-parser=mpegaudio,aac,flac,vorbis,opus \
+        --enable-encoder=aac \
+        --enable-muxer=ipod,mp4 \
+        --enable-filter=aresample,aformat,anull \
+        --enable-bsf=aac_adtstoasc \
+        --enable-static --disable-shared \
+        --extra-ldflags=-static \
+    && make -j"$(nproc)" ffmpeg \
+    && strip ffmpeg \
+    # Fail the build rather than ship an ffmpeg that cannot do the job.
+    && ./ffmpeg -hide_banner -encoders | grep -q " aac " \
+    && ./ffmpeg -hide_banner -muxers | grep -q " ipod " \
+    && ! ldd ffmpeg 2>&1 | grep -q "=>"
 
 # --- build stage ---------------------------------------------------------
 FROM rust:1-bookworm AS builder
@@ -124,6 +159,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /src/target/release/skadi /usr/local/bin/skadi
 # 2.77 MB, static, no runtime libraries needed (SKADI-T-0569).
 COPY --from=ffprobe-build /ff/ffprobe /usr/local/bin/ffprobe
+# Static, for the opt-in M4B conversion only (SKADI-T-0139).
+COPY --from=ffmpeg-build /ff/ffmpeg /usr/local/bin/ffmpeg
 
 # Pre-create the cardigann definitions dir owned by `skadi`, so a FRESH named
 # volume mounted at /data/definitions inherits skadi's ownership (Docker copies

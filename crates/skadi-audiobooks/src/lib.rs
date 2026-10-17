@@ -19,6 +19,7 @@ use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 pub mod author;
 pub mod book;
 pub mod book_file;
+pub mod convert;
 pub mod discovery;
 pub mod http;
 pub mod import;
@@ -38,6 +39,7 @@ pub mod work;
 pub use author::{Author, Series, SeriesLink};
 pub use book::Book;
 pub use book_file::BookFile;
+pub use convert::{AudiobookConvertWorker, CONVERT_KEY, ConvertJob};
 pub use discovery::{
     AuthorDiscovery, AuthorDiscoveryWorker, DEFAULT_DISCOVERY_INTERVAL, IngestProgress,
     MAX_PAGES_PER_PASS, ingest_author_pages, ingest_author_works,

@@ -486,6 +486,17 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
         default: "true",
         tier: Tier::Tier1,
     },
+    // Convert an acquired audiobook that is not M4B into one chapterized `.m4b`
+    // with ffmpeg, after the import (SKADI-T-0139). Off by default: MP3 to AAC is
+    // a lossy re-encode of the operator's media. A background job, one book at a
+    // time; a failure leaves the import as it was. The originals follow
+    // `import.placement`. Acquire path only: a library import is never converted.
+    ConfigKeySpec {
+        key: "import.audiobook_convert_to_m4b",
+        kind: ValueKind::Bool,
+        default: "false",
+        tier: Tier::Tier1,
+    },
     // Worker (the `SKADI_WORKER_*` surface; defaults match its current
     // `Config::from_env`).
     ConfigKeySpec {
@@ -738,6 +749,10 @@ pub const HELP: &[(&str, &str)] = &[
     (
         "import.placement",
         "seed keeps the download and hard-links the file into the library, so the torrent continues to seed. move removes the download after the import.",
+    ),
+    (
+        "import.audiobook_convert_to_m4b",
+        "When on, an audiobook that skadi downloads as MP3 (or another format that is not M4B) is converted to one M4B file with chapters after the import. This re-encodes the audio. A failed conversion keeps the imported files. With placement seed, a file that is the only copy is kept next to the M4B.",
     ),
     (
         "import.recycle_bin",

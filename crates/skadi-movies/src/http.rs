@@ -1867,6 +1867,57 @@ impl MoviesLibrary {
         }
     }
 
+    /// The TMDB id of an IMDb list item, or `None` when the movie is already in
+    /// the library (SKADI-T-0733).
+    ///
+    /// The library is checked first, so a sync of a list the library already
+    /// holds costs no metadata calls.
+    async fn resolve_imdb(
+        &self,
+        provider: &dyn MetadataProvider,
+        imdb: &str,
+    ) -> skadi_core::Result<Option<TmdbId>> {
+        let imdb = imdb.trim();
+        let valid = imdb.len() > 2
+            && imdb.starts_with("tt")
+            && imdb[2..].bytes().all(|b| b.is_ascii_digit());
+        if !valid {
+            return Err(AppError::Validation(format!("`{imdb}` is not an IMDb id")));
+        }
+        if (&self.store as &dyn MoviesRepo)
+            .get_movie_by_imdb(imdb)
+            .await?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let not_found = || AppError::NotFound(format!("IMDb id {imdb} matches no movie"));
+        let record = provider
+            .lookup(&ExternalId::Imdb(skadi_core::ImdbId(imdb.to_string())))
+            .await
+            .map_err(|e| match e {
+                AppError::NotFound(_) => not_found(),
+                other => other,
+            })?;
+        record.external_ids.tmdb.map(Some).ok_or_else(not_found)
+    }
+
+    /// Whether an exclusion names this TMDB id for movies. Both spellings of
+    /// the domain, as the sync engine accepts both on a list.
+    async fn excluded_by_tmdb(&self, tmdb: &TmdbId) -> skadi_core::Result<bool> {
+        use skadi_store::ImportListRepo;
+        let id = tmdb.0.to_string();
+        for domain in [MediaKind::Movie.library_subfolder(), DOMAIN_NAME] {
+            if (&self.store as &dyn ImportListRepo)
+                .is_excluded(domain, "tmdb", &id)
+                .await?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Attach the metadata provider that `add_from_list` needs (SKADI-T-0511).
     #[must_use]
     pub fn with_provider(mut self, provider: Arc<dyn MetadataProvider>) -> Self {
@@ -1944,28 +1995,47 @@ impl LibraryProvider for MoviesLibrary {
     fn kind(&self) -> MediaKind {
         MediaKind::Movie
     }
-    /// Add a movie by TMDB id on behalf of an import list (SKADI-T-0511).
+    /// Add a movie by TMDB or IMDb id on behalf of an import list
+    /// (SKADI-T-0511, SKADI-T-0733).
     ///
     /// Goes through `add_movie` — the same function `POST /movies` calls — so a
     /// list-added movie and a hand-added one are the same row built the same way.
+    /// An IMDb id is resolved to its TMDB id first.
     async fn add_from_list(
         &self,
         id_kind: &str,
         external_id: &str,
         opts: &skadi_api::library::ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
-        if !id_kind.eq_ignore_ascii_case("tmdb") {
-            return Err(AppError::Validation(format!(
-                "movies can be added by tmdb id, not `{id_kind}`"
-            )));
-        }
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
         let provider = self.provider.as_ref().ok_or_else(|| {
             AppError::Internal("movies library has no metadata provider configured".into())
         })?;
-        let tmdb: u64 = external_id
-            .parse()
-            .map_err(|_| AppError::Validation(format!("`{external_id}` is not a TMDB id")))?;
-        let tmdb = TmdbId(tmdb);
+        let tmdb = if id_kind.eq_ignore_ascii_case("tmdb") {
+            let tmdb: u64 = external_id
+                .parse()
+                .map_err(|_| AppError::Validation(format!("`{external_id}` is not a TMDB id")))?;
+            TmdbId(tmdb)
+        } else if id_kind.eq_ignore_ascii_case("imdb") {
+            let Some(tmdb) = self.resolve_imdb(provider.as_ref(), external_id).await? else {
+                return Ok(skadi_api::library::ListAdd::Existing);
+            };
+            // The sync engine checked exclusions by the IMDb id. The movie
+            // page's "Exclude from lists" posts the TMDB id, and that must
+            // hold for an IMDb list too.
+            if self.excluded_by_tmdb(&tmdb).await? {
+                tracing::info!(
+                    imdb = external_id,
+                    tmdb = tmdb.0,
+                    "import list: excluded by TMDB id"
+                );
+                return Ok(skadi_api::library::ListAdd::Excluded);
+            }
+            tmdb
+        } else {
+            return Err(AppError::Validation(format!(
+                "movies can be added by tmdb or imdb id, not `{id_kind}`"
+            )));
+        };
 
         // Already present is not an error: it is the ordinary case on every sync
         // after the first, and the engine counts it separately.
@@ -1974,7 +2044,7 @@ impl LibraryProvider for MoviesLibrary {
             .await?
             .is_some()
         {
-            return Ok(false);
+            return Ok(skadi_api::library::ListAdd::Existing);
         }
 
         let profile = match &opts.profile_id {
@@ -2011,7 +2081,7 @@ impl LibraryProvider for MoviesLibrary {
                 .upsert_movie(&movie)
                 .await?;
         }
-        Ok(true)
+        Ok(skadi_api::library::ListAdd::Added)
     }
 
     async fn items(&self, monitored: Option<bool>) -> skadi_core::Result<Vec<LibraryItemDto>> {

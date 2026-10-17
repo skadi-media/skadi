@@ -3204,6 +3204,37 @@ mod import_lists {
         }
         assert_eq!(kind_spec("sonarr").unwrap().domain, "series");
         assert_eq!(kind_label("trakt_list"), "trakt_list");
+        let slugs: Vec<&str> = KINDS.iter().map(|k| k.slug).collect();
+        assert_eq!(
+            slugs,
+            [
+                "tmdb_collection",
+                "tmdb_list",
+                "imdb_list",
+                "radarr",
+                "sonarr"
+            ]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_imdb_list_takes_a_list_id_and_needs_flaresolverr() {
+        let k = kind_spec("imdb_list").unwrap();
+        assert_eq!(k.label, "IMDb list");
+        assert_eq!(k.domain, "movie");
+        assert_eq!(k.fields.len(), 1);
+        assert_eq!(k.fields[0].key, "list_id");
+        assert_eq!(k.fields[0].label, "IMDb list id");
+        assert!(!k.fields[0].secret);
+        assert!(k.help.contains("FlareSolverr"), "{}", k.help);
+        let v = |key: &str| match key {
+            "list_id" => " ls012345678 ".to_string(),
+            _ => String::new(),
+        };
+        assert_eq!(
+            settings_for("imdb_list", v),
+            json!({ "list_id": "ls012345678" })
+        );
     }
 
     #[wasm_bindgen_test]

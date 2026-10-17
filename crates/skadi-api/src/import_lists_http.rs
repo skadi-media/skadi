@@ -77,8 +77,16 @@ fn validate(list: &ImportList) -> Result<(), ApiError> {
 
 async fn create(
     State(state): State<Arc<AppState>>,
-    Json(mut list): Json<ImportList>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let says_monitored = body.get("add_monitored").is_some();
+    let mut list: ImportList = serde_json::from_value(body)
+        .map_err(|e| ApiError(AppError::Validation(format!("import list: {e}"))))?;
+    // A body that leaves the switch out gets the domain's default: on for an
+    // audiobook list, off for films and series (SKADI-T-0733).
+    if !says_monitored {
+        list.add_monitored = skadi_store::import_lists::monitored_by_default(&list.target_domain);
+    }
     validate(&list)?;
     // A new list starts with no sync history and a server id, whatever the
     // body says: the UI sends the form, not a row.

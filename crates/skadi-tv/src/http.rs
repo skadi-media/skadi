@@ -1386,7 +1386,7 @@ impl LibraryProvider for TelevisionLibrary {
         id_kind: &str,
         external_id: &str,
         opts: &skadi_api::library::ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
         if !id_kind.eq_ignore_ascii_case("tvdb") {
             return Err(AppError::Validation(format!(
                 "series can be added by tvdb id, not `{id_kind}`"
@@ -1406,7 +1406,7 @@ impl LibraryProvider for TelevisionLibrary {
             .await?
             .is_some()
         {
-            return Ok(false);
+            return Ok(skadi_api::library::ListAdd::Existing);
         }
 
         let profile = match &opts.profile_id {
@@ -1444,7 +1444,7 @@ impl LibraryProvider for TelevisionLibrary {
             monitor,
         )
         .await?;
-        Ok(true)
+        Ok(skadi_api::library::ListAdd::Added)
     }
     async fn items(&self, monitored: Option<bool>) -> skadi_core::Result<Vec<LibraryItemDto>> {
         let series = (&self.store as &dyn TvRepo)

@@ -41,6 +41,11 @@ const LIST_ID: FieldSpec = FieldSpec {
     label: "TMDB id",
     secret: false,
 };
+const IMDB_LIST_ID: FieldSpec = FieldSpec {
+    key: "list_id",
+    label: "IMDb list id",
+    secret: false,
+};
 const BASE_URL: FieldSpec = FieldSpec {
     key: "base_url",
     label: "Server URL",
@@ -53,7 +58,8 @@ const API_KEY: FieldSpec = FieldSpec {
 };
 
 /// The providers the daemon registers (`skadi-cli` main). The TMDB two need
-/// the daemon's TMDB key; without it a sync says so.
+/// the daemon's TMDB key, and IMDb needs FlareSolverr; without them a sync
+/// says so.
 pub const KINDS: &[KindSpec] = &[
     KindSpec {
         slug: "tmdb_collection",
@@ -68,6 +74,13 @@ pub const KINDS: &[KindSpec] = &[
         domain: "movie",
         fields: &[LIST_ID],
         help: "The films of a public TMDB list. The id is the number in the list's TMDB address.",
+    },
+    KindSpec {
+        slug: "imdb_list",
+        label: "IMDb list",
+        domain: "movie",
+        fields: &[IMDB_LIST_ID],
+        help: "The films of a public IMDb list. The id starts with ls and is in the list's IMDb address. Needs FlareSolverr, as IMDb blocks plain requests: set flaresolverr_url and restart skadi.",
     },
     KindSpec {
         slug: "radarr",

@@ -15,7 +15,7 @@ use skadi_core::Result;
 use skadi_metadata::import_list::ImportListProvider;
 use skadi_store::{ImportList, ImportListRepo};
 
-use crate::library::{ImportListAddOptions, LibraryProvider};
+use crate::library::{ImportListAddOptions, LibraryProvider, ListAdd};
 
 /// What one list's sync did.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -75,9 +75,14 @@ pub async fn sync_list(
             // `item_tags` uses) and "movies" (the registered domain name) are
             // both the obvious thing to type. Rejecting one of them would be a
             // configuration trap with a silent-looking symptom.
+            //
+            // The kind's own name counts too: the list editor writes `series`
+            // for a Sonarr list (SKADI-T-0733), and TV's subfolder and domain
+            // are both `television`.
             let want = list.target_domain.to_ascii_lowercase();
             d.kind().library_subfolder().eq_ignore_ascii_case(&want)
                 || d.domain().eq_ignore_ascii_case(&want)
+                || format!("{:?}", d.kind()).eq_ignore_ascii_case(&want)
         })
         .ok_or_else(|| {
             skadi_core::AppError::Validation(format!(
@@ -122,8 +127,9 @@ pub async fn sync_list(
             .add_from_list(&item.id_kind, &item.external_id, &opts)
             .await
         {
-            Ok(true) => report.added += 1,
-            Ok(false) => report.existing += 1,
+            Ok(ListAdd::Added) => report.added += 1,
+            Ok(ListAdd::Existing) => report.existing += 1,
+            Ok(ListAdd::Excluded) => report.excluded += 1,
             Err(e) => report
                 .failed
                 .push((item.external_id.clone(), e.to_string())),

@@ -187,6 +187,10 @@ test("an import list is created, synced, edited and deleted; an item is excluded
   await page.getByLabel("Provider").selectOption("sonarr");
   await expect(page.getByLabel("Server URL")).toBeVisible();
   await expect(page.getByLabel("API key")).toBeVisible();
+  // An IMDb list asks for its list id and says it needs FlareSolverr.
+  await page.getByLabel("Provider").selectOption("imdb_list");
+  await expect(page.getByLabel("IMDb list id")).toBeVisible();
+  await expect(page.getByText("Needs FlareSolverr")).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
   // An excluded item is listed with its id.

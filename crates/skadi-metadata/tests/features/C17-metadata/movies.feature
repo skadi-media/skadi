@@ -42,11 +42,30 @@ Feature: Movie metadata providers — TMDB and the Servarr metadata API
     And the provider is named "tmdb" and supports "movie" but not "audiobook"
 
   @C17 @passing
-  Scenario: TMDB cannot look a movie up by IMDb id (a validation error, not a request)
+  Scenario: a TMDB lookup by IMDb id finds the TMDB id first, then fetches that movie (SKADI-T-0733)
     Given a TMDB provider with API key "k"
+    And the upstream answers "/find/tt0133093?external_source=imdb_id" with JSON:
+      """
+      { "movie_results": [ { "id": 603, "title": "The Matrix" } ], "tv_results": [] }
+      """
+    And the upstream answers "/movie/603" with JSON:
+      """
+      { "id": 603, "title": "The Matrix", "release_date": "1999-03-31", "runtime": 136,
+        "external_ids": { "imdb_id": "tt0133093" } }
+      """
     When the movie "tt0133093" is looked up by IMDb id
-    Then the lookup fails with an error containing "TMDB id"
+    Then the record has tmdb id 603 and imdb id "tt0133093"
     And the upstream received 0 requests to "/movie/tt0133093"
+
+  @C17 @passing
+  Scenario: an IMDb id TMDB knows no movie for is not found (SKADI-T-0733)
+    Given a TMDB provider with API key "k"
+    And the upstream answers "/find/tt0944947?external_source=imdb_id" with JSON:
+      """
+      { "movie_results": [], "tv_results": [ { "id": 1399 } ] }
+      """
+    When the movie "tt0944947" is looked up by IMDb id
+    Then the lookup fails with an error containing "no movie with IMDb id tt0944947"
 
   @C17 @passing
   Scenario: a refresh re-fetches the record (no cache in front of the provider)

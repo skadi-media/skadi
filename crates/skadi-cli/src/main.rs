@@ -749,6 +749,7 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
     // clone-coerce one copy into the module's `set_metadata_provider` slot.
     let ab_provider_concrete = Arc::new(skadi_metadata::AudnexusProvider::new(ab_http));
     let ab_provider: Arc<dyn skadi_metadata::MetadataProvider> = ab_provider_concrete.clone();
+    let ab_provider_for_lists = ab_provider.clone();
     audiobooks.set_metadata_provider(ab_provider);
 
     // Author-monitoring discovery (SKADI-T-0132): the Audible catalog API lists a
@@ -786,7 +787,11 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
     // registered no provider before, so /library silently omitted every book and
     // `unmapped` reported every author folder as free.
     let audiobooks_library: Arc<dyn skadi_api::LibraryProvider> =
-        Arc::new(skadi_audiobooks::AudiobooksLibrary::new(audiobooks.store()));
+        // `with_provider` makes books addable from an import list (SKADI-T-0733).
+        Arc::new(
+            skadi_audiobooks::AudiobooksLibrary::new(audiobooks.store())
+                .with_provider(ab_provider_for_lists),
+        );
 
     let mut state = AppState::new_full(
         config.clone(),
@@ -844,6 +849,21 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
         // that library.
         providers.push(Arc::new(ArrInstanceProvider::radarr(http.clone())));
         providers.push(Arc::new(ArrInstanceProvider::sonarr(http.clone())));
+        // imdb.com answers a plain fetch with a bot challenge, so IMDb lists
+        // need FlareSolverr (SKADI-T-0733). Read once at start, like the TMDB
+        // key: setting `flaresolverr_url` later takes a restart for lists.
+        match config_view
+            .get_opt_string("flaresolverr_url")
+            .context("reading flaresolverr_url")?
+            .filter(|u| !u.trim().is_empty())
+        {
+            Some(url) => providers.push(Arc::new(
+                skadi_metadata::imdb_list::ImdbListProvider::new(&url),
+            )),
+            None => {
+                tracing::info!("import lists: no flaresolverr_url, so no IMDb list provider");
+            }
+        }
         tracing::info!(
             providers = providers.len(),
             "import list providers registered"

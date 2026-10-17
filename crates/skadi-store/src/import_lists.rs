@@ -60,6 +60,19 @@ pub struct ImportList {
     pub created_at: DateTime<Utc>,
 }
 
+/// Whether a list for `domain` adds items monitored unless told otherwise.
+///
+/// An audiobook list does (Dylan, 2026-10-17): a book on a list is one someone
+/// wants to hear. Films and series stay off, so a big list cannot start
+/// acquiring on its first sync.
+#[must_use]
+pub fn monitored_by_default(domain: &str) -> bool {
+    matches!(
+        domain.to_ascii_lowercase().as_str(),
+        "audiobook" | "audiobooks"
+    )
+}
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -84,15 +97,16 @@ impl ImportList {
         kind: impl Into<String>,
         domain: impl Into<String>,
     ) -> Self {
+        let domain = domain.into();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.into(),
             kind: kind.into(),
-            target_domain: domain.into(),
+            target_domain: domain.clone(),
             settings: serde_json::Value::Object(serde_json::Map::new()),
             profile_id: None,
             root_folder: None,
-            add_monitored: false,
+            add_monitored: monitored_by_default(&domain),
             enabled: true,
             interval_minutes: 720,
             last_synced_at: None,

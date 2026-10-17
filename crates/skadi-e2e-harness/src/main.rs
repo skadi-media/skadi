@@ -326,12 +326,111 @@ async fn main() {
     });
     let routes = HttpModule::routes(&movies_http);
     let ab_routes = HttpModule::routes(&audiobooks_http);
+    let seed_routes = seed::routes(store.clone());
 
     eprintln!(
         "skadi-e2e-harness: http://127.0.0.1:{port}  library={}",
         library.display()
     );
-    skadi_api::serve(state, vec![routes, ab_routes])
+    skadi_api::serve(state, vec![routes, ab_routes, seed_routes])
         .await
         .expect("serve");
+}
+
+/// Harness-only seeding (SKADI-T-0713). The harness's downloader is a mock
+/// that writes no download rows, so the Downloads page would never have
+/// anything on it. `POST /e2e/downloads` writes rows in the named states
+/// straight to the store the page reads. Nothing like this exists in the
+/// daemon.
+mod seed {
+    use axum::{Json, Router, extract::State, routing::post};
+    use skadi_store::{DownloadJobRepo, NewDownloadJob, Store};
+
+    #[derive(serde::Deserialize)]
+    struct Row {
+        name: String,
+        /// `queued`, `downloading`, `stalled`, `error` or `seeding`.
+        state: String,
+        /// The item it was grabbed for: `(kind, acquirable_ref)`.
+        #[serde(default)]
+        target: Option<(String, String)>,
+        /// Record a failed import with this reason, so the row offers a retry.
+        #[serde(default)]
+        import_failed: Option<String>,
+        /// Put a hunter run in flight for the target (a movie edition), so the
+        /// Activity page lists it with its row actions.
+        #[serde(default)]
+        run: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Body {
+        rows: Vec<Row>,
+    }
+
+    pub fn routes(store: Store) -> Router {
+        Router::new()
+            .route("/e2e/downloads", post(seed))
+            .with_state(store)
+    }
+
+    /// Rows not left queued are enqueued and claimed first, so the claim takes
+    /// the row just enqueued; the queued rows come last, in the order given.
+    async fn seed(State(store): State<Store>, Json(body): Json<Body>) -> Json<Vec<String>> {
+        let (queued, others): (Vec<Row>, Vec<Row>) =
+            body.rows.into_iter().partition(|r| r.state == "queued");
+        let mut ids = Vec::new();
+        for r in others.into_iter().chain(queued) {
+            let job = store
+                .enqueue(&NewDownloadJob {
+                    acquirable_ref: r.name.clone(),
+                    source: format!("magnet:?xt=urn:btih:{:0>40}", ids.len()),
+                    category: None,
+                    incomplete_dir: Some("/dl/incomplete".into()),
+                    complete_dir: Some("/dl/complete".into()),
+                })
+                .await
+                .expect("enqueue");
+            if r.state != "queued" {
+                store.claim_next("e2e").await.expect("claim");
+            }
+            match r.state.as_str() {
+                "stalled" => store
+                    .set_download_stalled(&job.id, true)
+                    .await
+                    .expect("stall"),
+                "error" => store
+                    .mark_error(&job.id, "tracker said no")
+                    .await
+                    .expect("error"),
+                "seeding" => store
+                    .mark_complete(&job.id, &[format!("/dl/complete/{}.mkv", r.name)])
+                    .await
+                    .expect("complete"),
+                _ => {}
+            }
+            if let Some((kind, target)) = r.target {
+                store
+                    .set_download_target(&job.id, &kind, &target)
+                    .await
+                    .expect("target");
+                if r.run {
+                    let _ = skadi_hunter::tracker::tracker().adopt(
+                        skadi_core::MediaKind::Movie,
+                        &target,
+                        "downloading",
+                        None,
+                    );
+                }
+            }
+            if let Some(reason) = r.import_failed {
+                store
+                    .set_download_import(&job.id, skadi_store::ImportState::Failed, Some(&reason))
+                    .await
+                    .expect("import state");
+            }
+            ids.push(job.id);
+        }
+        Json(ids)
+    }
 }

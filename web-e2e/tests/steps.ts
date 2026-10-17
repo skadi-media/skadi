@@ -30,6 +30,24 @@ export async function givenTorznabIndexer(request: APIRequestContext, name: stri
   return (await r.json()).id as string;
 }
 
+/** One download row the harness seeds (SKADI-T-0713). */
+export type SeedRow = {
+  name: string;
+  state: "queued" | "downloading" | "stalled" | "error" | "seeding";
+  target?: [string, string];
+  import_failed?: string;
+  run?: boolean;
+};
+
+/** Given download rows in these states. The harness's downloader is a mock
+ * that writes no rows, so its harness-only `POST /e2e/downloads` writes them
+ * to the store the Downloads page reads. Returns the row ids, in order given. */
+export async function givenDownloads(request: APIRequestContext, rows: SeedRow[]) {
+  const r = await request.post(`${API}/e2e/downloads`, { data: { rows } });
+  expect(r.ok(), `seed downloads: ${r.status()}`).toBeTruthy();
+  return (await r.json()) as string[];
+}
+
 /** Given the harness's health checks have run once (SKADI-T-0722).
  *
  * The checks run on a schedule and the page reads their cache (SKADI-T-0679),

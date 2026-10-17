@@ -23,11 +23,11 @@
 //! A failure at any step removes the partial output and leaves the import as it
 //! was.
 //!
-//! **Originals** follow the placement policy (SKADI-T-0138). A library file
-//! whose bytes also live elsewhere (a hardlink to a seeding download) is only a
-//! second name, so it is removed; the seeding file is never touched. A file
-//! that is the only copy is removed only in `move` mode (to the recycle bin
-//! when one is set); in `seed` mode it is kept next to the M4B.
+//! **Seeding stops on conversion** (Dylan, 2026-10-17). Once the edition points
+//! at the M4B, the book's downloads are asked to stop with their data deleted
+//! (`request_remove(id, true)`, which the worker carries out), and every
+//! original in the library goes, to the recycle bin when one is set. The
+//! operator seeds the M4B some other way, if at all.
 //!
 //! **Visible.** A running conversion shows in `/activity` at stage
 //! `converting`; its start, result or failure go to the item's trace stream
@@ -427,14 +427,15 @@ impl ConvertJob {
             return Outcome::Failed(format!("recording the M4B: {e}"));
         }
 
+        // Stop seeding the MP3 release: its torrent and its data go.
+        self.stop_seeding(&file.acquirable_ref().0).await;
+
         let sources: Vec<PathBuf> = prep.sources.iter().map(|s| s.path.clone()).collect();
-        let move_mode = guards.move_on_import;
         let bin = guards.recycle_bin.clone();
-        let (removed, kept) = tokio::task::spawn_blocking(move || {
-            retire_originals(&sources, move_mode, bin.as_deref())
-        })
-        .await
-        .unwrap_or((0, prep.sources.len()));
+        let (removed, kept) =
+            tokio::task::spawn_blocking(move || retire_originals(&sources, bin.as_deref()))
+                .await
+                .unwrap_or((0, prep.sources.len()));
 
         Outcome::Converted {
             path: prep.final_path,
@@ -442,6 +443,31 @@ impl ConvertJob {
             source: prep.chapter_source,
             removed,
             kept,
+        }
+    }
+
+    /// Ask the worker to stop every download of this edition and delete its
+    /// data. Best-effort: a failure is logged and the conversion stands.
+    async fn stop_seeding(&self, aref: &str) {
+        use skadi_store::DownloadJobRepo;
+        let jobs = match self.store.list_downloads().await {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::warn!(error = %e, aref, "m4b: listing downloads to stop seeding failed");
+                return;
+            }
+        };
+        for job in jobs.iter().filter(|j| {
+            j.target_ref.as_deref() == Some(aref) && j.target_kind.as_deref() == Some("audiobook")
+        }) {
+            match self.store.request_remove(&job.id, true).await {
+                Ok(()) => {
+                    tracing::info!(download = %job.id, aref, "m4b: stopped seeding the source")
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, download = %job.id, "m4b: stop seeding failed")
+                }
+            }
         }
     }
 
@@ -816,27 +842,21 @@ fn check_output(
     Ok((facts.duration, chapters, facts.bitrate_kbps))
 }
 
-/// Retire the originals after the edition points at the M4B (SKADI-T-0138).
-/// Returns `(removed, kept)`. Blocking, best-effort.
+/// Retire the originals after the edition points at the M4B. Returns
+/// `(removed, kept)`; a file is kept only when it cannot be removed. Blocking,
+/// best-effort.
 ///
-/// - A file with another hard link is a second name for bytes that live on
-///   elsewhere — the seeding download in `seed` mode — so the name is removed
-///   and the seeding file is untouched.
-/// - A file that is the only copy is removed only in `move` mode, to the
-///   recycle bin when one is set; in `seed` mode it is kept.
-fn retire_originals(sources: &[PathBuf], move_mode: bool, bin: Option<&Path>) -> (usize, usize) {
+/// A file with another hard link is a second name for bytes the seeding
+/// download also holds; that download is stopped with its data in the same
+/// step, so the name is simply removed. A file that is the only copy goes to
+/// the recycle bin when one is set, else it is deleted.
+fn retire_originals(sources: &[PathBuf], bin: Option<&Path>) -> (usize, usize) {
     let mut removed = 0;
     let mut kept = 0;
     for p in sources {
-        let gone = if link_count(p) > 1 {
-            std::fs::remove_file(p).is_ok()
-        } else if move_mode {
-            match bin {
-                Some(bin) => skadi_importer::recycle(p, bin).is_some(),
-                None => std::fs::remove_file(p).is_ok(),
-            }
-        } else {
-            false
+        let gone = match bin {
+            Some(bin) if link_count(p) <= 1 => skadi_importer::recycle(p, bin).is_some(),
+            _ => std::fs::remove_file(p).is_ok(),
         };
         if gone {
             removed += 1;

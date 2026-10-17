@@ -141,10 +141,10 @@ The deploy image carries a small static `ffmpeg` for this job and nothing else.
   matching M4B quality tier.
 - **Failure.** The imported files stay as they were. A failed book is tried
   again after a day, at most three times.
-- **The originals** follow `import.placement`. A library file that is a
-  hardlink of the seeding download is removed (the download keeps seeding).
-  A file that is the only copy is removed only with `move` (to the recycle bin
-  when `import.recycle_bin` is set); with `seed` it stays next to the M4B.
+- **Seeding stops.** Once the M4B is recorded, the book's download is removed
+  with its data, and every original in the library goes: to the recycle bin
+  when `import.recycle_bin` is set, else it is deleted. Skadi does not seed the
+  M4B.
 
 The conversion needs free space for the new file next to the originals.
 

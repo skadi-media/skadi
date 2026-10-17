@@ -318,6 +318,23 @@ async fn converts_a_multi_file_mp3_book_to_one_chaptered_m4b() {
     for (n, _) in &names {
         std::fs::hard_link(dir.join(n), downloads.join(n)).unwrap();
     }
+    // The download that brought the book, still seeding.
+    use skadi_store::DownloadJobRepo;
+    let job = store
+        .enqueue(&skadi_store::NewDownloadJob {
+            acquirable_ref: "The Long Road".into(),
+            source: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into(),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_download_target(&job.id, "audiobook", &file.acquirable_ref().0)
+        .await
+        .unwrap();
+    store.mark_complete(&job.id, &[]).await.unwrap();
     enable(&store).await;
 
     let report = ConvertJob::with_ffmpeg(store.clone(), bin)
@@ -344,7 +361,8 @@ async fn converts_a_multi_file_mp3_book_to_one_chaptered_m4b() {
     assert_eq!(marks.len(), 3, "one chapter per file: {marks:?}");
     assert_eq!(marks[1].title, "02 - The Pass");
 
-    // One audio file left in the library; the seeding copies are untouched.
+    // One audio file left in the library, and seeding stops: the download is
+    // asked to go with its data (Dylan, 2026-10-17).
     let audio: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()
@@ -352,15 +370,15 @@ async fn converts_a_multi_file_mp3_book_to_one_chaptered_m4b() {
         .filter(|p| crate::import::is_audio(p))
         .collect();
     assert_eq!(audio, vec![f.path.clone()]);
-    for (n, _) in &names {
-        assert!(downloads.join(n).exists(), "seeding source {n} kept");
-    }
+    let job = store.get_download(&job.id).await.unwrap().unwrap();
+    assert_eq!(job.status, skadi_store::DownloadJobStatus::RemoveRequested);
+    assert!(job.delete_data, "the source's data goes too");
     let traces = store.traces_for(&file.acquirable_ref().0).await.unwrap();
     assert!(traces.iter().any(|t| t.event == "converted"));
 }
 
 #[tokio::test]
-async fn a_single_file_without_chapters_gets_one_and_seed_keeps_the_only_copy() {
+async fn a_single_file_without_chapters_gets_one_and_the_original_goes() {
     let Some(bin) = working_ffmpeg("a_single_file_without_chapters_gets_one").await else {
         return;
     };
@@ -380,8 +398,8 @@ async fn a_single_file_without_chapters_gets_one_and_seed_keeps_the_only_copy() 
         1
     );
     assert!(
-        dir.join("book.mp3").exists(),
-        "seed mode keeps a file that is the only copy"
+        !dir.join("book.mp3").exists(),
+        "the original goes once the M4B is recorded"
     );
 }
 
@@ -471,7 +489,7 @@ async fn aac_sources_are_copied_not_re_encoded() {
 }
 
 #[test]
-fn originals_follow_the_placement_policy() {
+fn every_original_goes_and_an_only_copy_to_the_bin() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = tmp.path().join("lib");
     std::fs::create_dir_all(&lib).unwrap();
@@ -482,27 +500,19 @@ fn originals_follow_the_placement_policy() {
     let seeding = tmp.path().join("seeding-a.mp3");
     std::fs::hard_link(&linked, &seeding).unwrap();
 
-    // seed: the second name goes, the only copy stays.
-    assert_eq!(
-        retire_originals(&[linked.clone(), only.clone()], false, None),
-        (1, 1)
-    );
-    assert!(!linked.exists() && seeding.exists() && only.exists());
-
-    // move with a recycle bin: the only copy goes to the bin.
+    // With a recycle bin: a second name is removed (its download is stopped
+    // with its data separately), the only copy goes to the bin.
     let bin = tmp.path().join("bin");
     assert_eq!(
-        retire_originals(std::slice::from_ref(&only), true, Some(&bin)),
-        (1, 0)
+        retire_originals(&[linked.clone(), only.clone()], Some(&bin)),
+        (2, 0)
     );
-    assert!(!only.exists() && bin.join("b.mp3").exists());
+    assert!(!linked.exists() && !only.exists());
+    assert!(bin.join("b.mp3").exists() && !bin.join("a.mp3").exists());
 
-    // move without one: deleted.
+    // Without one: deleted.
     std::fs::write(&only, b"b").unwrap();
-    assert_eq!(
-        retire_originals(std::slice::from_ref(&only), true, None),
-        (1, 0)
-    );
+    assert_eq!(retire_originals(std::slice::from_ref(&only), None), (1, 0));
     assert!(!only.exists());
 }
 

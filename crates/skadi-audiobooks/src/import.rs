@@ -110,7 +110,7 @@ pub fn parse_asin(name: &str) -> Option<AsinId> {
 }
 
 /// `true` if `path` has an audiobook audio extension.
-fn is_audio(path: &Path) -> bool {
+pub(crate) fn is_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase())
@@ -118,7 +118,7 @@ fn is_audio(path: &Path) -> bool {
 }
 
 /// `true` if `name` looks like a promo/sample cut.
-fn is_excerpt(name: &str) -> bool {
+pub(crate) fn is_excerpt(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     EXCERPT_MARKERS.iter().any(|m| n.contains(m))
 }

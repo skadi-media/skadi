@@ -55,11 +55,11 @@ import kotlinx.coroutines.launch
 /**
  * The movie library (SKADI-T-0575).
  *
- * A tab, not a sub-screen of the audiobook library (SKADI-T-0577). This screen
- * is streaming-only, deliberately: audiobooks download for offline listening
- * because you listen on a plane; a 1.5 GB film does not belong on a phone by
- * default. So there is no Download here — tapping a poster streams, and the
- * server serves ranges so seeking works (SKADI-T-0574).
+ * A tab, not a sub-screen of the audiobook library (SKADI-T-0577). Tapping a
+ * poster opens the film's page, where Play streams it (the server serves
+ * ranges, so seeking works: SKADI-T-0574) and Download keeps a copy on the
+ * phone (SKADI-T-0637). The Downloaded view lists those copies and is where
+ * the tab opens when the server cannot be reached.
  */
 @Composable
 fun MoviesScreen(
@@ -93,10 +93,21 @@ fun MoviesScreen(
     // A tapped film opens its page; Play lives there (SKADI-T-0586).
     var openMovie by rememberSaveable { mutableStateOf<String?>(null) }
 
+    // Films on the phone (SKADI-T-0637). Offline, the tab opens on them: the
+    // only films that can play on a plane.
+    val videos = offlineVideos()
+    var online by remember { mutableStateOf(true) }
+    var downloadedOnly by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(online) { if (!online) downloadedOnly = true }
+    val playLocal = { v: com.skadi.core.OfflineVideo ->
+        progress.start(v.watchRecord())
+        onPlay(api.movieVideoUrl(v.parentId, v.itemId), v.playerTitle, v.key)
+    }
+
     LaunchedEffect(reloadKey) {
         runCatching { api.listAllMovies() }
-            .onSuccess { movies = it; LibraryCache.movies = it; failed = false }
-            .onFailure { failed = movies.isEmpty() }
+            .onSuccess { movies = it; LibraryCache.movies = it; failed = false; online = true }
+            .onFailure { failed = movies.isEmpty(); online = false }
         loading = false
         refreshing = false
     }
@@ -112,6 +123,13 @@ fun MoviesScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         SkadiTopBar(title = "Movies", query = query, onQuery = { query = it }, placeholder = "Search movies")
+        if (!online || videos.any { it.isMovie } || downloadedOnly) {
+            DownloadedToggle(downloaded = downloadedOnly, onChange = { downloadedOnly = it }, offline = !online)
+        }
+        if (downloadedOnly) {
+            DownloadedMovies(videos = videos, query = query, onPlay = playLocal)
+            return@Column
+        }
         GenreChips(genresOf = movies.map { it.genres }, selected = genre, onSelect = { genre = it })
 
         if (loading) {

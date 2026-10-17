@@ -8,6 +8,8 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.skadi.core.Book
+import com.skadi.core.OfflineVideoStore
+import com.skadi.core.VideoDownloadRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.encodeToString
@@ -32,6 +34,14 @@ object DownloadCenter {
     private val _errors = MutableStateFlow<Map<String, String>>(emptyMap())
     val errors: StateFlow<Map<String, String>> = _errors
 
+    /** Bumped when a video download is added or removed, so lists re-read the store. */
+    private val _videoChanges = MutableStateFlow(0)
+    val videoChanges: StateFlow<Int> = _videoChanges
+
+    fun videosChanged() {
+        _videoChanges.value += 1
+    }
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Enqueue a doze-proof download as unique work (per fid, so a double-tap can't
@@ -54,6 +64,53 @@ object DownloadCenter {
             .enqueueUniqueWork("dl:$fid", ExistingWorkPolicy.KEEP, req)
     }
 
+    /** Ids cancelled by the viewer, so the worker deletes rather than keeps the part. */
+    private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Download a film or an episode (SKADI-T-0637). Keyed by its video progress
+     * key, so the same id names the download, the file and the saved position.
+     * Same rules as a book: any connection (the UI says Wi-Fi), resumable,
+     * one at a time per item.
+     */
+    fun startVideo(context: Context, req: VideoDownloadRequest) {
+        val id = req.key
+        if (_progress.value.containsKey(id)) return
+        cancelled -= id
+        _progress.value += (id to 0f)
+        _errors.value -= id
+        val data = Data.Builder()
+            .putString(DownloadWorker.KEY_VIDEO, json.encodeToString(req))
+            .build()
+        val work = OneTimeWorkRequestBuilder<DownloadWorker>()
+            .setInputData(data)
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
+            )
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork("dl:$id", ExistingWorkPolicy.KEEP, work)
+    }
+
+    /**
+     * Stop a video download and give its bytes back (SKADI-T-0637). A running
+     * worker sees the cancel at its next chunk and deletes the part itself;
+     * one still waiting for a network never ran, so the part goes here.
+     */
+    fun cancelVideo(context: Context, id: String) {
+        cancelled += id
+        WorkManager.getInstance(context).cancelUniqueWork("dl:$id")
+        _progress.value -= id
+        _errors.value -= id
+        val store = OfflineVideoStore(context.filesDir)
+        kotlin.concurrent.thread(name = "skadi-cancel") {
+            if (!store.isDownloaded(id)) store.delete(id)
+            videosChanged()
+        }
+    }
+
+    fun wasCancelled(id: String): Boolean = id in cancelled
+
     // --- called by DownloadWorker (same process) to reflect state into the UI ---
     fun markStart(fid: String) {
         _progress.value += (fid to (_progress.value[fid] ?: 0f))
@@ -70,5 +127,6 @@ object DownloadCenter {
 
     fun markDone(fid: String) {
         _progress.value -= fid
+        videosChanged()
     }
 }

@@ -98,6 +98,7 @@ fun HomeScreen(
     val api = remember(baseUrl, token) { SkadiApi(baseUrl, token) }
     val progress = remember { VideoProgress(context) }
     val store = remember { OfflineStore(context.filesDir) }
+    val videoStore = remember { com.skadi.core.OfflineVideoStore(context.filesDir) }
 
     var watching by remember { mutableStateOf<List<WatchRecord>>(emptyList()) }
     var upNext by remember { mutableStateOf<List<UpNext>>(emptyList()) }
@@ -241,7 +242,9 @@ fun HomeScreen(
                             }
                             val left = rec.durationMs.takeIf { it > 0 }?.let { it - rec.positionMs }
                             PosterCard(
-                                posterUrl = rec.posterUrl,
+                                // The saved poster when it is on the phone
+                                // (SKADI-T-0637), so the shelf has art offline.
+                                posterUrl = videoStore.posterFile(rec.key).takeIf { it.isFile } ?: rec.posterUrl,
                                 title = rec.title,
                                 line2 = rec.subtitle,
                                 line3 = left?.let { timeLeft(it) },
@@ -518,7 +521,7 @@ private fun AccountMenu(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
-                text = { Text("Downloaded books") },
+                text = { Text("Downloads on this phone") },
                 onClick = { open = false; onManageStorage() },
             )
             DropdownMenuItem(

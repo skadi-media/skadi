@@ -87,10 +87,22 @@ fun TvScreen(
         }
     }
 
+    // Episodes on the phone (SKADI-T-0637); the tab opens on them offline.
+    val context = LocalContext.current
+    val progress = remember { VideoProgress(context) }
+    val videos = offlineVideos()
+    var online by remember { mutableStateOf(true) }
+    var downloadedOnly by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(online) { if (!online) downloadedOnly = true }
+    val playLocal = { v: com.skadi.core.OfflineVideo ->
+        progress.start(v.watchRecord())
+        onPlay(api.episodeVideoUrl(v.parentId, v.itemId), v.playerTitle, v.key)
+    }
+
     LaunchedEffect(reloadKey) {
         runCatching { api.listAllSeries() }
-            .onSuccess { series = it; LibraryCache.series = it; failed = false }
-            .onFailure { failed = series.isEmpty() }
+            .onSuccess { series = it; LibraryCache.series = it; failed = false; online = true }
+            .onFailure { failed = series.isEmpty(); online = false }
         loading = false
         refreshing = false
     }
@@ -109,6 +121,13 @@ fun TvScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         SkadiTopBar(title = "TV", query = query, onQuery = { query = it }, placeholder = "Search shows")
+        if (!online || videos.any { !it.isMovie } || downloadedOnly) {
+            DownloadedToggle(downloaded = downloadedOnly, onChange = { downloadedOnly = it }, offline = !online)
+        }
+        if (downloadedOnly) {
+            DownloadedEpisodes(videos = videos, query = query, onPlay = playLocal)
+            return@Column
+        }
         GenreChips(genresOf = series.map { it.genres }, selected = genre, onSelect = { genre = it })
 
         if (loading) {
@@ -292,6 +311,10 @@ private fun SeriesDetailScreen(
             }
         }
 
+        // Season and whole-show downloads (SKADI-T-0637).
+        SeriesDownloadRow(series = s, season = chosen)
+        val onPhone = offlineVideos().filter { !it.isMovie && it.parentId == s.id }.map { it.itemId }.toSet()
+
         val eps = s.episodes.filter { it.season == chosen && it.playable }
             .sortedBy { it.number }
         // A plain Column inside the page's scroll: the whole page scrolls as
@@ -331,6 +354,7 @@ private fun SeriesDetailScreen(
                             )
                         }
                     }
+                    VideoDownloadMark(key = progress.episodeKey(s.id, e.id), onPhone = e.id in onPhone)
                     IconButton(onClick = play) {
                         Icon(
                             Icons.Filled.PlayArrow,

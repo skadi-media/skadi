@@ -862,11 +862,30 @@ pub fn ActivityPage() -> impl IntoView {
             }
             titles.set(map);
         });
-        // Poll activity + history until the page is torn down: ~2 s while the
-        // tab is visible, nothing while it is hidden (SKADI-T-0693).
-        spawn_local(crate::live_poll::poll_while_visible(
-            move || alive.try_get_untracked().unwrap_or(false),
+        // The board by server push while the tab is visible (SKADI-T-0711),
+        // with the ~2 s poll of board and log as the fallback (SKADI-T-0693).
+        // The trace log is not a stream topic, so it keeps its own poll.
+        let alive_now = move || alive.try_get_untracked().unwrap_or(false);
+        spawn_local(crate::live_poll::stream_while_visible(
+            alive_now,
+            "activity",
+            move |topic, data| {
+                if topic == "activity"
+                    && let Some(a) =
+                        load.settle(serde_json::from_str::<Vec<api::ActivityRun>>(data))
+                {
+                    let _ = runs.try_set(a);
+                }
+            },
             fetch,
+        ));
+        spawn_local(crate::live_poll::poll_while_visible(
+            alive_now,
+            move || async move {
+                if let Some(t) = trace_load.settle(api::traces(160).await) {
+                    let _ = traces.try_set(t);
+                }
+            },
         ));
     });
     on_cleanup(move || alive.set(false));

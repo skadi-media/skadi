@@ -29,6 +29,7 @@ admin	GET	/books/b1/files/f1/audio	allow
 admin	GET	/books/b1/files/f1/chapters	allow
 admin	GET	/library/genres	allow
 admin	GET	/domains	allow
+admin	GET	/events	allow
 admin	GET	/edition-kinds	allow
 admin	POST	/edition-kinds	allow
 admin	GET	/authors	allow
@@ -91,6 +92,7 @@ member	GET	/books/b1/files/f1/audio	allow
 member	GET	/books/b1/files/f1/chapters	allow
 member	GET	/library/genres	allow
 member	GET	/domains	allow
+member	GET	/events	allow
 member	GET	/edition-kinds	allow
 member	POST	/edition-kinds	deny
 member	GET	/authors	allow
@@ -153,6 +155,7 @@ contributor	GET	/books/b1/files/f1/audio	allow
 contributor	GET	/books/b1/files/f1/chapters	allow
 contributor	GET	/library/genres	allow
 contributor	GET	/domains	allow
+contributor	GET	/events	allow
 contributor	GET	/edition-kinds	allow
 contributor	POST	/edition-kinds	deny
 contributor	GET	/authors	allow
@@ -215,6 +218,7 @@ kid	GET	/books/b1/files/f1/audio	allow
 kid	GET	/books/b1/files/f1/chapters	allow
 kid	GET	/library/genres	allow
 kid	GET	/domains	allow
+kid	GET	/events	allow
 kid	GET	/edition-kinds	allow
 kid	POST	/edition-kinds	deny
 kid	GET	/authors	deny

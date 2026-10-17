@@ -600,6 +600,10 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         // links at all**, in the one role that exists purely to browse and
         // play. Found by the per-role UI sweep (SKADI-T-0639, 2026-09-25).
         ["domains"] => true,
+        // The event stream (SKADI-T-0711). Open to every role: the handler
+        // sends a topic only to a role that may `GET` that topic's route, so
+        // the gate of the underlying route still decides.
+        ["events"] => true,
         // The edition-kind registry is a **label lookup** — "Theatrical",
         // "Director's Cut" — that the movie detail page needs to render an
         // edition's name instead of its UUID. Not sensitive, and gating it meant

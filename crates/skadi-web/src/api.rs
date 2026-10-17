@@ -2391,6 +2391,25 @@ async fn post_json<T: serde::de::DeserializeOwned>(
     Ok(resp.json::<T>().await?)
 }
 
+/// `GET /events?topics=` — the server-push stream (SKADI-T-0711), as the raw
+/// body. Through the request gate like every call, so a role that may read
+/// none of the topics never opens it. `signal` closes it.
+pub async fn open_events(
+    topics: &str,
+    signal: &web_sys::AbortSignal,
+) -> Result<web_sys::ReadableStream, ApiError> {
+    let resp = get(&format!("{API_BASE}/events?topics={topics}"))?
+        .abort_signal(Some(signal))
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("events -> HTTP {}", resp.status())));
+    }
+    resp.body()
+        .ok_or_else(|| ApiError("events: the response has no body".into()))
+}
+
 /// `POST /downloads/import/preview` — dry-run a manual import (SKADI-T-0689).
 pub async fn preview_import(req: &ManualImportRequest) -> Result<ImportPlan, ApiError> {
     post_json(

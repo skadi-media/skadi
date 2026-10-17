@@ -146,6 +146,12 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "In-flight acquire runs with title and transfer progress; `?kind=` and `?stage=` filter",
     ),
     (
+        "GET",
+        "/events",
+        "system",
+        "Server-sent events: the Downloads and Activity snapshots when they change; `?topics=downloads,activity`, each sent only to a role that may read its route",
+    ),
+    (
         "POST",
         "/activity/{acquirable_ref}/retry",
         "system",

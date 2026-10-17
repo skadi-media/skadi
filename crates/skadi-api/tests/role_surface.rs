@@ -51,6 +51,7 @@ const CASES: &[(&str, &str)] = &[
     ("GET", "/books/b1/files/f1/chapters"),
     ("GET", "/library/genres"),
     ("GET", "/domains"),
+    ("GET", "/events"),
     ("GET", "/edition-kinds"),
     ("POST", "/edition-kinds"),
     ("GET", "/authors"),

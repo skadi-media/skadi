@@ -557,6 +557,42 @@ struct ActivityParams {
     stage: Option<String>,
 }
 
+/// The body `GET /downloads` answers with (no paging), for the event stream
+/// (SKADI-T-0711). The handler itself is called, so the stream and the poll
+/// can never disagree. `None` when it fails; the poller then skips the tick.
+pub(crate) async fn downloads_snapshot(state: Arc<AppState>) -> Option<String> {
+    let resp = downloads(State(state), Query(DownloadsParams::default()))
+        .await
+        .ok()?
+        .into_response();
+    body_text(resp).await
+}
+
+/// The body `GET /activity` answers with (no filter), for the event stream.
+pub(crate) async fn activity_snapshot(state: Arc<AppState>) -> Option<String> {
+    let resp = activity(
+        State(state),
+        Query(ActivityParams {
+            kind: None,
+            stage: None,
+        }),
+    )
+    .await
+    .ok()?
+    .into_response();
+    body_text(resp).await
+}
+
+async fn body_text(resp: axum::response::Response) -> Option<String> {
+    if !resp.status().is_success() {
+        return None;
+    }
+    let bytes = axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024)
+        .await
+        .ok()?;
+    String::from_utf8(bytes.to_vec()).ok()
+}
+
 /// `GET /activity` — the in-flight acquire runs. Each run carries the item
 /// `title`, and a run at `snatching`/`downloading` also carries its transfer's
 /// `download_id`, `size_bytes`, `downloaded_bytes`, `eta_seconds` and

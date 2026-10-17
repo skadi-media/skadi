@@ -986,3 +986,58 @@ async fn only_the_admin_can_run_a_library_bulk_action() {
         assert_eq!(got["reached"], true);
     }
 }
+
+/// SKADI-T-0711: the event stream sends a topic only to a role that may read
+/// its route. Downloads and Activity are the admin's, so a member asking for
+/// them is refused with a reason; the admin gets an event stream whose first
+/// event is the downloads snapshot.
+#[tokio::test]
+async fn the_event_stream_follows_the_role_gate_of_each_topic() {
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    state.refresh_members().await;
+    let (st, created) = call(
+        &state,
+        "POST",
+        "/api/v1/members",
+        Some("operator-token"),
+        Some(serde_json::json!({"name": "Mo", "role": "member"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let member = created["token"].as_str().unwrap().to_string();
+
+    let (st, got) = call(
+        &state,
+        "GET",
+        "/api/v1/events?topics=downloads,activity",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{got}");
+    assert!(
+        got["message"].as_str().unwrap_or("").contains("topics"),
+        "the refusal names the topics, not the gate: {got}"
+    );
+
+    let req = Request::builder()
+        .uri("/api/v1/events?topics=downloads")
+        .header("Authorization", "Bearer operator-token")
+        .body(Body::empty())
+        .unwrap();
+    let res = skadi_api::router(state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()["content-type"].to_str().unwrap(),
+        "text/event-stream"
+    );
+    let mut body = res.into_body();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.frame())
+        .await
+        .expect("an event within the first poll")
+        .expect("a frame")
+        .expect("no error");
+    let text = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+    assert!(text.starts_with("event: downloads\ndata: ["), "{text:?}");
+}

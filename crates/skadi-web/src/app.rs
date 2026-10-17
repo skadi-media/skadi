@@ -1031,9 +1031,19 @@ fn DownloadsSection() -> impl IntoView {
             }
             titles.set(map);
         });
-        // ~2 s while the tab is visible, nothing while it is hidden (SKADI-T-0693).
-        spawn_local(crate::live_poll::poll_while_visible(
+        // Server push while the tab is visible (SKADI-T-0711): the daemon's one
+        // poller sends the list when it changes. If the stream cannot open or
+        // drops, the ~2 s poll (SKADI-T-0693) runs until it reconnects.
+        spawn_local(crate::live_poll::stream_while_visible(
             move || alive.try_get_untracked().unwrap_or(false),
+            "downloads",
+            move |topic, data| {
+                if topic == "downloads"
+                    && let Some(d) = load.settle(serde_json::from_str::<Vec<api::Download>>(data))
+                {
+                    let _ = jobs.try_set(d);
+                }
+            },
             move || async move {
                 if let Some(d) = load.settle(api::list_downloads().await) {
                     let _ = jobs.try_set(d);

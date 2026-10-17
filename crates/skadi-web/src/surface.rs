@@ -91,6 +91,7 @@ pub fn allowed(role: Role, method: &str, path: &str) -> bool {
         ["books", _, "files", _, "audio"] | ["books", _, "files", _, "chapters"] => true,
         ["library", "genres"] => true,
         ["domains"] => true,
+        ["events"] => true,
         ["edition-kinds"] => true,
         ["authors"]
         | ["authors", _]

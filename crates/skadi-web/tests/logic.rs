@@ -3183,3 +3183,111 @@ fn nav_active_matches_the_area_of_the_path() {
     assert!(!nav_active("/tv", "/movies"));
     assert!(!nav_active("/indexers", "/downloaders"));
 }
+
+// --- import lists (SKADI-T-0733) ---
+
+mod import_lists {
+    use serde_json::json;
+    use skadi_web::api::{ImportList, ImportListSyncReport};
+    use skadi_web::import_lists::{
+        KINDS, default_id_kind, field_value, form_error, interval_label, kind_label, kind_spec,
+        last_sync_label, settings_for, sync_summary,
+    };
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn every_provider_names_a_domain_and_its_fields() {
+        for k in KINDS {
+            assert!(matches!(k.domain, "movie" | "series"), "{}", k.slug);
+            assert!(!k.fields.is_empty(), "{}", k.slug);
+        }
+        assert_eq!(kind_spec("sonarr").unwrap().domain, "series");
+        assert_eq!(kind_label("trakt_list"), "trakt_list");
+    }
+
+    #[wasm_bindgen_test]
+    fn settings_keep_only_what_the_provider_reads() {
+        let v = |k: &str| match k {
+            "list_id" => " 645 ".to_string(),
+            "api_key" => "stale".to_string(),
+            _ => String::new(),
+        };
+        assert_eq!(
+            settings_for("tmdb_collection", v),
+            json!({ "list_id": "645" })
+        );
+        let arr = |k: &str| match k {
+            "base_url" => "http://192.0.2.10:7878".to_string(),
+            "api_key" => "k".to_string(),
+            _ => String::new(),
+        };
+        assert_eq!(
+            settings_for("radarr", arr),
+            json!({ "base_url": "http://192.0.2.10:7878", "api_key": "k" })
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_numeric_setting_reads_as_digits() {
+        assert_eq!(field_value(&json!({ "list_id": 8 }), "list_id"), "8");
+        assert_eq!(field_value(&json!({ "list_id": "8" }), "list_id"), "8");
+        assert_eq!(field_value(&json!({}), "list_id"), "");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_form_names_what_is_missing() {
+        let none = |_: &str| String::new();
+        assert_eq!(
+            form_error(" ", "tmdb_list", none).as_deref(),
+            Some("Give the list a name.")
+        );
+        assert_eq!(
+            form_error("Bond", "nope", none).as_deref(),
+            Some("Choose a provider.")
+        );
+        assert_eq!(
+            form_error("Bond", "tmdb_list", none).as_deref(),
+            Some("TMDB id is required.")
+        );
+        assert_eq!(
+            form_error("Old", "sonarr", |k| if k == "base_url" {
+                "x".into()
+            } else {
+                String::new()
+            })
+            .as_deref(),
+            Some("API key is required.")
+        );
+        assert_eq!(form_error("Bond", "tmdb_list", |_| "8".into()), None);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_sync_reads_as_one_line() {
+        let r = ImportListSyncReport {
+            offered: 12,
+            added: 3,
+            existing: 8,
+            excluded: 1,
+            failed: vec![],
+        };
+        assert_eq!(
+            sync_summary("Bond", &r),
+            "Bond: 12 offered, 3 added, 8 already in the library, 1 excluded."
+        );
+        let r = ImportListSyncReport {
+            failed: vec![("603".into(), "not found".into())],
+            ..r
+        };
+        assert!(sync_summary("Bond", &r).ends_with(", 1 failed (first: 603: not found)."));
+    }
+
+    #[wasm_bindgen_test]
+    fn rows_say_when_they_last_synced() {
+        let l = ImportList::default();
+        assert_eq!(last_sync_label(&l, 0.0), "Never synced");
+        assert_eq!(interval_label(720), "Every 12 hours");
+        assert_eq!(interval_label(90), "Every 90 min");
+        assert_eq!(default_id_kind("series"), "tvdb");
+        assert_eq!(default_id_kind("audiobook"), "asin");
+    }
+}

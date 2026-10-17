@@ -20,8 +20,13 @@ use crate::schema::{import_list_exclusions, import_lists};
 use crate::{Store, db_err};
 
 /// A configured import list.
+///
+/// The server-owned fields default when a body leaves them out (SKADI-T-0733),
+/// so `POST /importlists` takes what an operator fills in: a name, a kind, a
+/// domain and the provider settings.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportList {
+    #[serde(default = "new_id")]
     pub id: String,
     pub name: String,
     /// Provider slug — `tmdb_collection`, `trakt_list`, …
@@ -30,6 +35,7 @@ pub struct ImportList {
     pub target_domain: String,
     /// Provider-specific settings, opaque here so a new provider needs no
     /// migration.
+    #[serde(default = "empty_settings")]
     pub settings: serde_json::Value,
     pub profile_id: Option<String>,
     pub root_folder: Option<String>,
@@ -38,14 +44,36 @@ pub struct ImportList {
     /// **Defaults false.** A list that silently starts acquiring on its first
     /// sync is how someone wakes up to a full disk; opting in is one toggle,
     /// undoing a hundred grabs is not.
+    #[serde(default)]
     pub add_monitored: bool,
+    #[serde(default = "yes")]
     pub enabled: bool,
+    #[serde(default = "twice_daily")]
     pub interval_minutes: i32,
+    #[serde(default)]
     pub last_synced_at: Option<DateTime<Utc>>,
     /// Why the last sync failed, if it did — kept on the row so the list page can
     /// show a broken list without cross-referencing the log.
+    #[serde(default)]
     pub last_error: Option<String>,
+    #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
+}
+
+fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn empty_settings() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn twice_daily() -> i32 {
+    720
 }
 
 impl ImportList {
@@ -94,8 +122,11 @@ impl ImportList {
 }
 
 /// An item the operator never wants added, however many lists offer it.
+///
+/// `id` and `created_at` default when a body leaves them out (SKADI-T-0733).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportListExclusion {
+    #[serde(default = "new_id")]
     pub id: String,
     pub target_domain: String,
     /// Which external namespace `external_id` belongs to — `tmdb`, `tvdb`,
@@ -105,6 +136,7 @@ pub struct ImportListExclusion {
     pub external_id: String,
     /// Kept for the UI: a list of bare ids is unreviewable.
     pub title: Option<String>,
+    #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
 }
 

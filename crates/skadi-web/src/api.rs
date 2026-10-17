@@ -4137,3 +4137,140 @@ mod download_name_tests {
         assert_eq!(download_filename("///", Some("mkv")), "download.mkv");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Import lists (SKADI-T-0511, the editor SKADI-T-0733).
+// ---------------------------------------------------------------------------
+
+/// A configured import list (mirror of `skadi_store::ImportList`). The server
+/// fills the id, the creation time and the sync history; the form sends the
+/// rest.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImportList {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    /// Provider slug: `tmdb_collection`, `tmdb_list`, `radarr`, `sonarr`.
+    pub kind: String,
+    /// `movie` | `series` | `audiobook`.
+    pub target_domain: String,
+    #[serde(default)]
+    pub settings: Value,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub root_folder: Option<String>,
+    #[serde(default)]
+    pub add_monitored: bool,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub interval_minutes: i32,
+    #[serde(default, skip_serializing)]
+    pub last_synced_at: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub last_error: Option<String>,
+}
+
+/// What one list's sync did (mirror of `skadi_api::import_lists::SyncReport`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct ImportListSyncReport {
+    #[serde(default)]
+    pub offered: usize,
+    #[serde(default)]
+    pub added: usize,
+    #[serde(default)]
+    pub existing: usize,
+    #[serde(default)]
+    pub excluded: usize,
+    #[serde(default)]
+    pub failed: Vec<(String, String)>,
+}
+
+/// An item no list may add (mirror of `skadi_store::ImportListExclusion`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportListExclusion {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    pub target_domain: String,
+    /// `tmdb`, `tvdb`, `imdb` or `asin`.
+    pub id_kind: String,
+    pub external_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// `GET /importlists`.
+pub async fn list_import_lists() -> Result<Vec<ImportList>, ApiError> {
+    let resp = get(&format!("{API_BASE}/importlists"))?
+        .send()
+        .await
+        .noted()?;
+    read_json("import lists", resp).await
+}
+
+/// `POST /importlists` — create a list from the form.
+pub async fn create_import_list(list: &ImportList) -> Result<ImportList, ApiError> {
+    post_json(
+        "create import list",
+        &format!("{API_BASE}/importlists"),
+        list,
+    )
+    .await
+}
+
+/// `PUT /importlists/{id}` — replace a list's settings; the server keeps its
+/// sync history.
+pub async fn update_import_list(list: &ImportList) -> Result<ImportList, ApiError> {
+    let url = format!("{API_BASE}/importlists/{}", list.id);
+    let resp = put(&url)?.json(list)?.send().await.noted()?;
+    read_json("save import list", resp).await
+}
+
+/// `DELETE /importlists/{id}`.
+pub async fn delete_import_list(id: &str) -> Result<(), ApiError> {
+    let resp = delete(&format!("{API_BASE}/importlists/{id}"))?
+        .send()
+        .await
+        .noted()?;
+    write_ok("delete import list", resp).await
+}
+
+/// `POST /importlists/{id}/sync` — sync one list now.
+pub async fn sync_import_list(id: &str) -> Result<ImportListSyncReport, ApiError> {
+    let resp = post(&format!("{API_BASE}/importlists/{id}/sync"))?
+        .send()
+        .await
+        .noted()?;
+    read_json("sync import list", resp).await
+}
+
+/// `GET /importlists/exclusions`.
+pub async fn list_import_exclusions() -> Result<Vec<ImportListExclusion>, ApiError> {
+    let resp = get(&format!("{API_BASE}/importlists/exclusions"))?
+        .send()
+        .await
+        .noted()?;
+    read_json("exclusions", resp).await
+}
+
+/// `POST /importlists/exclusions`.
+pub async fn add_import_exclusion(
+    e: &ImportListExclusion,
+) -> Result<ImportListExclusion, ApiError> {
+    post_json(
+        "add exclusion",
+        &format!("{API_BASE}/importlists/exclusions"),
+        e,
+    )
+    .await
+}
+
+/// `DELETE /importlists/exclusions/{id}`.
+pub async fn delete_import_exclusion(id: &str) -> Result<(), ApiError> {
+    let resp = delete(&format!("{API_BASE}/importlists/exclusions/{id}"))?
+        .send()
+        .await
+        .noted()?;
+    write_ok("remove exclusion", resp).await
+}

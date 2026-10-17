@@ -35,6 +35,7 @@ const SOURCES: &[(&str, &str)] = sources![
     "household",
     "import",
     "import_common",
+    "import_lists",
     "lib",
     "library_select",
     "library_toolbar",

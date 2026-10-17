@@ -559,6 +559,8 @@ pub fn MovieDetailPage() -> impl IntoView {
                             </Button>
                             <Button variant="default" size="xs" bad=true disabled=busy
                                 on_click=Callback::new(on_delete)>"Delete"</Button>
+                            <crate::import_lists::ExcludeFromListsButton exclusion=crate::import_lists::exclusion_for(
+                                "movie", "tmdb", m.external_ids.tmdb.map(|t| t.to_string()), &m.title)/>
                         </div>
                         {rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
                         {genres.map(|g| view! { <p class="genres muted">{g}</p> })}

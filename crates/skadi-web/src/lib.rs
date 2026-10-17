@@ -17,6 +17,7 @@ pub mod dashboard;
 pub mod downloads;
 pub mod household;
 pub mod import_common;
+pub mod import_lists;
 pub mod library_select;
 pub mod library_toolbar;
 pub mod live_poll;

@@ -248,8 +248,10 @@ async fn wanted_lists_only_unsatisfied_monitored_editions_with_a_summary() {
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "two wanted items: {body}");
     let titles: Vec<&str> = items.iter().map(|i| i["title"].as_str().unwrap()).collect();
-    assert!(titles.contains(&"The Matrix"));
-    assert!(titles.contains(&"Flaky Film"));
+    // Title order with the article dropped (SKADI-T-0737): "The Matrix" files
+    // under M, after "Flaky Film", though the provider lists it first.
+    assert_eq!(titles, ["Flaky Film", "The Matrix"]);
+    assert_eq!(items[1]["sort_title"], "matrix");
 
     // m1's imported edition is dropped — only the missing one remains.
     let m1 = items.iter().find(|i| i["title"] == "The Matrix").unwrap();

@@ -17,6 +17,8 @@ data class OfflineBook(
     @SerialName("book_id") val bookId: String,
     @SerialName("file_id") val fileId: String,
     val title: String,
+    /** The server's title key when the book was downloaded (SKADI-T-0737). */
+    @SerialName("sort_title") val sortTitle: String? = null,
     val authors: List<String> = emptyList(),
     val narrators: List<String> = emptyList(),
     @SerialName("series_name") val seriesName: String? = null,

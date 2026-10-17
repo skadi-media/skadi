@@ -70,6 +70,8 @@ data class WantedItem(
     val kind: String,
     val id: String,
     val title: String,
+    /** The server's sort key (SKADI-T-0737); absent from an older server. */
+    val sort_title: String? = null,
     val year: Int? = null,
     val monitored: Boolean = true,
     val editions: List<WantedEdition> = emptyList(),

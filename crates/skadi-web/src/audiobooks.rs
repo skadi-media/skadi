@@ -29,7 +29,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
-use crate::sorting::{sort_by_title, title_sort_key};
+use crate::sorting::{key_or_raw, sort_by_key};
 use crate::ui::{LevelDot, tone};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
@@ -174,11 +174,17 @@ pub fn group_books_by_series(books: Vec<api::Book>) -> (Vec<SeriesGroup>, Vec<ap
             series_pos_key(a)
                 .partial_cmp(&series_pos_key(b))
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| title_sort_key(&a.title).cmp(&title_sort_key(&b.title)))
+                .then_with(|| book_sort_title(a).cmp(&book_sort_title(b)))
         });
     }
-    // Series names are titles: *The Expanse* files under E, as on Android.
-    sort_by_title(&mut groups, |g| &g.name);
+    // Series names are titles: *The Expanse* files under E, as on Android. The
+    // key is the server's `sort_series` (SKADI-T-0737).
+    sort_by_key(&mut groups, |g| {
+        key_or_raw(
+            g.books.first().and_then(|b| b.sort_series.as_deref()),
+            &g.name,
+        )
+    });
     (groups, standalone)
 }
 
@@ -199,55 +205,33 @@ pub fn author_key(name: &str) -> String {
         .collect()
 }
 
-const NAME_PARTICLES: &[&str] = &[
-    "le", "la", "de", "du", "da", "di", "del", "della", "des", "van", "von", "der", "den", "ter",
-    "ten", "dos", "das", "st", "st.", "al", "el", "bin", "ibn",
-];
-const NAME_SUFFIXES: &[&str] = &[
-    "jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "phd", "ph.d.", "md", "m.d.",
-];
-const COLLECTIVE_CREDITS: &[&str] = &[
-    "full cast",
-    "various",
-    "various authors",
-    "anonymous",
-    "unknown author",
-];
+/// The key a book sorts by in title order: the server's `sort_title`
+/// (SKADI-T-0737), else the raw title.
+#[must_use]
+pub fn book_sort_title(b: &api::Book) -> String {
+    key_or_raw(b.sort_title.as_deref(), &b.title)
+}
 
-/// Sort key for a person's name, **surname first** (SKADI-T-0648 F1): "Stephen
-/// King" orders as "king stephen". Audnexus exposes no sort name, so the surname
-/// is derived — the last word plus any particles before it ("Le Guin", "van
-/// Vogt"), ignoring a suffix ("Jr.", "III"). "Surname, Given" is taken as
-/// written; collective credits ("Full Cast") keep their order. Mirrors the
-/// Android `NameSorting.key`; both test the same vector.
-pub fn name_sort_key(name: &str) -> String {
-    let n = name
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    if n.is_empty() || COLLECTIVE_CREDITS.contains(&n.as_str()) {
-        return n;
-    }
-    if let Some((head, tail)) = n.split_once(", ")
-        && !NAME_SUFFIXES.contains(&tail.trim_end_matches(','))
-    {
-        return format!("{head} {tail}");
-    }
-    let mut words: Vec<&str> = n.split(' ').map(|w| w.trim_end_matches(',')).collect();
-    while words.len() > 1 && NAME_SUFFIXES.contains(words.last().expect("non-empty")) {
-        words.pop();
-    }
-    if words.len() == 1 {
-        return words[0].to_string();
-    }
-    let mut start = words.len() - 1;
-    while start > 1 && NAME_PARTICLES.contains(&words[start - 1]) {
-        start -= 1;
-    }
-    let mut out = words[start..].to_vec();
-    out.extend_from_slice(&words[..start]);
-    out.join(" ")
+/// The surname-first key of a book's primary author (its first non-blank
+/// credit): the server's `sort_authors` entry for that credit, else the raw
+/// name. `None` when the book credits no one.
+#[must_use]
+pub fn primary_author_key(b: &api::Book) -> Option<String> {
+    let i = b.authors.iter().position(|a| !a.trim().is_empty())?;
+    Some(key_or_raw(
+        b.sort_authors.get(i).map(String::as_str),
+        &b.authors[i],
+    ))
+}
+
+/// The key an author cluster sorts by: the primary-author key of a book that
+/// gave the cluster its name.
+fn author_group_key(g: &AuthorGroup) -> String {
+    g.books
+        .iter()
+        .find(|b| primary_author(b) == Some(g.name.as_str()))
+        .and_then(primary_author_key)
+        .unwrap_or_else(|| key_or_raw(None, &g.name))
 }
 
 /// One author cluster of the "organize by author" pivot (SKADI-T-0655).
@@ -283,7 +267,7 @@ fn primary_author(b: &api::Book) -> Option<&str> {
 /// people whose names key alike therefore stay two clusters when both are
 /// linked. An unlinked book joins a linked cluster only when exactly one
 /// cluster carries its name — the same rule the server links by — else it
-/// keeps its own row. Clusters sort by surname ([`name_sort_key`]); books
+/// keeps its own row. Clusters sort by surname (the server's key); books
 /// within by title. Books with no author go under "Unknown author". Pure.
 #[must_use]
 pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<AuthorGroup> {
@@ -341,7 +325,7 @@ pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<AuthorGroup> {
         .map(|key| {
             let mut g = by_key.remove(&key).expect("every key was inserted");
             g.key = key;
-            sort_by_title(&mut g.books, |b| &b.title);
+            sort_by_key(&mut g.books, book_sort_title);
             g
         })
         .collect();
@@ -354,7 +338,7 @@ pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<AuthorGroup> {
             g.hint = g.books.first().map(|b| format!("e.g. {}", b.title));
         }
     }
-    groups.sort_by_cached_key(|g| name_sort_key(&g.name));
+    groups.sort_by_cached_key(author_group_key);
     groups
 }
 
@@ -1138,10 +1122,10 @@ impl SeriesTile {
         }
     }
     fn title_key(&self) -> String {
-        title_sort_key(match self {
-            SeriesTile::Owned(b) => &b.title,
-            SeriesTile::Missing(w) => &w.title,
-        })
+        match self {
+            SeriesTile::Owned(b) => book_sort_title(b),
+            SeriesTile::Missing(w) => key_or_raw(w.sort_title.as_deref(), &w.title),
+        }
     }
 }
 
@@ -2119,19 +2103,50 @@ mod tests {
         }
     }
 
+    /// `b` with the keys a current server emits for it (SKADI-T-0737).
+    fn keyed(mut b: Book, title_key: &str, author_key: &str) -> Book {
+        b.sort_title = Some(title_key.to_string());
+        b.sort_authors = vec![author_key.to_string()];
+        b
+    }
+
     /// SKADI-T-0655: two linked authors with one display name are two rows,
     /// told apart by a hint; an unlinked book joins the one cluster of its
     /// name, and stays alone when there are two.
     #[test]
     fn author_groups_by_record_then_by_name() {
         let groups = group_books_by_author(vec![
-            book("1", "The Stand", "Stephen King", Some("a1")),
-            book("2", "Misery", "Stephen King", Some("a1")),
-            book("3", "Prose and Cons", "Stephen King", Some("a2")),
-            book("4", "Carrie", "Stephen  King", None),
-            book("5", "Dune", "Frank Herbert", Some("h1")),
-            book("6", "Dune Messiah", "Frank Herbert", None),
-            book("7", "Nameless", "", None),
+            keyed(
+                book("1", "The Stand", "Stephen King", Some("a1")),
+                "stand",
+                "king stephen",
+            ),
+            keyed(
+                book("2", "Misery", "Stephen King", Some("a1")),
+                "misery",
+                "king stephen",
+            ),
+            keyed(
+                book("3", "Prose and Cons", "Stephen King", Some("a2")),
+                "prose and cons",
+                "king stephen",
+            ),
+            keyed(
+                book("4", "Carrie", "Stephen  King", None),
+                "carrie",
+                "king stephen",
+            ),
+            keyed(
+                book("5", "Dune", "Frank Herbert", Some("h1")),
+                "dune",
+                "herbert frank",
+            ),
+            keyed(
+                book("6", "Dune Messiah", "Frank Herbert", None),
+                "dune messiah",
+                "herbert frank",
+            ),
+            keyed(book("7", "Nameless", "", None), "nameless", ""),
         ]);
         let rows: Vec<(&str, &str, Vec<&str>, Option<&str>)> = groups
             .iter()
@@ -2177,13 +2192,36 @@ mod tests {
     #[test]
     fn author_group_books_in_title_order() {
         let groups = group_books_by_author(vec![
-            book("1", "The Shining", "Stephen King", None),
-            book("2", "Carrie", "Stephen King", None),
-            book("3", "A Misery", "Stephen King", None),
+            keyed(
+                book("1", "The Shining", "Stephen King", None),
+                "shining",
+                "king stephen",
+            ),
+            keyed(
+                book("2", "Carrie", "Stephen King", None),
+                "carrie",
+                "king stephen",
+            ),
+            keyed(
+                book("3", "A Misery", "Stephen King", None),
+                "misery",
+                "king stephen",
+            ),
         ]);
         assert_eq!(groups.len(), 1);
         let titles: Vec<&str> = groups[0].books.iter().map(|b| b.title.as_str()).collect();
         assert_eq!(titles, ["Carrie", "A Misery", "The Shining"]);
+    }
+
+    /// A book from an older server has no keys: it orders by the raw title.
+    #[test]
+    fn without_keys_books_order_by_raw_title() {
+        let groups = group_books_by_author(vec![
+            book("1", "The Shining", "Stephen King", None),
+            book("2", "Carrie", "Stephen King", None),
+        ]);
+        let titles: Vec<&str> = groups[0].books.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, ["Carrie", "The Shining"]);
     }
 
     /// The shared `name_key` vector (SKADI-T-0648 F4): asserted verbatim by

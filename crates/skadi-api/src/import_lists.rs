@@ -170,7 +170,11 @@ pub async fn sync_due_lists(
             Err(e) => {
                 tracing::warn!(list = %list.name, error = %e, "import list sync failed");
                 let _ = store
-                    .record_sync(&list.id, Utc::now(), Some(&e.to_string()))
+                    .record_sync(
+                        &list.id,
+                        Utc::now(),
+                        Some(&crate::error::ApiError(e).message()),
+                    )
                     .await;
             }
         }

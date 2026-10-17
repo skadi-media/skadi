@@ -62,6 +62,7 @@ class Downloader(
                     bookId = book.id,
                     fileId = fid,
                     title = book.title,
+                    sortTitle = book.sortTitle,
                     authors = book.authors,
                     narrators = book.narrators,
                     seriesName = book.series?.name,

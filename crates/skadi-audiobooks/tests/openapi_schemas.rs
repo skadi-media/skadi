@@ -66,10 +66,23 @@ fn the_book_schema_and_everything_it_references_resolve() {
 
     assert!(schemas.contains_key("Book"), "Book is not registered");
     assert_eq!(
-        doc["paths"]["/books"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        doc["paths"]["/books/{id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
             ["$ref"],
         "#/components/schemas/Book"
     );
+    // The list adds the sort keys to each book (SKADI-T-0737).
+    assert_eq!(
+        doc["paths"]["/books"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/ListedBook"
+    );
+    let listed = serde_json::to_string(&schemas["ListedBook"]).unwrap();
+    for field in ["sort_title", "sort_authors", "sort_series", "title"] {
+        assert!(
+            listed.contains(field),
+            "ListedBook schema is missing {field}"
+        );
+    }
 
     // Every `$ref` anywhere in the document must name a registered schema.
     fn refs(v: &serde_json::Value, out: &mut Vec<String>) {

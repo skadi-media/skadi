@@ -13,6 +13,9 @@ data class AuthorGroup(
     /** Set only when another row shows the same name: the first book's title,
      *  so the two rows can be told apart. */
     val hint: String?,
+    /** The surname-first key of [name], from the server (SKADI-T-0737); the
+     *  rows order by it and the rail letters from it. */
+    val sortKey: String = NameSorting.key(null, name),
 )
 
 /**
@@ -26,24 +29,26 @@ data class AuthorGroup(
  * different people whose names key alike therefore stay two rows when both
  * are linked. An unlinked credit joins a linked row only when exactly one row
  * carries its name — the rule the server links by — else it keeps its own
- * row. Rows are in surname order ([NameSorting.key]). Pure.
+ * row. Rows are in surname order: the server's key of the credit that named
+ * the row ([Book.authorKey]). Pure.
  */
 fun groupBooksByAuthor(books: List<Book>): List<AuthorGroup> {
-    data class Credit(val name: String, val book: Book)
+    data class Credit(val name: String, val book: Book, val key: String)
 
     val linked = LinkedHashMap<String, MutableList<Credit>>()
     val linkedName = HashMap<String, String>()
     val loose = mutableListOf<Credit>()
     for (b in books) {
         val primary = b.authors.firstOrNull { it.isNotBlank() }
-        for (name in b.authors) {
+        for ((i, name) in b.authors.withIndex()) {
             if (name.isBlank()) continue
             val id = b.authorId?.takeIf { it.isNotBlank() }
+            val credit = Credit(name, b, b.authorKey(i))
             if (name == primary && id != null) {
                 val key = "id:$id"
-                linked.getOrPut(key) { linkedName[key] = name; mutableListOf() }.add(Credit(name, b))
+                linked.getOrPut(key) { linkedName[key] = name; mutableListOf() }.add(credit)
             } else {
-                loose.add(Credit(name, b))
+                loose.add(credit)
             }
         }
     }
@@ -66,8 +71,9 @@ fun groupBooksByAuthor(books: List<Book>): List<AuthorGroup> {
             key = key,
             name = rowName.getValue(key),
             authorId = key.removePrefix("id:").takeIf { key.startsWith("id:") },
-            books = credits.map { it.book }.distinctBy { it.id }.sortedBy { TitleSorting.key(it.title) },
+            books = credits.map { it.book }.distinctBy { it.id }.sortedBy { it.sortKey },
             hint = null,
+            sortKey = (credits.firstOrNull { it.name == rowName.getValue(key) } ?: credits.first()).key,
         )
     }
     val shared = groups.groupingBy { nameKey(it.name) }.eachCount()
@@ -79,5 +85,5 @@ fun groupBooksByAuthor(books: List<Book>): List<AuthorGroup> {
                 g
             }
         }
-        .sortedBy { NameSorting.key(it.name) }
+        .sortedBy { it.sortKey }
 }

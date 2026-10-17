@@ -11,9 +11,9 @@
 //! `limit`/`offset` params), its sort must move to the API.
 //!
 //! **One comparison.** Every wall sorts through [`compare_items`]. The title
-//! and author keys it uses are [`crate::sorting::title_sort_key`] and
-//! [`crate::audiobooks::name_sort_key`] — one rule per concept (SKADI-T-0648),
-//! defined once and used here.
+//! and author keys it uses come from the server (`sort_title`, `sort_authors`,
+//! SKADI-T-0737), so the web holds no copy of the rule; a record without one
+//! falls back to its raw title ([`crate::sorting::key_or_raw`]).
 
 use std::cmp::Ordering;
 
@@ -21,7 +21,7 @@ use aurora_leptos::components::{Button, Select, TextInput};
 use leptos::prelude::*;
 
 use crate::api;
-use crate::sorting::title_sort_key;
+use crate::sorting::key_or_raw;
 use crate::ui::{FilterChip, mirror};
 
 // --- Sort model (pure) ---
@@ -188,13 +188,19 @@ impl SortState {
 pub trait LibraryItem {
     fn item_id(&self) -> &str;
     fn item_title(&self) -> &str;
+    /// The key the title sort reads: the server's `sort_title` (SKADI-T-0737),
+    /// else the raw title.
+    fn item_sort_title(&self) -> String {
+        key_or_raw(None, self.item_title())
+    }
     /// The server `added_at` (RFC 3339), when the record carries one.
     fn item_added_at(&self) -> Option<&str>;
     fn item_year(&self) -> Option<u16> {
         None
     }
-    /// The name the Author sort reads (the first credited author).
-    fn item_author(&self) -> Option<&str> {
+    /// The key the Author sort reads: the first credited author's surname-first
+    /// key from the server, else the raw name.
+    fn item_sort_author(&self) -> Option<String> {
         None
     }
     /// The wall status: `owned`, `wanted` or `downloading`.
@@ -207,6 +213,9 @@ impl LibraryItem for api::Movie {
     }
     fn item_title(&self) -> &str {
         &self.title
+    }
+    fn item_sort_title(&self) -> String {
+        key_or_raw(self.sort_title.as_deref(), &self.title)
     }
     fn item_added_at(&self) -> Option<&str> {
         self.added_at.as_deref()
@@ -226,6 +235,9 @@ impl LibraryItem for api::Series {
     fn item_title(&self) -> &str {
         &self.title
     }
+    fn item_sort_title(&self) -> String {
+        key_or_raw(self.sort_title.as_deref(), &self.title)
+    }
     fn item_added_at(&self) -> Option<&str> {
         self.added_at.as_deref()
     }
@@ -244,6 +256,9 @@ impl LibraryItem for api::Book {
     fn item_title(&self) -> &str {
         &self.title
     }
+    fn item_sort_title(&self) -> String {
+        crate::audiobooks::book_sort_title(self)
+    }
     fn item_added_at(&self) -> Option<&str> {
         self.added_at.as_deref()
     }
@@ -252,11 +267,8 @@ impl LibraryItem for api::Book {
     }
     /// The first non-blank author: the same pick as the author clusters
     /// ([`crate::audiobooks::group_books_by_author`]).
-    fn item_author(&self) -> Option<&str> {
-        self.authors
-            .iter()
-            .map(String::as_str)
-            .find(|a| !a.trim().is_empty())
+    fn item_sort_author(&self) -> Option<String> {
+        crate::audiobooks::primary_author_key(self)
     }
     fn item_status(&self) -> &'static str {
         crate::audiobooks::audiobook_lib_status(self)
@@ -313,8 +325,8 @@ fn present_first<T: Ord>(a: Option<T>, b: Option<T>, asc: bool) -> Ordering {
 pub fn compare_items<T: LibraryItem>(a: &T, b: &T, sort: SortState) -> Ordering {
     let primary = match sort.key {
         SortKey::Title => present_first(
-            Some(title_sort_key(a.item_title())),
-            Some(title_sort_key(b.item_title())),
+            Some(a.item_sort_title()),
+            Some(b.item_sort_title()),
             sort.asc,
         ),
         SortKey::Added => present_first(
@@ -323,11 +335,7 @@ pub fn compare_items<T: LibraryItem>(a: &T, b: &T, sort: SortState) -> Ordering 
             sort.asc,
         ),
         SortKey::Year => present_first(a.item_year(), b.item_year(), sort.asc),
-        SortKey::Author => present_first(
-            a.item_author().map(crate::audiobooks::name_sort_key),
-            b.item_author().map(crate::audiobooks::name_sort_key),
-            sort.asc,
-        ),
+        SortKey::Author => present_first(a.item_sort_author(), b.item_sort_author(), sort.asc),
         SortKey::Status => present_first(
             Some(status_rank(a.item_status())),
             Some(status_rank(b.item_status())),
@@ -335,7 +343,7 @@ pub fn compare_items<T: LibraryItem>(a: &T, b: &T, sort: SortState) -> Ordering 
         ),
     };
     primary
-        .then_with(|| title_sort_key(a.item_title()).cmp(&title_sort_key(b.item_title())))
+        .then_with(|| a.item_sort_title().cmp(&b.item_sort_title()))
         .then_with(|| a.item_id().cmp(b.item_id()))
 }
 
@@ -508,7 +516,9 @@ mod tests {
         title: &'static str,
         added: Option<&'static str>,
         year: Option<u16>,
-        author: Option<&'static str>,
+        /// The keys a server would emit (SKADI-T-0737).
+        sort_title: Option<&'static str>,
+        author_key: Option<&'static str>,
         status: &'static str,
     }
 
@@ -519,14 +529,17 @@ mod tests {
         fn item_title(&self) -> &str {
             self.title
         }
+        fn item_sort_title(&self) -> String {
+            key_or_raw(self.sort_title, self.title)
+        }
         fn item_added_at(&self) -> Option<&str> {
             self.added
         }
         fn item_year(&self) -> Option<u16> {
             self.year
         }
-        fn item_author(&self) -> Option<&str> {
-            self.author
+        fn item_sort_author(&self) -> Option<String> {
+            self.author_key.map(str::to_string)
         }
         fn item_status(&self) -> &'static str {
             self.status
@@ -539,7 +552,8 @@ mod tests {
             title,
             added: None,
             year: None,
-            author: None,
+            sort_title: None,
+            author_key: None,
             status: "wanted",
         }
     }
@@ -554,21 +568,26 @@ mod tests {
     }
 
     #[test]
-    fn titles_ignore_a_leading_article() {
-        assert_eq!(title_sort_key("The Hobbit"), "hobbit");
-        assert_eq!(title_sort_key("  A Quiet Place "), "quiet place");
-        assert_eq!(title_sort_key("An American Werewolf"), "american werewolf");
-        // Only a whole leading word, and only once.
-        assert_eq!(title_sort_key("Theodore"), "theodore");
-        assert_eq!(title_sort_key("Anora"), "anora");
-        assert_eq!(title_sort_key("The The"), "the");
+    fn titles_order_by_the_server_key() {
+        // The server drops the article; the web only reads the key.
+        let mut hobbit = row("h", "The Hobbit");
+        hobbit.sort_title = Some("hobbit");
+        let rows = vec![row("z", "Zodiac"), hobbit, row("a", "Alien")];
+        assert_eq!(sorted(rows.clone(), SortKey::Title, true), ["a", "h", "z"]);
+        assert_eq!(sorted(rows, SortKey::Title, false), ["z", "h", "a"]);
+    }
+
+    #[test]
+    fn a_record_without_a_key_orders_by_its_raw_title() {
+        // An older server sends no key: "The Hobbit" files under T.
         let rows = vec![
             row("z", "Zodiac"),
             row("h", "The Hobbit"),
             row("a", "Alien"),
         ];
-        assert_eq!(sorted(rows.clone(), SortKey::Title, true), ["a", "h", "z"]);
-        assert_eq!(sorted(rows, SortKey::Title, false), ["z", "h", "a"]);
+        assert_eq!(sorted(rows, SortKey::Title, true), ["a", "h", "z"]);
+        let rows = vec![row("t", "The Hobbit"), row("s", "Solaris")];
+        assert_eq!(sorted(rows, SortKey::Title, true), ["s", "t"]);
     }
 
     #[test]
@@ -618,11 +637,11 @@ mod tests {
     #[test]
     fn author_sorts_by_surname() {
         let mut king = row("king", "It");
-        king.author = Some("Stephen King");
+        king.author_key = Some("king stephen");
         let mut le_guin = row("leguin", "Earthsea");
-        le_guin.author = Some("Ursula K. Le Guin");
+        le_guin.author_key = Some("le guin ursula k.");
         let mut asimov = row("asimov", "Foundation");
-        asimov.author = Some("Isaac Asimov");
+        asimov.author_key = Some("asimov isaac");
         let anon = row("anon", "Beowulf");
         let rows = vec![anon, le_guin, king, asimov];
         assert_eq!(

@@ -25,6 +25,7 @@ pub const SETTINGS_SECTIONS: &[Section] = &[
     ("/downloaders", "Downloads"),
     ("/config", "Library"),
     ("/naming", "Naming"),
+    ("/importlists", "Lists"),
     ("/movies/config", "Movies"),
     ("/audiobooks/config", "Audiobooks"),
     ("/household", "Household"),
@@ -103,6 +104,7 @@ fn page_call(href: &str) -> Option<(&'static str, &'static str)> {
         "/downloaders" => ("GET", "/settings/downloaders"),
         "/config" => ("GET", "/config"),
         "/naming" => ("GET", "/naming/settings"),
+        "/importlists" => ("GET", "/importlists"),
         // The profile editors: readable by a contributor (the add flow picks a
         // profile), but the page is for changing them.
         "/movies/config" | "/audiobooks/config" => ("POST", "/settings/profiles"),

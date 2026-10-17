@@ -226,6 +226,7 @@ test.describe("C31 a11y: axe on the main pages", () => {
     "/config",
     "/household",
     "/naming",
+    "/importlists",
     "/system",
     "/listen",
     "/players",

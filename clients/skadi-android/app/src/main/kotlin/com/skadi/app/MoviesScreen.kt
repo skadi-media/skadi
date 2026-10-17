@@ -147,7 +147,7 @@ fun MoviesScreen(
         // hides them behind another tap.
         val railed = remember(visible, q) {
             val tiles = if (q.isEmpty()) collapseCollections(visible) else visible.map { MovieTile.Single(it) }
-            TitleSorting.railed(tiles) { it.sortTitle }
+            TitleSorting.railed(tiles) { it.sortKey }
         }
         val tiles = railed.items
         val gridState = rememberLazyGridState()

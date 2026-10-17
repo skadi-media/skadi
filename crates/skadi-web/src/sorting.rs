@@ -1,133 +1,71 @@
-//! Title ordering (SKADI-T-0648 F3): the one rule for how a title sorts and
-//! which A–Z letter it files under, shared by every title surface — the
-//! movie, TV and audiobook walls, the series and author clusters, the wanted
-//! list. Android has the same rule in `core` `TitleSorting`; the two test the
-//! same vector, so the same library reads in the same order on both.
+//! Title ordering (SKADI-T-0648, SKADI-T-0737). The server emits the sort key
+//! of each list record (`sort_title`; `sort_name` and `sort_authors` for
+//! people), derived by `skadi_core::sorting`. The web orders by that key and
+//! holds no copy of the rule.
 //!
-//! Titles drop one leading article ("the ", "a ", "an "), so *The Hobbit*
-//! files under H. A person's name does not: "An Na" is a name, and "An" is
-//! part of it. Names go through [`crate::audiobooks::name_sort_key`].
+//! A record from an older server has no key. It still orders: [`key_or_raw`]
+//! falls back to the raw title, trimmed and lowercased.
 //!
-//! [`title_letter`] is defined from [`title_sort_key`], and [`railed_by_title`]
-//! hands back the sorted items with their letters, so a surface cannot sort
-//! by one rule and label by another — which is how the Android authors list
-//! went wrong (SKADI-T-0648 F2).
+//! The rail letter is the first character of the key ([`letter_of_key`]), so
+//! a surface cannot sort by one rule and label by another, which is how the
+//! Android authors list went wrong (SKADI-T-0648 F2).
 
-const TITLE_ARTICLES: &[&str] = &["the ", "a ", "an "];
-
-/// Sort key for a title: trimmed, lowercase, one leading article dropped.
+/// The key a record sorts by: the one the server emitted, else the raw title
+/// trimmed and lowercased.
 #[must_use]
-pub fn title_sort_key(title: &str) -> String {
-    let t = title.trim().to_lowercase();
-    TITLE_ARTICLES
-        .iter()
-        .find_map(|a| t.strip_prefix(a))
-        .map_or_else(|| t.clone(), str::to_string)
+pub fn key_or_raw(key: Option<&str>, raw: &str) -> String {
+    match key {
+        Some(k) if !k.is_empty() || raw.trim().is_empty() => k.to_string(),
+        _ => raw.trim().to_lowercase(),
+    }
 }
 
-/// The A–Z letter a title files under, derived from its sort key. A key that
-/// does not start with a latin letter (digits, symbols, other scripts) files
-/// under `#`, one bucket rather than many.
+/// The A–Z letter a key files under. A key that does not start with a latin
+/// letter (digits, symbols, other scripts) files under `#`, one bucket rather
+/// than many.
 #[must_use]
-pub fn title_letter(title: &str) -> char {
-    letter_of_key(&title_sort_key(title))
-}
-
-fn letter_of_key(key: &str) -> char {
+pub fn letter_of_key(key: &str) -> char {
     match key.chars().next().map(|c| c.to_ascii_uppercase()) {
         Some(c) if c.is_ascii_uppercase() => c,
         _ => '#',
     }
 }
 
-/// Sort `items` in place by the title order.
-pub fn sort_by_title<T>(items: &mut [T], title: impl Fn(&T) -> &str) {
-    items.sort_by_cached_key(|i| title_sort_key(title(i)));
-}
-
-/// A list in title order with the rail letter of each item, index for index.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Railed<T> {
-    pub items: Vec<T>,
-    pub letters: Vec<char>,
-}
-
-/// Sort `items` by title and pair each with its rail letter. The letters come
-/// from the same key the order does, so they can never disagree.
-#[must_use]
-pub fn railed_by_title<T>(mut items: Vec<T>, title: impl Fn(&T) -> &str) -> Railed<T> {
-    sort_by_title(&mut items, &title);
-    let letters = items
-        .iter()
-        .map(|i| letter_of_key(&title_sort_key(title(i))))
-        .collect();
-    Railed { items, letters }
+/// Sort `items` in place by `key`.
+pub fn sort_by_key<T>(items: &mut [T], key: impl Fn(&T) -> String) {
+    items.sort_by_cached_key(key);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The shared title vector: the same titles, keys and letters are asserted
-    /// in the Android `TitleSortingTest`, so the two clients provably order
-    /// alike. Listed here in the order both must produce.
-    const VECTOR: &[(&str, &str, char)] = &[
-        ("1984", "1984", '#'),
-        (
-            "A.I. Artificial Intelligence",
-            "a.i. artificial intelligence",
-            'A',
-        ),
-        ("Anathem", "anathem", 'A'),
-        ("Dune", "dune", 'D'),
-        ("A Game of Thrones", "game of thrones", 'G'),
-        ("The Hobbit", "hobbit", 'H'),
-        ("  the martian ", "martian", 'M'),
-        ("Thelma & Louise", "thelma & louise", 'T'),
-        ("Them!", "them!", 'T'),
-        ("An Unkindness of Ghosts", "unkindness of ghosts", 'U'),
-        ("¡Three Amigos!", "¡three amigos!", '#'),
-    ];
-
     #[test]
-    fn shared_title_vector_keys_and_letters() {
-        for (title, key, letter) in VECTOR {
-            assert_eq!(title_sort_key(title), *key, "{title}");
-            assert_eq!(title_letter(title), *letter, "{title}");
-        }
+    fn the_emitted_key_wins() {
+        assert_eq!(key_or_raw(Some("hobbit"), "The Hobbit"), "hobbit");
     }
 
     #[test]
-    fn shared_title_vector_orders_as_listed() {
-        let mut shuffled: Vec<&str> = VECTOR.iter().rev().map(|(t, _, _)| *t).collect();
-        shuffled.swap(2, 7);
-        let railed = railed_by_title(shuffled, |t| t);
-        let want: Vec<&str> = VECTOR.iter().map(|(t, _, _)| *t).collect();
-        assert_eq!(railed.items, want);
-        let letters: Vec<char> = VECTOR.iter().map(|(_, _, l)| *l).collect();
-        assert_eq!(railed.letters, letters);
+    fn without_a_key_the_raw_title_orders() {
+        assert_eq!(key_or_raw(None, "  The Hobbit "), "the hobbit");
+        // An empty key from a blank title is still the key.
+        assert_eq!(key_or_raw(Some(""), "  "), "");
+        // An empty key for a real title is not trusted.
+        assert_eq!(key_or_raw(Some(""), "Dune"), "dune");
     }
 
     #[test]
-    fn letter_follows_the_key() {
-        for (title, _, _) in VECTOR {
-            let from_key = title_sort_key(title)
-                .chars()
-                .next()
-                .map(|c| c.to_ascii_uppercase())
-                .filter(char::is_ascii_uppercase)
-                .unwrap_or('#');
-            assert_eq!(title_letter(title), from_key, "{title}");
-        }
-        assert_eq!(title_letter(""), '#');
-        assert_eq!(title_letter("   "), '#');
-        assert_eq!(title_letter("The 100"), '#');
+    fn letters_follow_the_key() {
+        assert_eq!(letter_of_key("hobbit"), 'H');
+        assert_eq!(letter_of_key("1984"), '#');
+        assert_eq!(letter_of_key("¡three amigos!"), '#');
+        assert_eq!(letter_of_key(""), '#');
     }
 
     #[test]
-    fn names_keep_their_article() {
-        // The title rule and the name rule are different rules on purpose.
-        assert_eq!(title_sort_key("An Na"), "na");
-        assert_eq!(crate::audiobooks::name_sort_key("An Na"), "na an");
+    fn sorts_by_the_key_not_the_display_title() {
+        let mut items = vec![("The Hobbit", "hobbit"), ("Dune", "dune")];
+        sort_by_key(&mut items, |(_, k)| (*k).to_string());
+        assert_eq!(items[0].0, "Dune");
     }
 }

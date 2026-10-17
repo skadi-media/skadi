@@ -242,10 +242,13 @@ docker compose start gluetun
 docker compose restart skadi-downloader-worker
 ```
 
-> **Note:** if gluetun ever restarts (crash, upgrade, the test above), restart
-> the worker too — a container sharing another's network namespace doesn't
-> automatically rejoin it. The kill switch holds throughout (no leak); recovery
-> just isn't automatic. The daemon is unaffected (it's outside the namespace).
+> **Note:** if gluetun ever restarts (crash, upgrade, the test above), recreate
+> everything that shares its network namespace — the worker, flaresolverr and
+> indexer-proxy: a container sharing another's namespace doesn't rejoin it by
+> itself. The kill switch holds throughout (no leak); recovery just isn't
+> automatic. From `deploy/`:
+> `docker compose up -d --force-recreate --no-deps skadi-downloader-worker flaresolverr indexer-proxy`.
+> The daemon is unaffected (it's outside the namespace).
 
 ## VPN stability — avoid rate-limiting the tunnel
 
@@ -704,8 +707,8 @@ the API on `http://127.0.0.1:8091` and postgres on `127.0.0.1:5434`, using
 never addressed by any `angreal lab` command; `angreal lab reset` is the only
 place a `down -v` exists and it is pinned to `skadi-lab`.
 
-**No VPN in the lab.** gluetun, flaresolverr, autoheal and the vpn-watchdog sit
-behind a `vpn` profile and are not started, so the lab worker has NO kill switch
+**No VPN in the lab.** gluetun, flaresolverr, indexer-proxy, autoheal and the
+vpn-watchdog sit behind a `vpn` profile and are not started, so the lab worker has NO kill switch
 and the DHT is disabled (`LAB_DISABLE_DHT=1`). Use it for local / synthetic
 torrents only — `cargo run --example synth_library` in the worker crate makes 300
 of them plus a `seed-rows.sql` to load. Knobs: `LAB_BLOCKING_BURST=N` fires N

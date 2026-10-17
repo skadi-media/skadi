@@ -204,10 +204,14 @@ async fn book_crud_lifecycle() {
     let (s, _) = call(routes(), "POST", "/books", Some(req)).await;
     assert_eq!(s, StatusCode::CONFLICT);
 
-    // List has one.
+    // List has one, with its sort keys (SKADI-T-0737).
     let (s, body) = call(routes(), "GET", "/books", None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["title"], "The Way of Kings");
+    assert_eq!(body[0]["sort_title"], "way of kings");
+    assert_eq!(body[0]["sort_authors"], json!(["sanderson brandon"]));
+    assert_eq!(body[0]["sort_series"], "stormlight archive");
 
     // Get.
     let (s, got) = call(routes(), "GET", &format!("/books/{id}"), None).await;
@@ -515,6 +519,8 @@ async fn author_add_lookup_and_crud() {
     // List has one; get works.
     let (_, list) = call(routes(), "GET", "/authors", None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
+    // Surname first (SKADI-T-0737).
+    assert_eq!(list[0]["sort_name"], "sanderson brandon");
     let (s, got) = call(routes(), "GET", &format!("/authors/{aid}"), None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(got["id"], aid);

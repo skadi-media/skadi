@@ -490,13 +490,47 @@ def build(service=None):
 # force-recreated right after their parent. Profiled services are skipped when
 # their profile is off (no container to recreate).
 _DEP_NETNS_SIDECARS = {
-    "skadi": [("tailscale", "tailscale")],
-    "gluetun": [("skadi-downloader-worker", None), ("flaresolverr", None)],
+    "skadi": [("tailscale", "tailscale"), ("tailscale-http-redirect", "tailscale")],
+    "gluetun": [
+        ("skadi-downloader-worker", None),
+        ("flaresolverr", None),
+        ("indexer-proxy", None),
+    ],
 }
 
 
+def _DEP_sidecars_from_config(config, parent):
+    """[(service, profile)] for the services whose `network_mode` is
+    `service:<parent>`, from the `docker compose config --format json` answer
+    (SKADI-T-0736). The compose file is the authority: the hand-kept table
+    above drifted twice before (indexer-proxy, tailscale-http-redirect). Pure."""
+    out = []
+    for name, svc in sorted((config.get("services") or {}).items()):
+        if svc.get("network_mode") == f"service:{parent}":
+            profiles = svc.get("profiles") or []
+            out.append((name, profiles[0] if profiles else None))
+    return out
+
+
+def _DEP_netns_sidecars(parent):
+    """The sidecars of `parent`, read from the compose file with every profile
+    on, so a profiled sidecar is listed too; the table above when docker cannot
+    answer."""
+    try:
+        r = subprocess.run(
+            _DEP_compose_argv(["--profile", "*", "config", "--format", "json"]),
+            cwd=DEP_DEPLOY_DIR, env=_DEP_build_env(),
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode == 0:
+            return _DEP_sidecars_from_config(json.loads(r.stdout), parent)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return _DEP_NETNS_SIDECARS.get(parent, [])
+
+
 def _DEP_reattach_sidecars(parent):
-    for name, profile in _DEP_NETNS_SIDECARS.get(parent, []):
+    for name, profile in _DEP_netns_sidecars(parent):
         pre = ["--profile", profile] if profile else []
         ps = subprocess.run(
             _DEP_compose_argv(pre + ["ps", "-q", name]),

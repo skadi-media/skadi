@@ -276,6 +276,10 @@ async fn the_summary_view_keeps_what_the_wall_reads_and_drops_the_rest() {
     let (s_slim, slim) = call(h.http.routes(), "GET", "/series?view=summary", None).await;
     assert_eq!(s_full, StatusCode::OK);
     assert_eq!(s_slim, StatusCode::OK);
+    // Both views carry the sort key (SKADI-T-0737).
+    let key = skadi_core::sorting::title_sort_key(full[0]["title"].as_str().unwrap());
+    assert_eq!(full[0]["sort_title"], key.as_str());
+    assert_eq!(slim[0]["sort_title"], key.as_str());
 
     let fe = full[0]["episodes"][0].as_object().expect("full episode");
     let se = slim[0]["episodes"][0].as_object().expect("slim episode");

@@ -87,7 +87,8 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     And the download is still in flight from the hunter's view
     When the operator pauses the job
     And the hunter reads the status
-    Then the download is still in flight from the hunter's view
+    Then the status is paused at 50%
+    And the download is still in flight from the hunter's view
 
   # SKADI-T-0708: the stalled time is recorded on the flip, kept while stalled,
   # and cleared on recovery, so the Downloads page can say how long.

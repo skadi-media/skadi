@@ -52,10 +52,42 @@ async fn get_one(
         .ok_or_else(|| ApiError(AppError::NotFound(format!("import list {id} not found"))))
 }
 
+/// A list needs a name an operator can find it by (SKADI-T-0733).
+fn validate(list: &ImportList) -> Result<(), ApiError> {
+    if list.name.trim().is_empty() {
+        return Err(ApiError(AppError::field(
+            "name",
+            "an import list needs a name",
+        )));
+    }
+    if list.kind.trim().is_empty() {
+        return Err(ApiError(AppError::field(
+            "kind",
+            "an import list needs a kind",
+        )));
+    }
+    if list.interval_minutes < 1 {
+        return Err(ApiError(AppError::field(
+            "interval_minutes",
+            "the sync interval must be at least one minute",
+        )));
+    }
+    Ok(())
+}
+
 async fn create(
     State(state): State<Arc<AppState>>,
-    Json(list): Json<ImportList>,
+    Json(mut list): Json<ImportList>,
 ) -> Result<impl IntoResponse, ApiError> {
+    validate(&list)?;
+    // A new list starts with no sync history and a server id, whatever the
+    // body says: the UI sends the form, not a row.
+    if list.id.trim().is_empty() {
+        list.id = uuid::Uuid::new_v4().to_string();
+    }
+    list.last_synced_at = None;
+    list.last_error = None;
+    list.created_at = chrono::Utc::now();
     store(&state)?.upsert_import_list(&list).await?;
     Ok((StatusCode::CREATED, Json(list)))
 }
@@ -66,16 +98,22 @@ async fn update(
     Json(mut list): Json<ImportList>,
 ) -> Result<impl IntoResponse, ApiError> {
     let store = store(&state)?;
+    validate(&list)?;
     // 404 before writing, so a PUT to a typo'd id does not silently create a
     // second list under an id the caller did not choose.
-    if store.get_import_list(&id).await?.is_none() {
+    let Some(stored) = store.get_import_list(&id).await? else {
         return Err(ApiError(AppError::NotFound(format!(
             "import list {id} not found"
         ))));
-    }
+    };
     // The path wins over the body: a body carrying a different id would
     // otherwise move the list, which no caller means by PUT.
     list.id = id;
+    // The sync history and the creation time belong to the server: an edit
+    // form that leaves them out must not wipe them (SKADI-T-0733).
+    list.created_at = stored.created_at;
+    list.last_synced_at = stored.last_synced_at;
+    list.last_error = stored.last_error;
     store.upsert_import_list(&list).await?;
     Ok(Json(list))
 }
@@ -114,9 +152,10 @@ async fn sync_one(
         }
         Err(e) => {
             // Record the failure on the row before returning it, so the list page
-            // shows the same reason the caller just saw.
-            let _ = s.record_sync(&id, now, Some(&e.to_string())).await;
-            Err(ApiError(e))
+            // shows the same reason the caller just saw, worded the same way.
+            let e = ApiError(e);
+            let _ = s.record_sync(&id, now, Some(&e.message())).await;
+            Err(e)
         }
     }
 }
@@ -147,8 +186,18 @@ async fn list_exclusions(
 
 async fn add_exclusion(
     State(state): State<Arc<AppState>>,
-    Json(e): Json<ImportListExclusion>,
+    Json(mut e): Json<ImportListExclusion>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if e.external_id.trim().is_empty() {
+        return Err(ApiError(AppError::field(
+            "external_id",
+            "an exclusion needs the id of the item",
+        )));
+    }
+    if e.id.trim().is_empty() {
+        e.id = uuid::Uuid::new_v4().to_string();
+    }
+    e.external_id = e.external_id.trim().to_string();
     store(&state)?.add_exclusion(&e).await?;
     Ok((StatusCode::CREATED, Json(e)))
 }

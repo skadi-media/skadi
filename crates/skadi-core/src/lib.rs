@@ -16,6 +16,7 @@ pub mod module;
 pub mod nfo;
 pub mod protocol;
 pub mod rating;
+pub mod sorting;
 pub mod status;
 pub mod streaming;
 

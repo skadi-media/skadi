@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.skadi.core.Movie
 import com.skadi.core.SkadiApi
+import com.skadi.core.TitleSorting
 import com.skadi.core.VideoProgress
 import com.skadi.core.WatchRecord
 import kotlinx.coroutines.launch
@@ -139,17 +140,16 @@ fun MoviesScreen(
         // films is ~260 screenfuls; three columns of poster art is ~5x the
         // density AND uses the thing people actually recognise a film by.
         //
-        // Sorted by `sortKey` so *The Matrix* files under M, matching the rail.
+        // Sorted and lettered by `TitleSorting.railed`, one call for both, so
+        // *The Matrix* files under M and the rail agrees (SKADI-T-0648).
         // Franchises collapse to one tile (SKADI-T-0581). While searching they
         // do NOT: if you typed "taken" you want the films, not a folder that
         // hides them behind another tap.
-        val tiles = remember(visible, q) {
-            if (q.isEmpty()) {
-                collapseCollections(visible)
-            } else {
-                visible.map { MovieTile.Single(it) }.sortedBy { sortKey(it.sortTitle) }
-            }
+        val railed = remember(visible, q) {
+            val tiles = if (q.isEmpty()) collapseCollections(visible) else visible.map { MovieTile.Single(it) }
+            TitleSorting.railed(tiles) { it.sortTitle }
         }
+        val tiles = railed.items
         val gridState = rememberLazyGridState()
         val scope = rememberCoroutineScope()
         Refreshable(refreshing = refreshing, onRefresh = { refreshing = true; reloadKey++ }) {
@@ -184,7 +184,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                 }
             }
             AlphabetRail(
-                letters = remember(tiles) { tiles.map { sortLetter(it.sortTitle) } },
+                letters = railed.letters,
                 onJump = { i -> scope.launch { gridState.scrollToItem(i) } },
                 modifier = Modifier.padding(vertical = 4.dp),
             )

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.skadi.core.Book
 import com.skadi.core.SkadiApi
+import com.skadi.core.nameKey
 import kotlinx.coroutines.launch
 
 /** Normalized author/series key — lowercase, ASCII-alphanumeric only — so a book's

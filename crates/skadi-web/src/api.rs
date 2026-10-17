@@ -2710,8 +2710,10 @@ pub struct Book {
     pub title: String,
     #[serde(default)]
     pub subtitle: Option<String>,
+    /// The linked author record, set by the server when exactly one record
+    /// matches the primary credit (SKADI-T-0653). The author clusters group by
+    /// it (SKADI-T-0655).
     #[serde(default)]
-    #[allow(dead_code)]
     pub author_id: Option<String>,
     #[serde(default)]
     pub authors: Vec<String>,

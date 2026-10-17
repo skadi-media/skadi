@@ -2,7 +2,7 @@ package com.skadi.core
 
 /**
  * Ordering for **people's names**, kept separate from the title ordering in
- * `Browse.kt` (SKADI-T-0648 F2).
+ * [TitleSorting] (SKADI-T-0648 F2).
  *
  * The authors list used to sort on `name.lowercase()` while its A-Z rail took
  * letters from `sortLetter`, a *title* function that strips a leading "the ",

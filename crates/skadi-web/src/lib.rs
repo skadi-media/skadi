@@ -41,6 +41,7 @@ mod preferences;
 mod settings;
 mod setup;
 pub mod shortcuts;
+pub mod sorting;
 pub mod subnav;
 pub mod system;
 pub mod upload;

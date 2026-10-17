@@ -1181,6 +1181,10 @@ struct DownloadDto {
     peers_seen: Option<i32>,
     eta_seconds: Option<i64>,
     error: Option<String>,
+    /// When the transfer went stalled (SKADI-T-0708), RFC 3339 like
+    /// `created_at`; `None` while it is not stalled. The Stalled badge's
+    /// tooltip says how long from it.
+    stalled_at: Option<String>,
     /// When the job was enqueued: RFC 3339, UTC, always millisecond precision, so
     /// the string sorts in time order (the web "Added" column, SKADI-T-0686).
     created_at: String,
@@ -1462,6 +1466,9 @@ async fn downloads(
                 peers_seen: j.peers_seen,
                 eta_seconds: j.eta_seconds,
                 error: j.error,
+                stalled_at: j
+                    .stalled_at
+                    .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
                 created_at: j
                     .created_at
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),

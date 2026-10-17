@@ -180,6 +180,7 @@ fn download_row(w: &mut World, acquirable: String, done: i64, total: i64, eta: i
         updated_at: now,
         completed_at: None,
         lease_expires_at: None,
+        stalled_at: None,
         client_state: None,
         target_kind: Some("movie".into()),
         target_ref: Some(acquirable),

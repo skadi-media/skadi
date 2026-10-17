@@ -225,6 +225,30 @@ async fn stalled(w: &mut World) {
         .unwrap();
 }
 
+#[when("the worker flags the job recovered")]
+async fn recovered(w: &mut World) {
+    w.store()
+        .set_download_stalled(&w.handle().native_id, false)
+        .await
+        .unwrap();
+}
+
+#[then(regex = r"^the job's stalled time is (set|not set)$")]
+async fn stalled_at(w: &mut World, which: String) {
+    let job = w
+        .store()
+        .get_download(&w.handle().native_id)
+        .await
+        .unwrap()
+        .expect("job");
+    assert_eq!(
+        job.stalled_at.is_some(),
+        which == "set",
+        "{:?}",
+        job.stalled_at
+    );
+}
+
 #[when("the worker marks the job removed")]
 async fn removed(w: &mut World) {
     w.store().mark_removed(&w.handle().native_id).await.unwrap();

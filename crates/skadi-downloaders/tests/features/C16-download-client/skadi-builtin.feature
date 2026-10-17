@@ -89,6 +89,22 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     And the hunter reads the status
     Then the download is still in flight from the hunter's view
 
+  # SKADI-T-0708: the stalled time is recorded on the flip, kept while stalled,
+  # and cleared on recovery, so the Downloads page can say how long.
+  @C16 @passing
+  Scenario: the worker records when a transfer stalled and clears it on recovery
+    Given a magnet release "The Matrix" with info hash "abc"
+    When the hunter adds the release under category 2000
+    And the worker claims the job as "w1"
+    And the worker reports 500 of 1000 bytes with 0 peers
+    Then the job's stalled time is not set
+    When the worker flags the job stalled
+    Then the job's stalled time is set
+    When the worker flags the job stalled
+    Then the job's stalled time is set
+    When the worker flags the job recovered
+    Then the job's stalled time is not set
+
   # SKADI-T-0710: the hunter sees a pause as paused, not as a live transfer, so
   # its stall clock does not run on it.
   @C16 @passing

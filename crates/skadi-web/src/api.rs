@@ -2204,6 +2204,10 @@ pub struct Download {
     /// string). `None` from a daemon older than SKADI-T-0686.
     #[serde(default)]
     pub created_at: Option<String>,
+    /// When the transfer went stalled (RFC 3339, SKADI-T-0708); `None` while
+    /// it is not stalled, and from a daemon older than that.
+    #[serde(default)]
+    pub stalled_at: Option<String>,
     /// What a manual import of this transfer needs, and how its import went
     /// (SKADI-T-0689). `None` unless it finished and its grab target is known.
     #[serde(default)]

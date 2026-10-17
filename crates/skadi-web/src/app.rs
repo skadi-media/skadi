@@ -927,7 +927,14 @@ fn added_label(created_at: Option<&str>, now_ms: f64) -> String {
 /// The "Stalled" / "Error" badge of a download row (SKADI-T-0687), from
 /// [`crate::downloads::row_badge`]; nothing for a healthy row.
 fn row_badge_view(d: &api::Download) -> Option<AnyView> {
-    crate::downloads::row_badge(d).map(|b| {
+    // Seconds since the row went stalled, for the tooltip (SKADI-T-0708).
+    let stalled_for = d
+        .stalled_at
+        .as_deref()
+        .map(js_sys::Date::parse)
+        .filter(|t| !t.is_nan())
+        .map(|t| (js_sys::Date::now() - t) / 1000.0);
+    crate::downloads::row_badge_at(d, stalled_for).map(|b| {
         let cls = format!("dl-badge {}", b.level);
         view! {
             <span class=cls title=b.title><Pill color=tone(b.level)>{b.label}</Pill></span>

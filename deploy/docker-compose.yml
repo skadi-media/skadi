@@ -633,6 +633,11 @@ services:
       dockerfile: deploy/worker.Dockerfile
     # Same tag rule as `skadi` above.
     image: ${SKADI_IMAGE_PREFIX-}skadi-downloader-worker:${SKADI_IMAGE_TAG:-local}
+    # An init as PID 1 (SKADI-T-0570). The worker's threads sit in
+    # uninterruptible NFS I/O while it seeds, so without an init a `docker stop`
+    # left a zombie that no signal could clear and every deploy needed
+    # `docker rm -f`. tini forwards the signal and reaps children.
+    init: true
     # Memory fuse (SKADI-T-0566). SKADI-T-0392 was a worker that reached ~9 GB;
     # the fix landed and it now sits at ~535 MiB with a full 371-torrent library
     # (measured 2026-09-10). The cap is not tuning — it turns a regression of that

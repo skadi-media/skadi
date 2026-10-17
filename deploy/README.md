@@ -471,13 +471,16 @@ re-attaches seeds without a full re-hash.
 
 ## Operations runbooks (Docker Desktop host)
 
-**Stopping.** Neither the daemon nor the worker handles `SIGTERM` yet (the
-daemon only listens for Ctrl-C), so `docker stop` always waits the full timeout
-and then `SIGKILL`s. Use `docker stop -t 5 <container>` for a quick, safe stop:
-librqbit writes its session file incrementally and fastresume bitfields are per
-torrent, so a kill loses at most the pieces in flight. `docker compose restart`
-and `docker system df` can hang for a long time while the VM is IO-bound (e.g.
-the worker hashing over NFS); `docker stop -t 5` + `docker start` work.
+**Stopping.** The daemon and the worker both stop on `SIGTERM` (SKADI-T-0476),
+and the worker runs under an init (`init: true`, SKADI-T-0570), so `docker stop
+-t 15 <container>` is a clean stop even while the worker seeds over NFS. Before
+the init, a worker thread blocked in NFS I/O left a zombie that `docker stop`
+could not clear and every deploy needed `docker rm -f`; that is no longer the
+runbook. If a stop is ever killed anyway, the loss is bounded: librqbit writes
+its session file incrementally and fastresume bitfields are per torrent, so a
+kill loses at most the pieces in flight. `docker compose restart` and
+`docker system df` can hang for a long time while the VM is IO-bound (e.g. the
+worker hashing over NFS); `docker stop -t 15` + `docker start` work.
 
 **Worker restart timing.** After a (re)create the worker re-adds every persisted
 torrent *before* it claims anything. Over NFS-on-Wi-Fi that is tens of minutes
@@ -657,7 +660,7 @@ hot swap. Stop the writers first — leaving skadi or the worker running during 
 
 ```sh
 # 1. Stop the writers. Postgres stays up; it is the restore target.
-docker stop -t 5 skadi-skadi-1 skadi-skadi-downloader-worker-1
+docker stop -t 15 skadi-skadi-1 skadi-skadi-downloader-worker-1
 
 # 2. Pick a dump. They are timestamped UTC, newest last.
 docker exec skadi-postgres-backup-1 ls -1t /mnt/storage/skadi/backups/postgres

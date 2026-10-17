@@ -1350,7 +1350,10 @@ async fn delete_one(
             skadi_importer::delete_files_and_prune(&paths, &root)
         })
         .await
-        .map_err(|e| ApiError(AppError::Internal(format!("delete task panicked: {e}"))))?;
+        .map_err(|e| ApiError(AppError::Internal(format!("delete task panicked: {e}"))))?
+        // A recorded path outside the root refuses the whole delete, files and
+        // rows, and the response names it (SKADI-T-0712).
+        .map_err(|e| ApiError(AppError::Validation(format!("delete with files refused: {e}"))))?;
         tracing::info!(book = %id, removed = removed.len(), "deleted book files on library delete");
     }
     // Take the item's tag membership with it (SKADI-T-0560). Otherwise the rows

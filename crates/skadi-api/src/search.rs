@@ -116,6 +116,7 @@ async fn search(
     let providers = crate::providers::build_providers(store).await?;
 
     let spec = skadi_hunter::SearchSpec {
+        original_language: None,
         kind,
         // The operator typed this query, so indexers with automatic search off
         // are still consulted (SKADI-T-0539).

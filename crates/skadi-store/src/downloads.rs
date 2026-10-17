@@ -171,6 +171,11 @@ pub struct DownloadJob {
     /// while tracked. `None` until the first heartbeat after a claim. A lapsed lease
     /// means the worker died and the row can be reclaimed.
     pub lease_expires_at: Option<DateTime<Utc>>,
+    /// When the row went `stalled` (SKADI-T-0708); `None` while it is not. Set
+    /// by [`set_download_stalled`] on the flip to `stalled` and cleared on the
+    /// flip back, so the Downloads page can say how long a transfer has been
+    /// stalled (`updated_at` moves on every progress tick and cannot).
+    pub stalled_at: Option<DateTime<Utc>>,
     /// What the download **client** says the transfer is doing right now —
     /// `initializing` (queued behind the client's hash/init work, or fetching
     /// magnet metadata), `live`, `paused`, `error` (SKADI-T-0394). Distinct from
@@ -438,6 +443,7 @@ struct Row {
     updated_at: Timestamp,
     completed_at: Option<Timestamp>,
     lease_expires_at: Option<Timestamp>,
+    stalled_at: Option<Timestamp>,
     client_state: Option<String>,
     target_kind: Option<String>,
     target_ref: Option<String>,
@@ -474,6 +480,7 @@ impl TryFrom<Row> for DownloadJob {
             updated_at: r.updated_at.0,
             completed_at: r.completed_at.map(|t| t.0),
             lease_expires_at: r.lease_expires_at.map(|t| t.0),
+            stalled_at: r.stalled_at.map(|t| t.0),
             client_state: r.client_state,
             target_kind: r.target_kind,
             target_ref: r.target_ref,
@@ -539,6 +546,7 @@ impl DownloadJobRepo for Store {
             updated_at: Timestamp(now),
             completed_at: None,
             lease_expires_at: None,
+            stalled_at: None,
             client_state: None,
             target_kind: None,
             target_ref: None,
@@ -655,6 +663,11 @@ impl DownloadJobRepo for Store {
             (DownloadJobStatus::Stalled, DownloadJobStatus::Downloading)
         };
         self.with_conn(move |conn| {
+            let now = Timestamp(Utc::now());
+            // `stalled_at` marks the flip (SKADI-T-0708). The status filter
+            // above makes a repeat call a no-op, so the time of the first flip
+            // stays while the row is stalled.
+            let stalled_at = stalled.then_some(now);
             diesel::update(
                 downloads::table
                     .find(&id)
@@ -662,7 +675,8 @@ impl DownloadJobRepo for Store {
             )
             .set((
                 downloads::status.eq(to.as_str()),
-                downloads::updated_at.eq(Timestamp(Utc::now())),
+                downloads::stalled_at.eq(stalled_at),
+                downloads::updated_at.eq(now),
             ))
             .execute(conn)
             .map_err(db_err)?;
@@ -1340,6 +1354,53 @@ mod tests {
             capped.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
             ids[..3].to_vec()
         );
+    }
+
+    /// SKADI-T-0708: `stalled_at` is set on the flip to stalled, kept while the
+    /// row stays stalled (a repeat call is a no-op), and cleared on the flip back.
+    #[tokio::test]
+    async fn stalled_at_marks_the_flip_and_clears_on_recovery() {
+        let store = temp_store().await;
+        let job = store.enqueue(&req("st2", "magnet:?x")).await.unwrap();
+        store.claim_next("w").await.unwrap().unwrap(); // -> downloading
+        assert_eq!(
+            store
+                .get_download(&job.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .stalled_at,
+            None
+        );
+
+        let before = Utc::now();
+        store.set_download_stalled(&job.id, true).await.unwrap();
+        let first = store
+            .get_download(&job.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .stalled_at
+            .expect("set on entering stalled");
+        assert!(first >= before - chrono::Duration::seconds(1));
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        store.set_download_stalled(&job.id, true).await.unwrap();
+        assert_eq!(
+            store
+                .get_download(&job.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .stalled_at,
+            Some(first),
+            "unchanged while stalled"
+        );
+
+        store.set_download_stalled(&job.id, false).await.unwrap();
+        let back = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(back.status, DownloadJobStatus::Downloading);
+        assert_eq!(back.stalled_at, None, "cleared on leaving stalled");
     }
 
     #[tokio::test]

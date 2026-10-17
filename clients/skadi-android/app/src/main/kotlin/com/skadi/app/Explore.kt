@@ -36,6 +36,7 @@ import coil.compose.AsyncImage
 import com.skadi.core.Book
 import com.skadi.core.SkadiApi
 import com.skadi.core.Work
+import com.skadi.core.nameKey
 import kotlinx.coroutines.launch
 
 /**
@@ -45,8 +46,6 @@ import kotlinx.coroutines.launch
  * to an Audible ASIN; the library's own books fill in when it does not.
  */
 
-/** Case/diacritic-insensitive key for matching names across sources. */
-internal fun nameKey(s: String): String = s.lowercase().filter { it.isLetterOrDigit() && it.code < 128 }
 
 /** One row of a body of work: a library book, a known-but-unowned work, or both. */
 private data class WorkRow(

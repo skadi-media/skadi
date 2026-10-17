@@ -24,6 +24,7 @@ fn ensure_state(w: &mut World, kind: MediaKind) -> &mut AcquireState {
         w.state = Some(AcquireState::new(
             AcquirableRef("item-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind,
                 titles: vec!["Movie".into()],
@@ -145,6 +146,17 @@ fn statuses_from(step: &Step) -> Vec<DownloadStatus> {
                     .parse()
                     .expect("percent");
                 DownloadStatus::Downloading {
+                    progress: pct / 100.0,
+                }
+            }
+            s if s.starts_with("Paused") => {
+                let pct: f32 = s
+                    .trim_start_matches("Paused")
+                    .trim()
+                    .trim_end_matches('%')
+                    .parse()
+                    .expect("percent");
+                DownloadStatus::Paused {
                     progress: pct / 100.0,
                 }
             }

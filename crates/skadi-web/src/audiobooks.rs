@@ -29,6 +29,7 @@ use crate::library_toolbar::{
 };
 use crate::loading::{ListLoad, SkeletonKind};
 use crate::movies::{DiagnosticsPanel, HistoryPanel, ReleasesPanel, status_class};
+use crate::sorting::{sort_by_title, title_sort_key};
 use crate::ui::{LevelDot, tone};
 
 /// Decode the handful of HTML entities Audnexus/Audible synopses actually use.
@@ -144,8 +145,8 @@ fn series_pos_key(book: &api::Book) -> f64 {
         .unwrap_or(f64::INFINITY)
 }
 
-/// Split a book list into **series groups** (each a collapsible unit, sorted by
-/// name; books within sorted by series position then title) and **standalone**
+/// Split a book list into **series groups** (each a collapsible unit, in title
+/// order of name; books within sorted by series position then title) and **standalone**
 /// books (no series), preserving the input order of standalones. Pure, so it's
 /// unit-testable (SKADI-T-0153).
 pub fn group_books_by_series(books: Vec<api::Book>) -> (Vec<SeriesGroup>, Vec<api::Book>) {
@@ -173,19 +174,25 @@ pub fn group_books_by_series(books: Vec<api::Book>) -> (Vec<SeriesGroup>, Vec<ap
             series_pos_key(a)
                 .partial_cmp(&series_pos_key(b))
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                .then_with(|| title_sort_key(&a.title).cmp(&title_sort_key(&b.title)))
         });
     }
-    groups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    // Series names are titles: *The Expanse* files under E, as on Android.
+    sort_by_title(&mut groups, |g| &g.name);
     (groups, standalone)
 }
 
-/// A normalized key for matching an author name across sources — lowercase,
-/// ASCII-alphanumeric only (drops '.', spacing, punctuation). A book may store
-/// "A.G. Riddle" while the registered author is "A. G. Riddle"; keying both by this
-/// lets the cluster still find its ASIN (and thus render the Watch button). Mirrors
-/// `skadi_audiobooks::discovery::name_key` used when registering authors (T-0363).
-fn author_key(name: &str) -> String {
+/// A normalized key for matching an author name across sources — ASCII
+/// alphanumerics only (drops '.', spacing, punctuation, and any non-ASCII
+/// character), then lowercase. A book may store "A.G. Riddle" while the
+/// registered author is "A. G. Riddle"; keying both by this lets the cluster
+/// still find its ASIN (and thus render the Watch button).
+///
+/// The same rule is `skadi_audiobooks::discovery::name_key` on the server and
+/// `nameKey` in the Android `core`; the three test one shared vector
+/// (SKADI-T-0648 F4). Filter first, lowercase second: "İ" (U+0130) is dropped,
+/// where lowercasing first would leave an "i" behind.
+pub fn author_key(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
@@ -243,25 +250,111 @@ pub fn name_sort_key(name: &str) -> String {
     out.join(" ")
 }
 
-/// Group books by **primary author** (`authors[0]`) for the "organize by author" pivot
-/// (the author parallel to [`group_books_by_series`]). Authors sorted by surname
-/// ([`name_sort_key`]); books within each by title. Books with no author go under "Unknown author". Pure.
-pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<(String, Vec<api::Book>)> {
-    let mut map: HashMap<String, Vec<api::Book>> = HashMap::new();
+/// One author cluster of the "organize by author" pivot (SKADI-T-0655).
+#[derive(Debug, Clone)]
+pub struct AuthorGroup {
+    /// Stable cluster key: `id:<author_id>` for a linked author, else
+    /// `name:<author_key>`. Distinct per row, so two people with one name
+    /// do not share an expanded state.
+    pub key: String,
+    /// The display name, as the first book credits it.
+    pub name: String,
+    pub author_id: Option<String>,
+    /// In title order.
+    pub books: Vec<api::Book>,
+    /// Set only when another cluster shows the same name: the first book's
+    /// title, so the two rows can be told apart.
+    pub hint: Option<String>,
+}
+
+/// The name a book is filed under: its first non-blank credit.
+fn primary_author(b: &api::Book) -> Option<&str> {
+    b.authors
+        .iter()
+        .map(String::as_str)
+        .find(|a| !a.trim().is_empty())
+}
+
+/// Group books by **primary author** for the "organize by author" pivot (the
+/// author parallel to [`group_books_by_series`]).
+///
+/// A book linked to an author record (`author_id`, SKADI-T-0653) groups by the
+/// record; an unlinked one by its name key ([`author_key`]). Two different
+/// people whose names key alike therefore stay two clusters when both are
+/// linked. An unlinked book joins a linked cluster only when exactly one
+/// cluster carries its name — the same rule the server links by — else it
+/// keeps its own row. Clusters sort by surname ([`name_sort_key`]); books
+/// within by title. Books with no author go under "Unknown author". Pure.
+#[must_use]
+pub fn group_books_by_author(books: Vec<api::Book>) -> Vec<AuthorGroup> {
+    let mut by_key: HashMap<String, AuthorGroup> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut unlinked: Vec<api::Book> = Vec::new();
     for b in books {
-        let author = b
-            .authors
-            .iter()
-            .find(|a| !a.trim().is_empty())
-            .cloned()
-            .unwrap_or_else(|| "Unknown author".to_string());
-        map.entry(author).or_default().push(b);
+        let Some(id) = b.author_id.clone().filter(|i| !i.trim().is_empty()) else {
+            unlinked.push(b);
+            continue;
+        };
+        let key = format!("id:{id}");
+        let g = by_key.entry(key.clone()).or_insert_with(|| {
+            order.push(key);
+            AuthorGroup {
+                key: String::new(),
+                name: primary_author(&b).unwrap_or("Unknown author").to_string(),
+                author_id: Some(id),
+                books: Vec::new(),
+                hint: None,
+            }
+        });
+        g.books.push(b);
     }
-    let mut groups: Vec<(String, Vec<api::Book>)> = map.into_iter().collect();
-    for (_, bs) in &mut groups {
-        bs.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    // Linked clusters by their name key: an unlinked book folds into the
+    // one cluster of its name, never into one of two.
+    let mut linked_by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for key in &order {
+        linked_by_name
+            .entry(author_key(&by_key[key].name))
+            .or_default()
+            .push(key.clone());
     }
-    groups.sort_by_cached_key(|g| name_sort_key(&g.0));
+    for b in unlinked {
+        let name = primary_author(&b).unwrap_or("Unknown author").to_string();
+        let nk = author_key(&name);
+        let key = match linked_by_name.get(&nk).map(Vec::as_slice) {
+            Some([only]) => only.clone(),
+            _ => format!("name:{nk}"),
+        };
+        let g = by_key.entry(key.clone()).or_insert_with(|| {
+            order.push(key);
+            AuthorGroup {
+                key: String::new(),
+                name,
+                author_id: None,
+                books: Vec::new(),
+                hint: None,
+            }
+        });
+        g.books.push(b);
+    }
+    let mut groups: Vec<AuthorGroup> = order
+        .into_iter()
+        .map(|key| {
+            let mut g = by_key.remove(&key).expect("every key was inserted");
+            g.key = key;
+            sort_by_title(&mut g.books, |b| &b.title);
+            g
+        })
+        .collect();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for g in &groups {
+        *seen.entry(author_key(&g.name)).or_default() += 1;
+    }
+    for g in &mut groups {
+        if seen[&author_key(&g.name)] > 1 {
+            g.hint = g.books.first().map(|b| format!("e.g. {}", b.title));
+        }
+    }
+    groups.sort_by_cached_key(|g| name_sort_key(&g.name));
     groups
 }
 
@@ -346,6 +439,10 @@ pub fn extract_asin(raw: &str) -> Option<String> {
 #[component]
 fn BookCluster(
     name: String,
+    /// A muted line after the name that tells two same-named clusters apart
+    /// (SKADI-T-0655).
+    #[prop(default = None)]
+    hint: Option<String>,
     key: String,
     books: Vec<api::Book>,
     sub_series: bool,
@@ -487,6 +584,7 @@ fn BookCluster(
                         {move || if expanded.get().contains(&key_chev) { "▾" } else { "▸" }}
                     </span>
                     <span class="lib-cluster-name">{name}</span>
+                    {hint.map(|h| view! { <span class="muted">{h}</span> })}
                     <Pill color=token::MUTED>{count_label}</Pill>
                 </button>
                 {watch_btn}
@@ -662,9 +760,17 @@ pub fn AudiobooksPage() -> impl IntoView {
         let may_read_rollups = matches!(role.as_deref(), Some(r) if r != "kid");
         spawn_local(async move {
             if may_read_rollups && let Ok(list) = api::list_authors(None).await {
+                // Keyed like `AuthorGroup::key`: by record id, and by name key
+                // for clusters the server has not linked.
                 authors_asin.set(
                     list.into_iter()
-                        .filter_map(|a| a.asin.map(|x| (author_key(&a.name), x)))
+                        .filter_map(|a| a.asin.map(|x| (a.id, a.name, x)))
+                        .flat_map(|(id, name, asin)| {
+                            [
+                                (format!("id:{id}"), asin.clone()),
+                                (format!("name:{}", author_key(&name)), asin),
+                            ]
+                        })
                         .collect(),
                 );
             }
@@ -780,17 +886,19 @@ pub fn AudiobooksPage() -> impl IntoView {
                 let amap = authors_asin.get();
                 let clusters: Vec<AnyView> = group_books_by_author(bs)
                     .into_iter()
-                    .map(|(author, abooks)| {
-                        let key = format!("author:{author}");
+                    .map(|g| {
+                        let key = format!("author:{}", g.key);
                         let watch = amap
-                            .get(&author_key(&author))
+                            .get(&g.key)
+                            .or_else(|| amap.get(&format!("name:{}", author_key(&g.name))))
                             .cloned()
                             .map(|a| ("author", a));
                         view! {
                             <BookCluster
-                                name=author
+                                name=g.name
+                                hint=g.hint
                                 key=key
-                                books=abooks
+                                books=g.books
                                 sub_series=true
                                 expanded=expanded
                                 watch=watch
@@ -1030,10 +1138,10 @@ impl SeriesTile {
         }
     }
     fn title_key(&self) -> String {
-        match self {
-            SeriesTile::Owned(b) => b.title.to_lowercase(),
-            SeriesTile::Missing(w) => w.title.to_lowercase(),
-        }
+        title_sort_key(match self {
+            SeriesTile::Owned(b) => &b.title,
+            SeriesTile::Missing(w) => &w.title,
+        })
     }
 }
 
@@ -1196,26 +1304,41 @@ fn work_row<F: Fn() + Copy + Send + Sync + 'static>(w: api::Work, reload: F) -> 
     } else if w.watched {
         view! { <Pill color=token::ICE>"Watching"</Pill> }.into_any()
     } else {
+        // Each control only for a known role that may make its call
+        // (SKADI-T-0639): Watch is `PUT /watchers/book/{asin}` (the admin's), Add
+        // is `POST /books` (contributor and up). Both were drawn for every role.
+        let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+        let may = move |method: &str, path: &str| {
+            crate::surface::offered(role.and_then(|r| r.get()).as_deref(), method, path)
+        };
         let asin_w = w.asin.clone();
-        let on_watch = move |()| {
-            let asin = asin_w.clone();
-            spawn_local(async move {
-                let _ = api::set_watcher("book", &asin).await;
-                reload();
-            });
-        };
         let asin_a = w.asin.clone();
-        let on_add = move |()| {
-            let asin = asin_a.clone();
-            spawn_local(async move {
-                let _ = api::add_book(&asin, None, true).await;
-                reload();
-            });
-        };
         view! {
             <div class="work-actions">
-                <Button variant="default" size="xs" on_click=Callback::new(on_watch)>"Watch"</Button>
-                <Button size="xs" on_click=Callback::new(on_add)>"Add"</Button>
+                {move || may("PUT", "/watchers/book/asin").then(|| {
+                    let asin = asin_w.clone();
+                    let on_watch = move |()| {
+                        let asin = asin.clone();
+                        spawn_local(async move {
+                            let _ = api::set_watcher("book", &asin).await;
+                            reload();
+                        });
+                    };
+                    view! {
+                        <Button variant="default" size="xs" on_click=Callback::new(on_watch)>"Watch"</Button>
+                    }
+                })}
+                {move || may("POST", "/books").then(|| {
+                    let asin = asin_a.clone();
+                    let on_add = move |()| {
+                        let asin = asin.clone();
+                        spawn_local(async move {
+                            let _ = api::add_book(&asin, None, true).await;
+                            reload();
+                        });
+                    };
+                    view! { <Button size="xs" on_click=Callback::new(on_add)>"Add"</Button> }
+                })}
             </div>
         }
         .into_any()
@@ -1978,5 +2101,114 @@ pub fn AudiobooksConfigPage() -> impl IntoView {
                 </div>
             </div>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{author_key, group_books_by_author};
+    use crate::api::Book;
+
+    fn book(id: &str, title: &str, author: &str, author_id: Option<&str>) -> Book {
+        Book {
+            id: id.to_string(),
+            title: title.to_string(),
+            authors: vec![author.to_string()],
+            author_id: author_id.map(str::to_string),
+            ..Book::default()
+        }
+    }
+
+    /// SKADI-T-0655: two linked authors with one display name are two rows,
+    /// told apart by a hint; an unlinked book joins the one cluster of its
+    /// name, and stays alone when there are two.
+    #[test]
+    fn author_groups_by_record_then_by_name() {
+        let groups = group_books_by_author(vec![
+            book("1", "The Stand", "Stephen King", Some("a1")),
+            book("2", "Misery", "Stephen King", Some("a1")),
+            book("3", "Prose and Cons", "Stephen King", Some("a2")),
+            book("4", "Carrie", "Stephen  King", None),
+            book("5", "Dune", "Frank Herbert", Some("h1")),
+            book("6", "Dune Messiah", "Frank Herbert", None),
+            book("7", "Nameless", "", None),
+        ]);
+        let rows: Vec<(&str, &str, Vec<&str>, Option<&str>)> = groups
+            .iter()
+            .map(|g| {
+                (
+                    g.key.as_str(),
+                    g.name.as_str(),
+                    g.books.iter().map(|b| b.id.as_str()).collect(),
+                    g.hint.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                // Herbert: the unlinked book folds into the one linked cluster.
+                ("id:h1", "Frank Herbert", vec!["5", "6"], None),
+                // King: two records, two rows; the unlinked book matches two
+                // clusters, so it keeps its own row. All three carry a hint.
+                ("id:a1", "Stephen King", vec!["2", "1"], Some("e.g. Misery")),
+                (
+                    "id:a2",
+                    "Stephen King",
+                    vec!["3"],
+                    Some("e.g. Prose and Cons")
+                ),
+                (
+                    "name:stephenking",
+                    "Stephen  King",
+                    vec!["4"],
+                    Some("e.g. Carrie")
+                ),
+                // A collective credit keeps its own text as the key, so
+                // "Unknown author" sorts after the surnames, as on main.
+                ("name:unknownauthor", "Unknown author", vec!["7"], None),
+            ]
+        );
+        assert_eq!(groups[1].author_id.as_deref(), Some("a1"));
+        assert_eq!(groups[3].author_id, None);
+    }
+
+    /// Books within a cluster are in title order (SKADI-T-0648).
+    #[test]
+    fn author_group_books_in_title_order() {
+        let groups = group_books_by_author(vec![
+            book("1", "The Shining", "Stephen King", None),
+            book("2", "Carrie", "Stephen King", None),
+            book("3", "A Misery", "Stephen King", None),
+        ]);
+        assert_eq!(groups.len(), 1);
+        let titles: Vec<&str> = groups[0].books.iter().map(|b| b.title.as_str()).collect();
+        assert_eq!(titles, ["Carrie", "A Misery", "The Shining"]);
+    }
+
+    /// The shared `name_key` vector (SKADI-T-0648 F4): asserted verbatim by
+    /// the server (`skadi_audiobooks::discovery` tests) and the Android `core`
+    /// `NameKeyTest`, so the three copies are tested to agree, not said to.
+    #[test]
+    fn author_key_shared_vector() {
+        for (name, key) in [
+            ("A.G. Riddle", "agriddle"),
+            ("A. G. Riddle", "agriddle"),
+            ("a g riddle", "agriddle"),
+            ("Brandon  Sanderson", "brandonsanderson"),
+            ("Ursula K. Le Guin", "ursulakleguin"),
+            ("George R. R. Martin", "georgerrmartin"),
+            ("Ann Leckie", "annleckie"),
+            ("Anne Leckie", "anneleckie"),
+            // Non-ASCII: dropped, not transliterated.
+            ("İsmail Kadare", "smailkadare"),
+            ("Émile Zola", "milezola"),
+            ("Zoë Heller", "zoheller"),
+            ("Йозеф К", ""),
+            ("", ""),
+            ("  ", ""),
+        ] {
+            assert_eq!(author_key(name), key, "{name}");
+        }
     }
 }

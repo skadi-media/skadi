@@ -17,6 +17,7 @@ use crate::bdd_support::fixtures::{magnet_for, profile_of, quality_named, releas
 
 fn spec(kind: MediaKind, titles: Vec<String>, year: Option<u16>) -> SearchSpec {
     SearchSpec {
+        original_language: None,
         tags: None,
         trigger: Default::default(),
         kind,

@@ -8,21 +8,45 @@ cwd = os.path.join(angreal.get_root(), '..')
 check = angreal.command_group(name="check", about="commands for code quality checks")
 
 
+# The two crates outside the workspace (SKADI-T-0640): `--workspace` and a bare
+# `cargo fmt` never reach them, so every sweep names them. The web crate is
+# built for wasm and is linted for that target.
+EXCLUDED_MANIFESTS = [
+    "crates/skadi-web/Cargo.toml",
+    "crates/skadi-downloader-worker/Cargo.toml",
+]
+WEB_MANIFEST = "crates/skadi-web/Cargo.toml"
+WASM_TARGET = "wasm32-unknown-unknown"
+
+FMT_COMMANDS = [["cargo", "fmt", "--check"]] + [
+    ["cargo", "fmt", "--check", "--manifest-path", m] for m in EXCLUDED_MANIFESTS
+]
+CLIPPY_COMMANDS = [
+    ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+    ["cargo", "clippy", "--manifest-path", "crates/skadi-downloader-worker/Cargo.toml",
+     "--all-targets", "--", "-D", "warnings"],
+    ["cargo", "clippy", "--manifest-path", WEB_MANIFEST, "--target", WASM_TARGET,
+     "--all-targets", "--", "-D", "warnings"],
+]
+
+
+def _run_all(commands):
+    for cmd in commands:
+        result = subprocess.run(cmd, cwd=cwd)
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
+
+
 @check()
-@angreal.command(name="fmt", about="check code formatting")
+@angreal.command(name="fmt", about="check code formatting (workspace, web and worker)")
 def fmt_check():
-    result = subprocess.run(["cargo", "fmt", "--check"], cwd=cwd)
-    raise SystemExit(result.returncode)
+    _run_all(FMT_COMMANDS)
 
 
 @check()
-@angreal.command(name="clippy", about="run clippy lints")
+@angreal.command(name="clippy", about="run clippy lints (workspace, worker, web on wasm)")
 def clippy_check():
-    result = subprocess.run(
-        ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
-        cwd=cwd,
-    )
-    raise SystemExit(result.returncode)
+    _run_all(CLIPPY_COMMANDS)
 
 
 # Command names are safe to repeat — angreal registers the decorated function
@@ -82,9 +106,7 @@ def task_namespace_check():
 @check()
 @angreal.command(name="all", about="run all checks (fmt + clippy + schema drift)")
 def all_checks():
-    for cmd in [
-        ["cargo", "fmt", "--check"],
-        ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+    for cmd in FMT_COMMANDS + CLIPPY_COMMANDS + [
         ["cargo", "check", "--workspace"],
         # Generated schema must match the logical DDL (SKADI-I-0015). No-ops
         # cleanly if the diesel-dualdb-schema CLI isn't available.

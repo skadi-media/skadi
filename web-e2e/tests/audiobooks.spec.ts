@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import * as path from "path";
+import * as steps from "./steps";
 
 // Mirrors steer.spec.ts for the audiobooks domain. The harness serves BOTH the
 // movies and audiobooks domains; this spec drives the audiobooks UI end-to-end:
@@ -16,6 +17,7 @@ const API = "/api/v1";
 const ASIN = "B08G9PRS1K";
 
 test("audiobooks: add → search → grab → import → dashboard", async ({ page, request }) => {
+  test.setTimeout(150_000); // the import wait below is 90 s
   // --- setup via API (plumbing, not the thing under test) ---
   const profileResp = await request.post(`${API}/settings/profiles`, {
     data: { name: "e2e-ab", cutoff: "Bluray-1080p" },
@@ -40,25 +42,19 @@ test("audiobooks: add → search → grab → import → dashboard", async ({ pa
 
   // --- open the book detail page via the Audiobooks sidebar link ---
   await page.goto("/");
-  await page.locator(".nav").getByRole("link", { name: "Audiobooks" }).click();
-  await expect(page.locator(".poster-tile").first()).toBeVisible();
-  await page.locator(".poster-tile").first().click();
-  await expect(page.locator(".drawer-title")).toContainText("Project Hail Mary");
+  await steps.sidebarLink(page, "Audiobooks").click();
+  await steps.whenOpensFirstTile(page, "Project Hail Mary");
 
   // --- interactive search lists the mock release; grab it ---
-  await page.getByRole("button", { name: /Search releases/ }).click();
-  const rel = page.locator(".drawer-release").first();
-  await expect(rel).toContainText("Project Hail Mary");
-  await rel.getByRole("button", { name: "Grab" }).click();
-  await expect(page.locator(".drawer-note")).toContainText("Grabbed");
+  await steps.whenGrabsFirstRelease(page, "Project Hail Mary");
 
   // --- the immediate downloader imports it; the library reads "owned" on reload ---
   await expect(async () => {
     await page.goto("/audiobooks");
     await expect(page.getByRole("button", { name: /Owned/ })).toContainText("1");
-  }).toPass({ timeout: 40_000 });
+  }).toPass({ timeout: 90_000 }); // the first import on a cold harness takes ~45 s (SKADI-T-0722)
 
   // --- the Overview renders ---
-  await page.locator(".nav").getByRole("link", { name: "Overview" }).click();
+  await steps.sidebarLink(page, "Overview").click();
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 });

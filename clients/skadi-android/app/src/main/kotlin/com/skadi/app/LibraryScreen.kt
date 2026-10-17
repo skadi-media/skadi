@@ -59,6 +59,10 @@ import com.skadi.core.Book
 import com.skadi.core.BookActionPolicy
 import com.skadi.core.NameSorting
 import com.skadi.core.OfflineBook
+import com.skadi.core.Railed
+import com.skadi.core.TitleSorting
+import com.skadi.core.groupBooksByAuthor
+import com.skadi.core.nameKey
 import com.skadi.core.OfflineStore
 import com.skadi.core.SkadiApi
 import com.skadi.core.groupBooksBySeries
@@ -328,25 +332,16 @@ fun LibraryScreen(
         // Authors mode is a rollup over the whole library (wanted included):
         // name → owned / wanted counts, tap → the author's body of work.
         if (mode == "authors") {
-            val authors = allBooks.flatMap { b -> b.authors.map { it to b } }
-                .groupBy({ nameKey(it.first) }, { it })
-                .values
-                .map { pairs -> Triple(pairs.first().first, pairs.count { it.second.importedFileId != null }, pairs.count { it.second.importedFileId == null }) }
-                .filter { (n, _, _) -> q.isEmpty() || n.lowercase().contains(q) }
-                // NameSorting, not the title sort: the rail below takes its
-                // letters from the same object, so the two cannot disagree.
-                // This list used to sort on a plain lowercase name while the
-                // rail lettered with the article-stripping `sortLetter`, which
-                // filed "An Na" under A and labelled it N (SKADI-T-0648 F2).
-                .sortedBy { NameSorting.key(it.first) }
+            // Grouped by author record when a book is linked, else by name
+            // key (SKADI-T-0655), in surname order (`groupBooksByAuthor`
+            // sorts by NameSorting.key, and the rail below letters with
+            // NameSorting.letter, so the two cannot disagree: SKADI-T-0648 F2).
+            val authors = remember(allBooks, q) {
+                groupBooksByAuthor(allBooks).filter { q.isEmpty() || it.name.lowercase().contains(q) }
+            }
             if (authors.isEmpty()) { EmptyState(if (q.isNotEmpty()) "No authors match “$query”." else "No audiobooks in the library."); return@Column }
             // Same row shape as the TV list, with the rail (SKADI-T-0609): an
             // author's first cover as the thumbnail, name, owned/wanted line.
-            val covers = remember(allBooks) {
-                allBooks.flatMap { b -> b.authors.map { nameKey(it) to b } }
-                    .groupBy({ it.first }, { it.second })
-                    .mapValues { (_, bs) -> bs.firstNotNullOfOrNull { it.coverUrl?.takeIf { c -> c.isNotEmpty() } } }
-            }
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
             val scope = rememberCoroutineScope()
             Row(modifier = Modifier.fillMaxSize()) {
@@ -355,19 +350,23 @@ fun LibraryScreen(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
                 ) {
-                    items(authors, key = { it.first }) { (n, owned, wanted) ->
+                    items(authors, key = { it.key }) { g ->
+                        val owned = g.books.count { it.importedFileId != null }
+                        val wanted = g.books.count { it.importedFileId == null }
                         CompactRow(
-                            cover = covers[nameKey(n)],
-                            title = n,
-                            meta = listOfNotNull("$owned owned", wanted.takeIf { it > 0 }?.let { "$it wanted" }).joinToString(" · "),
-                            onClick = { openAuthor = n },
+                            cover = g.books.firstNotNullOfOrNull { it.coverUrl?.takeIf { c -> c.isNotEmpty() } },
+                            title = g.name,
+                            // The hint is set only when another row shows the
+                            // same name: it is what tells the two apart.
+                            meta = listOfNotNull("$owned owned", wanted.takeIf { it > 0 }?.let { "$it wanted" }, g.hint).joinToString(" · "),
+                            onClick = { openAuthor = g.name },
                         ) {
                             Icon(Icons.Filled.ChevronRight, contentDescription = "Open", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
                 AlphabetRail(
-                    letters = remember(authors) { authors.map { NameSorting.letter(it.first) } },
+                    letters = remember(authors) { authors.map { NameSorting.letter(it.name) } },
                     onJump = { i -> scope.launch { listState.scrollToItem(i) } },
                 )
             }
@@ -401,9 +400,9 @@ if (mode == "series") {
         val (groups, standalone) = remember(visibleBooks) { groupBooksBySeries(visibleBooks) }
         val entries = remember(groups, standalone, visibleShelfOnly, expanded.toList()) {
             buildList<Pair<Char, Any>> {
-                visibleShelfOnly.forEach { add(sortLetter(it.title) to it) }
+                visibleShelfOnly.forEach { add(TitleSorting.letter(it.title) to it) }
                 for (g in groups) {
-                    val l = sortLetter(g.name)
+                    val l = TitleSorting.letter(g.name)
                     add(l to g)
                     if (g.seriesId in expanded) {
                         // Numbered books, then the unpositioned ones under their own
@@ -418,7 +417,7 @@ if (mode == "series") {
                 }
                 if (standalone.isNotEmpty()) {
                     add('#' to "Standalone")
-                    standalone.forEach { add(sortLetter(it.title) to ("book" to it)) }
+                    standalone.forEach { add(TitleSorting.letter(it.title) to ("book" to it)) }
                 }
             }
         }
@@ -507,9 +506,11 @@ if (mode == "series") {
                         open = { onPlay(b.fileId) },
                         more = { removeShelfOnly = b },
                     )
-                }).sortedBy { sortKey(it.title) }
+                })
             }
-            BookWall(tiles)
+            // One helper sorts and letters, so the wall and its rail cannot
+            // disagree (SKADI-T-0648).
+            BookWall(remember(tiles) { TitleSorting.railed(tiles) { it.title } })
         }
 }
     }
@@ -674,7 +675,7 @@ private class BookTileData(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BookWall(tiles: List<BookTileData>) {
+private fun BookWall(railed: Railed<BookTileData>) {
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val scope = rememberCoroutineScope()
     Row(modifier = Modifier.fillMaxSize()) {
@@ -686,7 +687,7 @@ private fun BookWall(tiles: List<BookTileData>) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.weight(1f),
         ) {
-            items(tiles, key = { it.key }) { t ->
+            items(railed.items, key = { it.key }) { t ->
                 Column(
                     modifier = Modifier.combinedClickable(onClick = t.open, onLongClick = t.more),
                 ) {
@@ -745,7 +746,7 @@ private fun BookWall(tiles: List<BookTileData>) {
             }
         }
         AlphabetRail(
-            letters = remember(tiles) { tiles.map { sortLetter(it.title) } },
+            letters = railed.letters,
             onJump = { i -> scope.launch { gridState.scrollToItem(i) } },
         )
     }

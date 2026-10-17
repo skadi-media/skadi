@@ -196,10 +196,20 @@ def get_crates():
             if os.path.isfile(os.path.join(crates_dir, d, 'Cargo.toml'))]
 
 
-def _run(cmd):
+def _run(cmd, env=None):
     """Run a command and exit with its return code."""
-    result = subprocess.run(cmd, cwd=cwd)
+    result = subprocess.run(cmd, cwd=cwd, env=env)
     raise SystemExit(result.returncode)
+
+
+def _single_threaded_env():
+    """One test thread, as an environment variable rather than
+    `-- --test-threads=1`: the flag reaches every test binary, and the
+    cucumber `bdd` targets (`harness = false`) reject it with "unexpected
+    argument", which stopped `test all` and `coverage` at the first of them
+    (SKADI-T-0732). libtest reads RUST_TEST_THREADS; the other harnesses
+    ignore it."""
+    return dict(os.environ, RUST_TEST_THREADS="1")
 
 
 def _add_crate_filter(cmd, crate_name, filter_str):
@@ -265,10 +275,11 @@ def all_tests(crate_name="", ignored=False):
     cmd = ["cargo", "test", "-v"]
     if crate_name:
         cmd.extend(["-p", crate_name])
-    cmd.extend(["--", "--test-threads=1"])
     if ignored:
-        cmd.append("--ignored")
-    _run(cmd)
+        # Reaches the `bdd` targets too, which reject it the same way
+        # `--test-threads` did; use `test functional --ignored` for those tests.
+        cmd.extend(["--", "--ignored"])
+    _run(cmd, env=_single_threaded_env())
 
 
 @test()
@@ -303,13 +314,14 @@ def coverage(type="all", open=False):
     # "all" uses no flags (runs everything)
 
     # Generate coverage
-    run_cmd = ["cargo", "llvm-cov", "--workspace", "--no-report"] + test_flags + ["--", "--test-threads=1"]
+    run_cmd = ["cargo", "llvm-cov", "--workspace", "--no-report"] + test_flags
     report_html = ["cargo", "llvm-cov", "report", "--workspace", "--html", "--output-dir", output_dir]
     report_lcov = ["cargo", "llvm-cov", "report", "--workspace", "--lcov", "--output-path", os.path.join(output_dir, "lcov.info")]
     report_text = ["cargo", "llvm-cov", "report", "--workspace"]
 
+    env = _single_threaded_env()
     for cmd in [run_cmd, report_html, report_lcov, report_text]:
-        result = subprocess.run(cmd, cwd=cwd)
+        result = subprocess.run(cmd, cwd=cwd, env=env)
         if result.returncode != 0:
             raise SystemExit(result.returncode)
 

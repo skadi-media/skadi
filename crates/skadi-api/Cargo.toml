@@ -87,7 +87,7 @@ sha2 = { workspace = true }
 serial_test = "3"
 cucumber = { workspace = true }
 skadi-testsupport = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"
 tempfile = "3"
 tower = { workspace = true }

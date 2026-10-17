@@ -180,6 +180,7 @@ fn download_row(w: &mut World, acquirable: String, done: i64, total: i64, eta: i
         updated_at: now,
         completed_at: None,
         lease_expires_at: None,
+        stalled_at: None,
         client_state: None,
         target_kind: Some("movie".into()),
         target_ref: Some(acquirable),
@@ -214,6 +215,7 @@ fn shows_progress_fields(w: &mut World, acquirable: String, size: i64, done: i64
 )]
 fn titled(_w: &mut World, acquirable: String, title: String, season: u16, episode: u16) {
     let spec = skadi_hunter::SearchSpec {
+        original_language: None,
         kind: MediaKind::Series,
         trigger: Default::default(),
         titles: vec![title, "Alias".into()],

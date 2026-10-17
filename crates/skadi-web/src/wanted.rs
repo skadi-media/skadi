@@ -84,7 +84,7 @@ pub fn filter_items(items: &[WantedItem], kind: &str, status: &str, q: &str) -> 
             })
         })
         .collect();
-    out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    crate::sorting::sort_by_title(&mut out, |i| &i.title);
     out
 }
 

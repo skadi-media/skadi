@@ -130,6 +130,8 @@ struct SeriesRow {
     genres: Option<String>,
     /// US TV parental guideline; NULL before a refresh reports one (SKADI-T-0610).
     content_rating: Option<String>,
+    /// ISO 639-1; NULL before a refresh reports one (SKADI-T-0673).
+    original_language: Option<String>,
 }
 
 /// Genres travel as one JSON text column (see the movies repo for why).
@@ -172,6 +174,7 @@ impl TryFrom<SeriesRow> for Series {
             backdrop_url: r.backdrop_url,
             genres: decode_genres(r.genres.as_deref()),
             content_rating: r.content_rating,
+            original_language: r.original_language,
             monitored: r.monitored,
             profile: ProfileId::from(parse_uuid(&r.profile_id, "profile")?),
             root_folder: RootFolder {
@@ -220,6 +223,7 @@ fn series_to_row(s: &Series) -> Result<SeriesRow> {
         backdrop_url: s.backdrop_url.clone(),
         genres: encode_genres(&s.genres),
         content_rating: s.content_rating.clone(),
+        original_language: s.original_language.clone(),
     })
 }
 

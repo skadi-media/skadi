@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use regex::RegexBuilder;
+use skadi_core::MovieEditionId;
 use skadi_importer::{AcquirableMatch, AcquirableMatcher, CompletedDownload};
 use skadi_quality::ParsedRelease;
 
@@ -32,6 +33,8 @@ pub struct MovieMatcher {
     editions: Vec<MovieEdition>,
     kinds: Vec<EditionKind>,
     naming: crate::naming::MovieNaming,
+    /// The edition the acquire run grabbed for (SKADI-T-0588), when known.
+    target: Option<MovieEditionId>,
 }
 
 impl MovieMatcher {
@@ -61,7 +64,70 @@ impl MovieMatcher {
             editions,
             kinds,
             naming,
+            target: None,
         }
+    }
+
+    /// The edition the run grabbed for (SKADI-T-0588). A file whose name names
+    /// an edition the movie does not have enabled (`REMASTERED`, when only
+    /// Theatrical is wanted) goes to this edition: the hunter grabbed the release
+    /// for it, and refusing the file left the grab blocklisted and the edition
+    /// missing (Lord of War and The Return of the Living Dead, 2026-09-14).
+    #[must_use]
+    pub fn with_target_edition(mut self, edition: MovieEditionId) -> Self {
+        self.target = Some(edition);
+        self
+    }
+
+    /// "The Matrix (1999)": the movie, as a rejection names it.
+    fn describe(&self) -> String {
+        match self.movie.year {
+            Some(y) => format!("{} ({y})", self.movie.title),
+            None => self.movie.title.clone(),
+        }
+    }
+
+    /// [`is_this_movie`](Self::is_this_movie) with the reason when it is not.
+    fn identity(&self, parsed: &ParsedRelease) -> Result<(), String> {
+        if self.is_this_movie(parsed) {
+            return Ok(());
+        }
+        let coverage = parsed.title.as_deref().map_or(1.0, |t| {
+            skadi_quality::title_relevance(std::slice::from_ref(&self.movie.title), t).coverage
+        });
+        if coverage < MIN_TITLE_COVERAGE {
+            return Err(format!(
+                "the title does not match {} (coverage {:.0}%)",
+                self.describe(),
+                coverage * 100.0
+            ));
+        }
+        Err(format!(
+            "the year {} is not the year of {}",
+            parsed
+                .year
+                .map_or_else(|| "?".to_string(), |y| y.to_string()),
+            self.describe()
+        ))
+    }
+
+    /// The file is this movie by its own name, or by the download's folder
+    /// when the file name cannot say (SKADI-T-0588): the 10 Cloverfield Lane
+    /// download held a file named in Cyrillic, and only the folder carried the
+    /// title. The same fallback the TV matcher has had since SKADI-T-0591.
+    fn identity_of(
+        &self,
+        parsed: &ParsedRelease,
+        completed: &CompletedDownload,
+    ) -> Result<(), String> {
+        let own = self.identity(parsed);
+        if own.is_ok() {
+            return own;
+        }
+        let folder_vouches = skadi_importer::download_root_name(completed)
+            .map(|f| skadi_quality::parse(&f))
+            .is_some_and(|fp| fp.title.is_some() && self.identity(&fp).is_ok());
+        if folder_vouches { Ok(()) } else { own }
     }
 
     /// Is this parsed release plausibly *this* movie (SKADI-T-0445)?
@@ -130,35 +196,54 @@ impl MovieMatcher {
     }
 }
 
-impl AcquirableMatcher for MovieMatcher {
-    fn match_file(
+impl MovieMatcher {
+    /// The match for `source`, or why there is none (SKADI-T-0588). One
+    /// function for both, so the reason a rejection gives is the rule that
+    /// rejected it.
+    fn decide(
         &self,
         parsed: &ParsedRelease,
         source: &Path,
-        _completed: &CompletedDownload,
-    ) -> Vec<AcquirableMatch> {
+        completed: &CompletedDownload,
+    ) -> Result<Vec<AcquirableMatch>, String> {
         if is_sample(source) {
-            return vec![];
+            return Err("a sample, not the film".into());
         }
         // Only a video container can be a film (SKADI-T-0591): artwork, subtitles
         // and sidecars in a release folder are never the edition's file.
         if !skadi_importer::is_video_file(source) {
-            return vec![];
+            return Err("not a video file".into());
         }
         // The file must actually be this movie (SKADI-T-0445). The matcher is the
         // last gate before bytes land in the library, and it used to place any
         // file the importer handed it — a mis-grabbed `Blade.Runner.1982…` became
         // The Matrix's Theatrical edition. Radarr's equivalent refuses with
         // "unable to match to movie" and leaves the file for manual import.
-        if !self.is_this_movie(parsed) {
-            return vec![];
-        }
-        let kind = self.resolve_edition_kind(parsed);
-        // Find the MovieEdition row for (this movie, this kind). If the user
-        // hasn't enabled that edition for this movie, skip — the matcher
-        // doesn't create new edition rows on the fly.
-        let Some(edition) = self.editions.iter().find(|e| e.kind == kind.id) else {
-            return vec![];
+        self.identity_of(parsed, completed)?;
+        let named = self.resolve_edition_kind(parsed);
+        // The MovieEdition row for (this movie, this kind). The matcher does not
+        // create edition rows on the fly; when the named kind is not enabled, the
+        // file goes to the edition the run grabbed for (SKADI-T-0588).
+        let (edition, kind) = match self.editions.iter().find(|e| e.kind == named.id) {
+            Some(e) => (e, named),
+            None => {
+                let target = self
+                    .target
+                    .and_then(|t| self.editions.iter().find(|e| e.id == t))
+                    .ok_or_else(|| {
+                        format!(
+                            "the {} edition is not enabled for {}",
+                            named.name,
+                            self.describe()
+                        )
+                    })?;
+                let kind = self
+                    .kinds
+                    .iter()
+                    .find(|k| k.id == target.kind)
+                    .unwrap_or(named);
+                (target, kind)
+            }
         };
         let dest = self.destination_path(source, kind);
         // Generate a Kodi/Jellyfin `.nfo` next to the placed video (SKADI-T-0298).
@@ -173,7 +258,27 @@ impl AcquirableMatcher for MovieMatcher {
         if let Some(existing) = edition.file.as_ref() {
             m = m.superseding(vec![existing.path.clone()]);
         }
-        vec![m]
+        Ok(vec![m])
+    }
+}
+
+impl AcquirableMatcher for MovieMatcher {
+    fn match_file(
+        &self,
+        parsed: &ParsedRelease,
+        source: &Path,
+        completed: &CompletedDownload,
+    ) -> Vec<AcquirableMatch> {
+        self.decide(parsed, source, completed).unwrap_or_default()
+    }
+
+    fn explain_ignore(
+        &self,
+        parsed: &ParsedRelease,
+        source: &Path,
+        completed: &CompletedDownload,
+    ) -> Option<String> {
+        self.decide(parsed, source, completed).err()
     }
 }
 
@@ -307,6 +412,134 @@ mod tests {
             files: vec![],
             category: "2000".into(),
         }
+    }
+
+    fn remastered_kind() -> EditionKind {
+        EditionKind {
+            id: EditionKindId::from(uuid::uuid!("00000000-0000-0000-0000-000000000006")),
+            name: "Remastered".into(),
+            normalized_tag: "Remastered".into(),
+            match_patterns: vec!["remastered".into(), "remaster".into()],
+            builtin: true,
+        }
+    }
+
+    fn film(title: &str, year: u16) -> Movie {
+        let mut m = Movie::new(
+            ExternalIds::default(),
+            title,
+            ProfileId::new(),
+            RootFolder::new("/movies"),
+        );
+        m.id = MovieId::new();
+        m.year = Some(year);
+        m
+    }
+
+    /// SKADI-T-0588: Lord of War and The Return of the Living Dead were
+    /// grabbed for their Theatrical edition as `REMASTERED` releases, and the
+    /// matcher refused them because the Remastered edition was not enabled.
+    /// With the run's target known they go to Theatrical; without it the
+    /// rejection names the edition.
+    #[test]
+    fn a_tagged_release_goes_to_the_edition_the_run_grabbed_for() {
+        for (title, year, file) in [
+            (
+                "Lord of War",
+                2005,
+                "Lord.of.War.2005.REMASTERED.PROPER.1080p.BluRay.x265-RARBG.mkv",
+            ),
+            (
+                "The Return of the Living Dead",
+                1985,
+                "The.Return.of.the.Living.Dead.1985.REMASTERED.1080p.BRRip.x264.mkv",
+            ),
+        ] {
+            let m = film(title, year);
+            let theatrical = theatrical_kind();
+            let edition = edition_for(m.id, theatrical.id);
+            let kinds = vec![theatrical.clone(), extended_kind(), remastered_kind()];
+            let source = PathBuf::from(format!("/dl/x/{file}"));
+            let parsed = parse(file);
+
+            let untargeted = MovieMatcher::new(m.clone(), vec![edition.clone()], kinds.clone());
+            assert!(
+                untargeted
+                    .match_file(&parsed, &source, &make_completed())
+                    .is_empty()
+            );
+            assert_eq!(
+                untargeted
+                    .explain_ignore(&parsed, &source, &make_completed())
+                    .as_deref(),
+                Some(
+                    format!("the Remastered edition is not enabled for {title} ({year})").as_str()
+                )
+            );
+
+            let targeted =
+                MovieMatcher::new(m, vec![edition.clone()], kinds).with_target_edition(edition.id);
+            let got = targeted.match_file(&parsed, &source, &make_completed());
+            assert_eq!(got.len(), 1, "{file}");
+            assert_eq!(got[0].acquirable, edition.acquirable_ref());
+            let dest = got[0].dest.to_string_lossy().to_string();
+            assert!(
+                !dest.contains("Remastered"),
+                "named for the edition it fills: {dest}"
+            );
+        }
+    }
+
+    /// SKADI-T-0588: the 10 Cloverfield Lane download held a file named in
+    /// Cyrillic. The folder names the film, so it places; a folder that names
+    /// another film does not vouch for it.
+    #[test]
+    fn the_download_folder_vouches_for_a_file_name_in_another_script() {
+        let m = film("10 Cloverfield Lane", 2016);
+        let theatrical = theatrical_kind();
+        let editions = vec![edition_for(m.id, theatrical.id)];
+        let matcher = MovieMatcher::new(m, editions, vec![theatrical]);
+        let name = "Кловерфилд, 10 (2016. 10 Cloverfield Lane) 1080p.mkv";
+        let parsed = parse(name);
+        let completed_in = |folder: &str| {
+            let mut c = make_completed();
+            c.files = vec![PathBuf::from(format!("/dl/complete/{folder}/{name}"))];
+            c
+        };
+        let good = completed_in(
+            "10 Cloverfield Lane [2016, USA, horror, sci-fi, thriller, detective, BDRip 1080p] Dub + Sub Rus, Eng + Original Eng",
+        );
+        let source = good.files[0].clone();
+        assert_eq!(matcher.match_file(&parsed, &source, &good).len(), 1);
+
+        let other = completed_in("Cloverfield.2008.1080p.BluRay.x264");
+        let source = other.files[0].clone();
+        assert!(matcher.match_file(&parsed, &source, &other).is_empty());
+        let why = matcher
+            .explain_ignore(&parsed, &source, &other)
+            .expect("a reason");
+        assert!(
+            why.starts_with("the title does not match 10 Cloverfield Lane (2016)"),
+            "{why}"
+        );
+    }
+
+    /// SKADI-T-0588: the year rule says which year it saw.
+    #[test]
+    fn a_year_mismatch_names_both_years() {
+        let m = matrix_movie();
+        let theatrical = theatrical_kind();
+        let editions = vec![edition_for(m.id, theatrical.id)];
+        let matcher = MovieMatcher::new(m, editions, vec![theatrical]);
+        let file = "The.Matrix.2021.1080p.WEB.mkv";
+        let why = matcher
+            .explain_ignore(
+                &parse(file),
+                &PathBuf::from(format!("/dl/{file}")),
+                &make_completed(),
+            )
+            .expect("a reason");
+        assert_eq!(why, "the year 2021 is not the year of The Matrix (1999)");
     }
 
     /// Artwork with the film's name is not the film (SKADI-T-0591).

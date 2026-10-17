@@ -2241,6 +2241,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             completed_at: None,
             lease_expires_at: None,
+            stalled_at: None,
             client_state: None,
             target_kind: None,
             target_ref: None,

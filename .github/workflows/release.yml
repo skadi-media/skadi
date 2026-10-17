@@ -1,13 +1,26 @@
+# Release tarballs (linux x86_64 and aarch64) for a `v*` tag.
+#
+# **Called from ci.yml, not triggered by the tag** (SKADI-T-0636). The tag used
+# to fire this workflow directly, so a tag at a commit with a failing test
+# published tarballs while the images from the same tag, gated since
+# SKADI-T-0482, did not. Cross-workflow `needs:` does not exist, and
+# `workflow_run` makes `github.ref` the default branch instead of the tag,
+# which would break the version check below and the release tag. So this is a
+# reusable workflow, the same shape as images.yml, and ci.yml gates it with a
+# real `needs:` on every test job. The rule: a tag publishes binaries only
+# after the CI run for that tag is green. `workflow_dispatch` stays for
+# re-cutting a release by hand; run it against the tag, which is the version.
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
+# Bounded by the caller: the ci.yml job that calls this grants `contents: write`
+# to this job alone, not to the test jobs.
 permissions:
   contents: write
 

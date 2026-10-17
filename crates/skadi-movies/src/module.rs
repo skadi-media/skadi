@@ -598,7 +598,8 @@ impl ImporterFactory for MovieImporterFactory {
             movie.editions.clone(),
             kinds,
             self.naming().await,
-        );
+        )
+        .with_target_edition(edition.id);
         let g = self.guards().await;
         Ok(Arc::new(
             DefaultImporter::new(matcher)

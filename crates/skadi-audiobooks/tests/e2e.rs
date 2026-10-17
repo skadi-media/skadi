@@ -226,6 +226,7 @@ async fn audiobooks_module_drives_a_full_acquire_run_end_to_end() {
     let seed = AcquireSeed {
         acquirable: file.acquirable_ref(),
         request: skadi_hunter::SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Audiobook,
             titles: vec!["Project Hail Mary".into()],

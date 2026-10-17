@@ -18,11 +18,19 @@ test.describe("C31 shell-and-auth.feature", () => {
     await steps.thenSidebarLink(page, "Television", false);
   });
 
-  test("@passing every UI API call carries the injected bearer token", async ({ page, request }) => {
+  test("@passing every UI API call carries the signed-in member's bearer token", async ({ page, request }) => {
+    // The page carries no credential of its own since SKADI-T-0621: in open
+    // mode there is nothing to send. A signed-in member's every call carries
+    // their token (SKADI-T-0722).
     await steps.givenDomainEnabled(request, "movies");
-    const seen = await steps.whenOpens(page, "/movies");
-    await page.waitForTimeout(500);
-    steps.thenAllRequestsAuthed(seen);
+    const restore = await steps.givenSignedInAs(request, page, "member");
+    try {
+      const seen = await steps.whenOpens(page, "/movies");
+      await page.waitForTimeout(500);
+      steps.thenAllRequestsAuthed(seen);
+    } finally {
+      await restore();
+    }
   });
 
   test("@passing an unknown client-side route renders the shell, not a daemon 404", async ({ page, request }) => {
@@ -37,6 +45,7 @@ test.describe("C31 shell-and-auth.feature", () => {
 test.describe("C31 dashboard-health.feature", () => {
   test("@passing health badges render one row per check with a status dot", async ({ page, request }) => {
     await steps.givenDomainEnabled(request, "movies");
+    await steps.givenHealthChecksRun(request);
     await steps.whenOpens(page, "/");
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     await steps.thenHealthBadge(page, "daemon", "ok");
@@ -70,7 +79,8 @@ test.describe("C31 settings.feature", () => {
     await steps.whenOpens(page, "/indexers");
     await expect(page.getByText("dead").first()).toBeVisible();
     await steps.whenClicks(page, "Test");
-    await expect(page.locator(".fail, .error, .warn, .health-dot.fail").first()).toBeVisible({ timeout: 20_000 });
+    // The row's dot turns `bad` with the error as its title (Aurora, SKADI-T-0719).
+    await expect(page.locator(".health-dot.bad, .fail, .error, .warn").first()).toBeVisible({ timeout: 20_000 });
   });
 
   test("@passing the theme choice changes the page at once and holds after a reload", async ({ page }) => {
@@ -166,28 +176,28 @@ test.describe("C31 settings.feature", () => {
 
 test.describe("C31 library-and-activity.feature", () => {
   test("@passing add → interactive search → grab → import shows as owned", async ({ page, request }) => {
+    test.setTimeout(150_000); // the import wait below is 90 s
     await steps.givenDomainEnabled(request, "movies");
     await steps.givenMovieAdded(request, 603, LIBRARY);
     await steps.whenOpens(page, "/movies");
-    await expect(page.locator(".poster-tile").first()).toBeVisible();
-    await page.locator(".poster-tile").first().click();
-    await expect(page.locator(".drawer-title")).toContainText("The Matrix");
-    await steps.whenClicks(page, /Search releases/);
-    const rel = page.locator(".drawer-release").first();
-    await expect(rel).toContainText("The.Matrix");
-    await rel.getByRole("button", { name: "Grab" }).click();
-    await expect(page.locator(".drawer-note")).toContainText("Grabbed");
+    await steps.whenOpensFirstTile(page, "The Matrix");
+    await steps.whenGrabsFirstRelease(page, "The.Matrix");
     await expect(async () => {
       await page.goto("/movies");
       await expect(page.getByRole("button", { name: /Owned/ })).toContainText("1");
-    }).toPass({ timeout: 40_000 });
+    }).toPass({ timeout: 90_000 }); // the first import on a cold harness takes ~45 s (SKADI-T-0722)
   });
 
   test("@passing the activity page lists the grab and the import in history", async ({ page, request }) => {
     await steps.givenDomainEnabled(request, "movies");
+    // The page folds a run into one row showing its outcome (SKADI-T-0582),
+    // so after the import the row reads "imported" and the grab is a step of
+    // that run: it is in the trace the row is folded from (SKADI-T-0722).
     await steps.whenOpens(page, "/activity");
-    await expect(page.getByText(/grabbed/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/imported/i).first()).toBeVisible({ timeout: 20_000 });
+    const traces = await (await request.get(`${steps.API}/traces?limit=50`)).json();
+    const rows = (Array.isArray(traces) ? traces : traces.items ?? []) as { event: string }[];
+    expect(rows.map((r) => r.event)).toContain("snatched");
   });
 
   test("@passing the Add page searches the metadata provider and offers Add", async ({ page, request }) => {
@@ -205,10 +215,16 @@ test.describe("C31 library-and-activity.feature", () => {
 
 test.describe("C31 pairing.feature", () => {
   test("@passing the pairing card renders a QR that encodes skadi://pair with the token", async ({ page, request }) => {
+    // Pairing moved to Players, behind the Android card's "Set up" (the
+    // Players / Device split). The URI carries the token, so the page shows it
+    // only as the QR; the QR is built from the `/pair/app` answer, checked here.
     await steps.givenDomainEnabled(request, "audiobooks");
-    await steps.whenOpens(page, "/listen");
+    await steps.whenOpens(page, "/players");
+    const pair = page.waitForResponse((r) => r.url().includes(`${steps.API}/pair/app`));
+    await steps.whenClicks(page, "Set up");
+    const body = await (await pair).json();
+    expect(body.url).toMatch(/^skadi:\/\/pair\?host=/);
     await expect(page.locator(".pair-qr svg").first()).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/skadi:\/\/pair\?host=/).first()).toBeVisible();
   });
 
   test("@passing no published APK means no install link, not an error", async ({ page, request }) => {

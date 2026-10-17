@@ -161,6 +161,7 @@ mod tests {
     async fn seed_movie_with_edition(store: &Store) -> MovieEdition {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: ExternalIds {

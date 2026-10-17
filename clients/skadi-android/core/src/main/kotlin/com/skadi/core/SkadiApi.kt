@@ -53,6 +53,10 @@ data class Book(
     /** Where the ASIN actually lives on the wire (`external_ids.asin`). */
     val external_ids: ExternalIds? = null,
     val authors: List<String> = emptyList(),
+    /** The linked author record, set by the server when exactly one record
+     *  matches the primary credit (SKADI-T-0653); authors mode groups by it
+     *  (SKADI-T-0655). */
+    @SerialName("author_id") val authorId: String? = null,
     val narrators: List<String> = emptyList(),
     val series: SeriesLink? = null,
     @SerialName("cover_url") val coverUrl: String? = null,

@@ -54,6 +54,11 @@ pub struct Movie {
     /// until a refresh reports one. Household policies read this.
     #[serde(default)]
     pub content_rating: Option<String>,
+    /// The original language, ISO 639-1 (SKADI-T-0673), from the metadata
+    /// source; `None` until a refresh reports one. The grab decision and import
+    /// read it to tell this title's own audio from a dub.
+    #[serde(default)]
+    pub original_language: Option<String>,
     /// Library-axis status: do we want this movie in the library?
     pub monitored: bool,
     pub profile: ProfileId,
@@ -89,6 +94,7 @@ impl Movie {
             collection: None,
             genres: Vec::new(),
             content_rating: None,
+            original_language: None,
             monitored: true,
             profile,
             root_folder,

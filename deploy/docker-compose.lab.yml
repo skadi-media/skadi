@@ -65,6 +65,8 @@ services:
 
   skadi-downloader-worker:
     image: skadi-downloader-worker:${LAB_IMAGE_TAG:-lab}
+    # As in the base file (SKADI-T-0570): the lab stops the same way.
+    init: true
     # No gluetun namespace: plain compose network, reaches postgres by its
     # pinned lab IP exactly like prod (SKADI_DATABASE_URL is inherited).
     network_mode: !reset null

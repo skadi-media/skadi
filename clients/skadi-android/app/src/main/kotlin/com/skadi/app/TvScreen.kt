@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.skadi.core.Series
 import com.skadi.core.SkadiApi
+import com.skadi.core.TitleSorting
 import com.skadi.core.VideoProgress
 import com.skadi.core.WatchRecord
 import kotlinx.coroutines.launch
@@ -129,8 +130,10 @@ fun TvScreen(
         }
 
         // Sorted and railed like the movie grid (SKADI-T-0579): the server's
-        // own order is not article-aware.
-        val sorted = remember(visible) { visible.sortedBy { sortKey(it.title) } }
+        // own order is not article-aware. One call sorts and letters, so the
+        // rail cannot disagree with the list (SKADI-T-0648).
+        val railed = remember(visible) { TitleSorting.railed(visible) { it.title } }
+        val sorted = railed.items
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
         Refreshable(refreshing = refreshing, onRefresh = { refreshing = true; reloadKey++ }) {
@@ -145,7 +148,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                 }
             }
             AlphabetRail(
-                letters = remember(sorted) { sorted.map { sortLetter(it.title) } },
+                letters = railed.letters,
                 onJump = { i -> scope.launch { listState.scrollToItem(i) } },
                 modifier = Modifier.padding(vertical = 4.dp),
             )

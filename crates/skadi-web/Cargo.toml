@@ -64,6 +64,10 @@ web-sys = { version = "0.3", features = [
     # Aurora dialogs close on a press that starts on the scrim (SKADI-T-0719):
     # the DOM tests send mousedown, mouseup and click.
     "MouseEvent", "MouseEventInit",
+    # Server push (SKADI-T-0711): the event stream is read with fetch() and a
+    # ReadableStream reader, which can send the bearer header.
+    "ReadableStream", "ReadableStreamDefaultReader", "AbortController", "AbortSignal",
+    "TextDecoder", "TextDecodeOptions",
 ] }
 console_error_panic_hook = "0.1"
 # Aurora, Colliery's Leptos design system (SKADI-T-0717): tokens, stylesheet,

@@ -339,6 +339,9 @@ struct Movie {
     belongs_to_collection: Option<Collection>,
     #[serde(default)]
     genres: Vec<NamedRef>,
+    /// ISO 639-1, e.g. `en` (SKADI-T-0673).
+    #[serde(default)]
+    original_language: Option<String>,
     /// `append_to_response=release_dates` (SKADI-T-0610): certifications live
     /// per country, per release; we keep the US theatrical one.
     #[serde(default)]
@@ -447,6 +450,7 @@ impl Movie {
             collection_id,
             collection_name,
             genres,
+            original_language: self.original_language.as_deref().and_then(crate::iso639_1),
             ..Default::default()
         }
     }
@@ -515,6 +519,9 @@ struct Tv {
     origin_country: Vec<String>,
     #[serde(default)]
     genres: Vec<NamedRef>,
+    /// ISO 639-1 (SKADI-T-0673).
+    #[serde(default)]
+    original_language: Option<String>,
     #[serde(default)]
     networks: Vec<NamedRef>,
     #[serde(default)]
@@ -626,6 +633,7 @@ impl Tv {
                 release_date: date_of(&self.first_air_date),
                 images,
                 genres,
+                original_language: self.original_language.as_deref().and_then(crate::iso639_1),
                 ..Default::default()
             },
             status: self.status,
@@ -695,6 +703,7 @@ mod tests {
                 "id": 603,
                 "title": "The Matrix",
                 "original_title": "The Matrix",
+                "original_language": "en",
                 "overview": "A hacker discovers reality is a simulation.",
                 "runtime": 136,
                 "release_date": "1999-03-31",
@@ -717,6 +726,7 @@ mod tests {
         let rec = p.lookup(&ExternalId::Tmdb(TmdbId(603))).await.unwrap();
         assert_eq!(rec.title, "The Matrix");
         assert_eq!(rec.runtime_minutes, Some(136));
+        assert_eq!(rec.original_language.as_deref(), Some("en"), "SKADI-T-0673");
         assert_eq!(rec.external_ids.imdb, Some(ImdbId("tt0133093".into())));
         assert_eq!(rec.release_date, NaiveDate::from_ymd_opt(1999, 3, 31));
         assert_eq!(rec.images.len(), 2);

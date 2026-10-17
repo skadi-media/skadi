@@ -108,6 +108,7 @@ fn run_state(w: &World, acquirable: &str, title: &str) -> AcquireState {
     let mut st = AcquireState::new(
         AcquirableRef(acquirable.to_string()),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind,
             titles: vec![title.split('.').next().unwrap_or(title).to_string()],

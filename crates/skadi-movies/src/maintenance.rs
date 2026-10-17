@@ -188,6 +188,7 @@ pub(crate) mod tests {
     ) {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: skadi_core::ExternalIds {

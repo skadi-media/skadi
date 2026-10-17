@@ -62,6 +62,7 @@ pub fn build_app_with_schemas(
         .merge(crate::appdist::pair_apk_router())
         .merge(crate::fs::fs_router())
         .merge(crate::uploads::uploads_router())
+        .merge(crate::events::events_router())
         // The API describes itself (SKADI-T-0472). Behind auth like everything
         // else: it enumerates the whole surface, and every client that needs it
         // already holds a token.

@@ -495,6 +495,17 @@ services:
       # daemon can't know the host's LAN IP, so pin it here — else the QR falls
       # back to the browser's Host header (loopback if you browse via 127.0.0.1).
       SKADI_ADVERTISE_HOST: ${SKADI_ADVERTISE_HOST:-}
+      # Optional settings .env.example documents (SKADI-T-0736). Each is a
+      # config key the daemon reads from the environment; compose has to pass
+      # it, or setting it in .env does nothing. Empty is ignored, so the
+      # default (the key's own default, or the value set in the UI) stands.
+      SKADI_HTTP_PROXY_URL: ${SKADI_HTTP_PROXY_URL:-}
+      SKADI_HTTP_NO_PROXY: ${SKADI_HTTP_NO_PROXY:-}
+      SKADI_IMPORT_PLACEMENT: ${SKADI_IMPORT_PLACEMENT:-}
+      SKADI_WORKER_UP_LIMIT_BPS: ${SKADI_WORKER_UP_LIMIT_BPS:-}
+      SKADI_CARDIGANN_SYNC_ENABLED: ${SKADI_CARDIGANN_SYNC_ENABLED:-}
+      SKADI_CARDIGANN_SYNC_INTERVAL_SECS: ${SKADI_CARDIGANN_SYNC_INTERVAL_SECS:-}
+      SKADI_CARDIGANN_DEFINITIONS_REVISION: ${SKADI_CARDIGANN_DEFINITIONS_REVISION:-}
     # Both binaries stop on SIGTERM since SKADI-T-0476, so a stop is a real
     # shutdown rather than a wait-then-SIGKILL. 30 s is ample for the daemon's
     # in-flight requests and background tasks to unwind.
@@ -672,6 +683,9 @@ services:
       # Optional: "1" turns off the BitTorrent DHT in the built-in client (peer discovery
       # then relies on trackers + PEX). Used for the SKADI-T-0392 memory A/B; empty = on.
       SKADI_WORKER_DISABLE_DHT: ${SKADI_WORKER_DISABLE_DHT:-}
+      # The worker reads its upload cap itself (SKADI-T-0736). Empty is 0:
+      # unlimited, as before.
+      SKADI_WORKER_UP_LIMIT_BPS: ${SKADI_WORKER_UP_LIMIT_BPS:-}
       # gluetun's forwarded-port status file (SKADI-T-0587): when it holds a
       # port the worker listens there instead of worker.port_lo..hi. Missing or
       # empty (VPN_PORT_FORWARDING=off) ⇒ the configured range, as before.

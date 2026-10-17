@@ -947,7 +947,7 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "GET",
         "/books/{id}/files/{fid}/audio",
         "audiobooks",
-        "Stream the audio for one book file",
+        "Stream the audio for one book file (every part of a multi-file book, joined)",
     ),
     (
         "GET",

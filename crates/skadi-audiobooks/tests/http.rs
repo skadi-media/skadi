@@ -825,3 +825,175 @@ async fn bulk_delete_removes_rows_and_only_asked_for_files() {
     assert_eq!(left.as_array().unwrap().len(), 0);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// --- multi-file audiobooks (SKADI-T-0738) ---
+
+/// Like `call`, but the raw response: status, headers and body bytes.
+async fn call_raw(
+    router: Router,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().method("GET").uri(uri);
+    for (k, v) in headers {
+        builder = builder.header(*k, *v);
+    }
+    let res = router
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, headers, bytes)
+}
+
+/// `n` MPEG-1 Layer III frames (64 kbps, 44.1 kHz, mono: 208 bytes each,
+/// 26.1 ms each) filled with `fill`.
+fn mp3_frames(n: usize, fill: u8) -> Vec<u8> {
+    let mut v = Vec::with_capacity(n * 208);
+    for _ in 0..n {
+        v.extend_from_slice(&[0xFF, 0xFB, 0x50, 0xC0]);
+        v.resize(v.len() + 204, fill);
+    }
+    v
+}
+
+/// A book folder with three MP3 parts, each wrapped in the tags a rip
+/// carries, seeded as a book whose recorded file is part 1. Returns the root,
+/// the book id, the file id and the bare frames of each part in order.
+async fn seed_three_part_book(h: &Harness) -> (std::path::PathBuf, String, String, Vec<Vec<u8>>) {
+    let root = std::env::temp_dir().join(format!("skadi-ab-parts-{}", uuid::Uuid::new_v4()));
+    let dir = root.join("author").join("book");
+    std::fs::create_dir_all(&dir).unwrap();
+    let frames = vec![mp3_frames(200, 1), mp3_frames(300, 2), mp3_frames(100, 3)];
+    for (i, audio) in frames.iter().enumerate() {
+        // ID3v2 with a 50-byte body, then the frames, then an ID3v1 block.
+        let mut bytes = b"ID3\x04\x00\x00\x00\x00\x00\x32".to_vec();
+        bytes.resize(60, 0);
+        bytes.extend(audio);
+        let mut tag = vec![0u8; 128];
+        tag[0..3].copy_from_slice(b"TAG");
+        bytes.extend(&tag);
+        std::fs::write(dir.join(format!("Book-Part{}.mp3", i + 1)), &bytes).unwrap();
+    }
+    std::fs::write(dir.join("cover.jpg"), b"not audio").unwrap();
+    let book_id = seed_book(
+        &h.store,
+        "B000000021",
+        root.to_str().unwrap(),
+        imported_at(dir.join("Book-Part1.mp3")),
+    )
+    .await;
+    let files = h
+        .store
+        .list_book_files(BookId::from(uuid::Uuid::parse_str(&book_id).unwrap()))
+        .await
+        .unwrap();
+    let fid = files[0].id.to_string();
+    (root, book_id, fid, frames)
+}
+
+#[tokio::test]
+async fn audio_joins_the_parts_of_a_multi_file_book() {
+    let h = harness().await;
+    let (root, book_id, fid, frames) = seed_three_part_book(&h).await;
+    let joined: Vec<u8> = frames.concat();
+
+    let (s, headers, body) = call_raw(
+        h.http.routes(),
+        &format!("/books/{book_id}/files/{fid}/audio"),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(headers["content-type"], "audio/mpeg");
+    assert_eq!(headers["accept-ranges"], "bytes");
+    assert_eq!(headers["content-length"], joined.len().to_string());
+    assert!(headers.contains_key("last-modified"));
+    assert_eq!(
+        body, joined,
+        "the body is the frames of every part, no tags"
+    );
+
+    // A range that starts in part 1 and ends in part 3.
+    let (from, to) = (frames[0].len() - 10, frames[0].len() + frames[1].len() + 9);
+    let (s, headers, body) = call_raw(
+        h.http.routes(),
+        &format!("/books/{book_id}/files/{fid}/audio"),
+        &[("range", &format!("bytes={from}-{to}"))],
+    )
+    .await;
+    assert_eq!(s, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        headers["content-range"],
+        format!("bytes {from}-{to}/{}", joined.len())
+    );
+    assert_eq!(body, &joined[from..=to]);
+
+    // The tail, as a resume would ask for it.
+    let (s, _, body) = call_raw(
+        h.http.routes(),
+        &format!("/books/{book_id}/files/{fid}/audio"),
+        &[("range", "bytes=-50")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, &joined[joined.len() - 50..]);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn chapters_of_a_multi_file_book_are_its_parts() {
+    let h = harness().await;
+    let (root, book_id, fid, _) = seed_three_part_book(&h).await;
+    let (s, chapters) = call(
+        h.http.routes(),
+        "GET",
+        &format!("/books/{book_id}/files/{fid}/chapters"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let chapters = chapters.as_array().unwrap();
+    assert_eq!(chapters.len(), 3);
+    let titles: Vec<&str> = chapters
+        .iter()
+        .map(|c| c["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Book-Part1", "Book-Part2", "Book-Part3"]);
+    assert_eq!(chapters[0]["index"], 0);
+    assert_eq!(chapters[0]["start_s"], 0.0);
+    // 200 frames of 1152 samples at 44.1 kHz is 5.22 s; 300 more is 13.06 s.
+    let end0 = chapters[0]["end_s"].as_f64().unwrap();
+    assert!((end0 - 5.22).abs() < 0.2, "{end0}");
+    assert_eq!(chapters[1]["start_s"], chapters[0]["end_s"]);
+    let end1 = chapters[1]["end_s"].as_f64().unwrap();
+    assert!((end1 - 13.06).abs() < 0.3, "{end1}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn delete_with_files_removes_every_part() {
+    let h = harness().await;
+    let (root, book_id, _, _) = seed_three_part_book(&h).await;
+    let (s, _) = call(
+        h.http.routes(),
+        "DELETE",
+        &format!("/books/{book_id}?delete_files=true"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let dir = root.join("author").join("book");
+    for i in 1..=3 {
+        assert!(
+            !dir.join(format!("Book-Part{i}.mp3")).exists(),
+            "part {i} went with the book"
+        );
+    }
+    // The cover is not audio and not the book's to delete; the folder stays for it.
+    assert!(dir.join("cover.jpg").exists());
+    let _ = std::fs::remove_dir_all(&root);
+}

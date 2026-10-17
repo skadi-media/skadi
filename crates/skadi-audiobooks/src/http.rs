@@ -1321,9 +1321,9 @@ async fn delete_book(
 
 /// The one delete path, shared by `DELETE /books/{id}` and the bulk delete
 /// (SKADI-T-0696). With `delete_files`, removes the files the book records as
-/// imported (those exact paths, nothing else) and prunes the emptied folders
-/// up to the book's root, never past it. Returns `false` when the book is not
-/// there.
+/// imported and the audio parts beside each (SKADI-T-0738: a multi-file book
+/// records one part), and prunes the emptied folders up to the book's root,
+/// never past it. Returns `false` when the book is not there.
 async fn delete_one(
     http: &AudiobooksHttp,
     id: BookId,
@@ -1343,6 +1343,10 @@ async fn delete_one(
             .collect();
         let root = std::path::PathBuf::from(&book.root_folder.path);
         let removed = tokio::task::spawn_blocking(move || {
+            let paths: Vec<std::path::PathBuf> = paths
+                .iter()
+                .flat_map(|p| crate::parts::book_parts(p))
+                .collect();
             skadi_importer::delete_files_and_prune(&paths, &root)
         })
         .await
@@ -1533,10 +1537,14 @@ async fn book_file_location(
         .into_response())
 }
 
-/// `GET /books/{id}/files/{fid}/audio` — the imported audio file's bytes, with
+/// `GET /books/{id}/files/{fid}/audio` — the imported audio's bytes, with
 /// single-range support (SKADI-T-0329 / I-0048). Range exists so the offline
 /// player can RESUME interrupted multi-GB downloads — this is a download
 /// endpoint, not a streaming product. Only an `Imported` file has bytes.
+///
+/// A multi-file book is served as one stream: its MP3 parts, each trimmed to
+/// its frames, back to back (SKADI-T-0738). The clients save one file per
+/// book and need not know.
 async fn book_file_audio(
     State(http): State<AudiobooksHttp>,
     member: Option<axum::extract::Extension<skadi_api::household::Member>>,
@@ -1573,10 +1581,28 @@ async fn book_file_audio(
         }
     };
 
+    // Finding the parts and trimming their headers reads the (possibly NFS)
+    // files — off the async runtime.
+    let plan = tokio::task::spawn_blocking(move || {
+        let parts = crate::parts::book_parts(&path);
+        crate::parts::join_plan(&parts)
+    })
+    .await
+    .map_err(|e| ApiError(AppError::Internal(format!("audio plan: {e}"))))?
+    .map_err(|e| ApiError(AppError::NotFound(format!("audio file missing: {e}"))))?;
+
     // Shared with movies and television (SKADI-T-0574). The Range logic here
     // was the only correct one in the codebase; it now lives in
     // `skadi_api::ranged` so a third copy does not drift from this one.
-    skadi_api::ranged::serve_file_range(&path, &headers, "audio").await
+    skadi_api::ranged::serve_segments_range(
+        &plan.segments,
+        plan.content_type,
+        plan.last_modified
+            .map(skadi_api::ranged::httpdate_from_systemtime),
+        &headers,
+        "audio",
+    )
+    .await
 }
 
 /// One chapter mark for the player (SKADI-T-0330).
@@ -1592,6 +1618,9 @@ struct ChapterDto {
 /// chapter marks (QuickTime chapter track), fetched once at download time and
 /// stored offline by the player. A book without readable chapters returns `[]`
 /// — the player degrades to a plain seek bar, never an error.
+///
+/// A multi-file book's chapters are its parts (SKADI-T-0738): one mark per
+/// part, at the boundaries of the joined stream `/audio` serves.
 async fn book_file_chapters(
     State(http): State<AudiobooksHttp>,
     member: Option<axum::extract::Extension<skadi_api::household::Member>>,
@@ -1628,7 +1657,12 @@ async fn book_file_chapters(
     };
     // Blocking box-walk over a (possibly NFS) file — off the async runtime.
     let marks = tokio::task::spawn_blocking(move || {
-        skadi_media_probe::chapters::chapters(&path).unwrap_or_default()
+        let parts = crate::parts::book_parts(&path);
+        if parts.len() > 1 {
+            crate::parts::part_chapters(&parts)
+        } else {
+            skadi_media_probe::chapters::chapters(&path).unwrap_or_default()
+        }
     })
     .await
     .map_err(|e| ApiError(AppError::Internal(format!("chapter probe: {e}"))))?;

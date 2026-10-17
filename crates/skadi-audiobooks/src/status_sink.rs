@@ -107,6 +107,21 @@ impl StatusSink for AudiobookStatusSink {
     ) -> Result<()> {
         let id = decode(acquirable)?;
         if let Some(mut file) = self.repo.get_book_file(id).await? {
+            // The hunter probed the recorded file, which for a multi-file book
+            // is the first part. Widen to the whole book (SKADI-T-0738).
+            let media_info = match &file.status {
+                AcquisitionStatus::Imported { file: fr, .. } => {
+                    let path = fr.path.clone();
+                    let probed = media_info.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let parts = crate::parts::book_parts(&path);
+                        crate::parts::joined_media_info(probed, &parts)
+                    })
+                    .await
+                    .unwrap_or(media_info)
+                }
+                _ => media_info,
+            };
             file.media_info = Some(media_info);
             self.repo.upsert_book_file(&file).await?;
         }

@@ -1,4 +1,5 @@
 import angreal
+import json
 import os
 import subprocess
 import sys
@@ -119,7 +120,7 @@ def _DEP_preflight():
     )
 
 
-def _DEP_compose(args):
+def _DEP_compose(args, env=None):
     # SKADI-T-0477: be explicit about the env file and the project directory
     # rather than relying on compose's implicit resolution. Run from the repo
     # root, compose looks for `.env` beside the *compose file* only when
@@ -130,7 +131,83 @@ def _DEP_compose(args):
     #
     # --project-directory also anchors the base file's relative `./apk` mount, so
     # it resolves the same whichever directory the command is invoked from.
-    return subprocess.run(_DEP_compose_argv(args), cwd=DEP_DEPLOY_DIR, env=_DEP_build_env())
+    #
+    # `env` adds variables for this one call. Compose reads the process
+    # environment before the --env-file, so a value here overrides deploy/.env.
+    full = _DEP_build_env()
+    if env:
+        full.update(env)
+    return subprocess.run(_DEP_compose_argv(args), cwd=DEP_DEPLOY_DIR, env=full)
+
+
+def _DEP_read_pin(env_file):
+    """(SKADI_IMAGE_PREFIX, SKADI_IMAGE_TAG) from an env file; "" for a value
+    that is unset, empty or commented out. A missing file reads as unset."""
+    prefix = ""
+    tag = ""
+    try:
+        with open(env_file) as fh:
+            for line in fh:
+                line = line.strip()
+                if "=" not in line or line.startswith("#"):
+                    continue
+                key, value = line.split("=", 1)
+                value = value.strip().strip('"').strip("'")
+                if key.strip() == "SKADI_IMAGE_PREFIX":
+                    prefix = value
+                elif key.strip() == "SKADI_IMAGE_TAG":
+                    tag = value
+    except OSError:
+        pass
+    return prefix, tag
+
+
+def _DEP_image_pin():
+    """The image pin in deploy/.env (SKADI-T-0641). A non-empty prefix means
+    the stack runs a published image, not a build of this checkout."""
+    return _DEP_read_pin(os.path.join(DEP_DEPLOY_DIR, ".env"))
+
+
+def _DEP_image_name(svc, prefix, tag):
+    """The image the compose file names for `svc` with this pin. Mirrors the
+    `image:` lines of docker-compose.yml, whose default tag is `local`."""
+    return f"{prefix}{svc}:{tag or 'local'}"
+
+
+def _DEP_running_images():
+    """{service: image} for the stack's containers, from `compose ps`.
+    Best-effort: empty when docker cannot answer."""
+    try:
+        r = subprocess.run(
+            _DEP_compose_argv(["ps", "--format", "json"]),
+            cwd=DEP_DEPLOY_DIR, env=_DEP_build_env(),
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if r.returncode != 0:
+        return {}
+    return _DEP_parse_ps_json(r.stdout)
+
+
+def _DEP_parse_ps_json(text):
+    """`compose ps --format json` is one array (older compose) or one object
+    per line (newer). Either way: {service: image}."""
+    rows = []
+    try:
+        data = json.loads(text)
+        rows = data if isinstance(data, list) else [data]
+    except ValueError:
+        for line in text.splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    out = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("Service") and row.get("Image"):
+            out[row["Service"]] = row["Image"]
+    return out
 
 
 def _DEP_build_env():
@@ -448,6 +525,12 @@ def _DEP_reattach_sidecars(parent):
 
         ## Notes
         - Defaults to `skadi`; `--service skadi-downloader-worker` targets the worker.
+        - On a stack pinned to a published image (`SKADI_IMAGE_PREFIX` set in
+          deploy/.env) the build is tagged `<service>:dev-<sha>`, not the
+          published name, and the container is recreated from that; the task
+          prints which image it started (SKADI-T-0641). deploy/.env keeps the
+          pin, so the next `up` returns to the published image. To roll a
+          pinned stack forward to a release, use `pull` + `up`.
         - The builder prune is REQUIRED discipline: repeated image builds fill the
           Docker VM disk, and a full VM disk crashes postgres (learned the hard way).
         """,
@@ -460,10 +543,29 @@ def _DEP_reattach_sidecars(parent):
 )
 def redeploy(service=None):
     svc = service or "skadi"
-    if _DEP_compose(["build", svc]).returncode != 0:
+    prefix, tag = _DEP_image_pin()
+    env = None
+    pinned = _DEP_image_name(svc, prefix, tag)
+    started = pinned
+    if prefix:
+        # SKADI-T-0641: `image:` names the build output, so a build here would
+        # be tagged with the published coordinate and the pin would point at
+        # something never published. The operator typing `redeploy` wants
+        # their local code running, so build under a local name and say so.
+        sha = _DEP_build_env().get("SKADI_BUILD_COMMIT", "")[:7] or "unknown"
+        env = {"SKADI_IMAGE_PREFIX": "", "SKADI_IMAGE_TAG": f"dev-{sha}"}
+        started = _DEP_image_name(svc, "", f"dev-{sha}")
+        print(f"deploy/.env pins {pinned}; building this checkout as {started} instead", flush=True)
+    if _DEP_compose(["build", svc], env=env).returncode != 0:
         raise SystemExit(1)
-    if _DEP_compose(["up", "-d", "--force-recreate", svc]).returncode != 0:
+    # --no-deps with the local tag: the override renames every image of ours,
+    # and the other service has no build under that name.
+    up = ["up", "-d", "--force-recreate"] + (["--no-deps"] if env else []) + [svc]
+    if _DEP_compose(up, env=env).returncode != 0:
         raise SystemExit(1)
+    print(f"started {svc} from {started}", flush=True)
+    if env:
+        print(f"deploy/.env still pins {pinned}; `angreal deploy up` goes back to it", flush=True)
     _DEP_reattach_sidecars(svc)
     # Reclaim builder cache — repeated builds fill the Docker VM disk.
     subprocess.run(["docker", "builder", "prune", "-af"], cwd=cwd)
@@ -500,22 +602,15 @@ def logs(service=None):
           to pull — the task says so rather than silently doing nothing.
         - Set `SKADI_IMAGE_TAG` to a release (`0.1.4`) too: unset it is
           `local`, the tag of a local build, which no registry has.
-        - Follow with `angreal deploy up` (or `redeploy`) to actually roll it
-          out. Pulling on its own changes nothing that is running.
+        - Follow with `angreal deploy up` to actually roll it out. Pulling on
+          its own changes nothing that is running. Not `redeploy`: that builds
+          this checkout as `<service>:dev-<sha>` and runs it (SKADI-T-0641).
         """,
         risk_level="safe",
     ),
 )
 def pull():
-    env_file = os.path.join(cwd, "deploy", ".env")
-    prefix = ""
-    tag = ""
-    if os.path.exists(env_file):
-        for line in open(env_file):
-            if line.startswith("SKADI_IMAGE_PREFIX="):
-                prefix = line.split("=", 1)[1].strip()
-            elif line.startswith("SKADI_IMAGE_TAG="):
-                tag = line.split("=", 1)[1].strip()
+    prefix, tag = _DEP_image_pin()
     if not prefix:
         print(
             "SKADI_IMAGE_PREFIX is not set in deploy/.env, so the compose file\n"
@@ -548,6 +643,17 @@ def pull():
 @angreal.command(name="status", about="show stack container status + skadi readiness")
 def status():
     _DEP_compose(["ps"])
+    # The image each of our containers runs, against the pin in deploy/.env
+    # (SKADI-T-0641): a `redeploy --local` or a changed pin shows here.
+    prefix, tag = _DEP_image_pin()
+    running = _DEP_running_images()
+    for svc in ("skadi", "skadi-downloader-worker"):
+        image = running.get(svc)
+        if not image:
+            continue
+        named = _DEP_image_name(svc, prefix, tag)
+        drift = "" if image == named else f"  (deploy/.env names {named})"
+        print(f"{svc} runs {image}{drift}")
     try:
         with urllib.request.urlopen(DEP_HEALTH_URL, timeout=3) as r:
             print(f"\nskadi readiness: HTTP {r.status}")

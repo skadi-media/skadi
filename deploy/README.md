@@ -444,7 +444,12 @@ re-embedded as part of `docker compose build skadi`.
 
 The equivalent one-service flow (build → force-recreate → builder prune) is
 `angreal deploy redeploy [--service skadi-downloader-worker]`. It never touches
-gluetun, so the tunnel is not re-established (see "VPN stability").
+gluetun, so the tunnel is not re-established (see "VPN stability"). On a stack
+pinned to a published image (`SKADI_IMAGE_PREFIX` set), `redeploy` builds this
+checkout as `skadi:dev-<sha>` and recreates the container from that, never
+over the published name; it prints the image it started, `angreal deploy
+status` shows which image runs, and the next `up` returns to the pin. A pinned
+stack rolls forward to a release with `angreal deploy pull && angreal deploy up`.
 
 ### Rollback
 
@@ -565,7 +570,8 @@ are built from the checkout as `skadi:local` / `skadi-downloader-worker:local`
 (development). To run a published release, set both `SKADI_IMAGE_PREFIX=ghcr.io/skadi-media/`
 and `SKADI_IMAGE_TAG=<release>` (e.g. `0.1.4`) in `.env`; never follow `latest`.
 A pinned stack rolls forward with `angreal deploy pull` + `angreal deploy up`,
-not `redeploy` (which builds; see SKADI-T-0641).
+not `redeploy`, which builds this checkout as `skadi:dev-<sha>` and runs that
+(SKADI-T-0641; see "Upgrading").
 
 ### Bumping an image pin
 

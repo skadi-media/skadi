@@ -169,6 +169,10 @@ struct Show {
     /// US TV parental guideline ("TV-14"); camelCase `contentRating` on the wire.
     #[serde(default)]
     content_rating: Option<String>,
+    /// ISO 639-2 on the wire, e.g. `"eng"` (read from the live API, 2026-10-17;
+    /// SKADI-T-0673).
+    #[serde(default)]
+    original_language: Option<String>,
     /// Non-empty when the series is mapped to AniList/MyAnimeList → it's anime.
     /// `IgnoredAny` so we only count entries, whatever their shape.
     #[serde(default)]
@@ -313,6 +317,7 @@ impl Show {
                 images,
                 genres: self.genres.clone(),
                 content_rating: self.content_rating.clone().filter(|c| !c.trim().is_empty()),
+                original_language: self.original_language.as_deref().and_then(crate::iso639_1),
                 ..Default::default()
             },
             status: self.status,
@@ -343,7 +348,7 @@ mod tests {
             .and(path("/shows/en/121361"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "tvdbId": 121361, "tmdbId": 1399, "imdbId": "tt0944947",
-                "title": "Game of Thrones", "firstAired": "2011-04-17",
+                "title": "Game of Thrones", "firstAired": "2011-04-17", "originalLanguage": "eng",
                 "status": "Ended", "network": "HBO", "runtime": 60,
                 "genres": ["Drama", "Fantasy"], "contentRating": "TV-MA", "aniListIds": [], "malIds": [],
                 "images": [
@@ -370,6 +375,8 @@ mod tests {
             vec!["Drama".to_string(), "Fantasy".to_string()]
         );
         assert_eq!(s.record.content_rating.as_deref(), Some("TV-MA"));
+        // ISO 639-2 on the wire, stored as 639-1 (SKADI-T-0673).
+        assert_eq!(s.record.original_language.as_deref(), Some("en"));
         assert_eq!(s.record.external_ids.tvdb.map(|t| t.0), Some(121361));
         assert_eq!(s.record.external_ids.tmdb.map(|t| t.0), Some(1399));
         assert_eq!(s.network.as_deref(), Some("HBO"));

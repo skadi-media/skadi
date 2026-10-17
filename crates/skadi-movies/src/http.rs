@@ -831,6 +831,7 @@ fn acquire_seed(movie: &Movie, edition: &MovieEdition) -> AcquireSeed {
     AcquireSeed {
         acquirable: edition.acquirable_ref(),
         request: SearchSpec {
+            original_language: movie.original_language.clone(),
             // Sweep-driven; the interactive paths override this just before
             // searching (SKADI-T-0539).
             trigger: skadi_hunter::SearchTrigger::Automatic,

@@ -23,6 +23,7 @@ async fn fresh_store() -> TestDb {
 fn sample_movie() -> Movie {
     Movie {
         content_rating: None,
+        original_language: None,
         genres: Vec::new(),
         id: MovieId::new(),
         external_ids: ExternalIds {

@@ -1044,6 +1044,7 @@ mod tests {
                 .map(|i| AcquireSeed {
                     acquirable: AcquirableRef(format!("ed-{i}")),
                     request: SearchSpec {
+                        original_language: None,
                         trigger: Default::default(),
                         kind: MediaKind::Movie,
                         titles: vec!["Movie".into()],
@@ -1079,6 +1080,7 @@ mod tests {
         let seed = AcquireSeed {
             acquirable: AcquirableRef("ed-1".into()),
             request: SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],

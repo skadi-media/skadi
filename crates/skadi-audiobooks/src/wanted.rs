@@ -112,6 +112,7 @@ pub(crate) fn book_seed(
     AcquireSeed {
         acquirable: file.acquirable_ref(),
         request: SearchSpec {
+            original_language: None,
             // Sweep-driven; the interactive paths override this just before
             // searching (SKADI-T-0539).
             trigger: skadi_hunter::SearchTrigger::Automatic,

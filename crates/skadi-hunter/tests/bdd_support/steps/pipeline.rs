@@ -24,6 +24,7 @@ fn ensure_state(w: &mut World, kind: MediaKind) -> &mut AcquireState {
         w.state = Some(AcquireState::new(
             AcquirableRef("item-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind,
                 titles: vec!["Movie".into()],

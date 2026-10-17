@@ -1044,11 +1044,13 @@ fn not_an_audiobook(release_title: &str) -> bool {
 enum LanguageSignal {
     /// English, multi-language, or nothing said — the normal case.
     Fine,
-    /// Tagged only with another language. Kept, but ranked below every
-    /// [`Fine`](Self::Fine) release: the library does not record a title's
-    /// original language, so a Korean film tagged `KOREAN` must still be
+    /// Tagged only with another language: its ISO 639-1 code, or `nordic`
+    /// for the Nordic tag, which names no single language. Against the
+    /// title's original language (SKADI-T-0673) it is the title's own audio
+    /// or a dub; with the original unknown it ranks below every
+    /// [`Fine`](Self::Fine) release, so a Korean film tagged `KOREAN` is still
     /// grabbable when that is all there is.
-    ForeignOnly,
+    ForeignOnly(&'static str),
     /// A dub or machine reading this library never wants.
     Reject,
 }
@@ -1081,52 +1083,53 @@ fn language_signal(release_title: &str) -> LanguageSignal {
     const SYNTHETIC: &[&str] = &["speechkit", "tts"];
     const RU_UK: &[&str] = &["rus", "ukr", "russian", "ukrainian"];
     const ENGLISH: &[&str] = &["eng", "english", "multi", "dual", "dualaudio", "en"];
-    const FOREIGN: &[&str] = &[
-        "ita",
-        "italian",
-        "ger",
-        "german",
-        "deutsch",
-        "fre",
-        "french",
-        "truefrench",
-        "vff",
-        "vfq",
-        "vf2",
-        "spa",
-        "spanish",
-        "castellano",
-        "latino",
-        "pol",
-        "polish",
-        "lektor",
-        "cze",
-        "czech",
-        "hun",
-        "hungarian",
-        "tur",
-        "turkish",
-        "hindi",
-        "tamil",
-        "telugu",
-        "portuguese",
-        "dublado",
-        "nordic",
-        "swedish",
-        "danish",
-        "norwegian",
-        "finnish",
-        "korean",
-        "japanese",
-        "chinese",
-        "mandarin",
-        "cantonese",
-        "thai",
-        "vietnamese",
-        "arabic",
-        "hebrew",
-        "greek",
-        "dutch",
+    // Foreign tags and the language each names (SKADI-T-0673).
+    const FOREIGN: &[(&str, &str)] = &[
+        ("ita", "it"),
+        ("italian", "it"),
+        ("ger", "de"),
+        ("german", "de"),
+        ("deutsch", "de"),
+        ("fre", "fr"),
+        ("french", "fr"),
+        ("truefrench", "fr"),
+        ("vff", "fr"),
+        ("vfq", "fr"),
+        ("vf2", "fr"),
+        ("spa", "es"),
+        ("spanish", "es"),
+        ("castellano", "es"),
+        ("latino", "es"),
+        ("pol", "pl"),
+        ("polish", "pl"),
+        ("lektor", "pl"),
+        ("cze", "cs"),
+        ("czech", "cs"),
+        ("hun", "hu"),
+        ("hungarian", "hu"),
+        ("tur", "tr"),
+        ("turkish", "tr"),
+        ("hindi", "hi"),
+        ("tamil", "ta"),
+        ("telugu", "te"),
+        ("portuguese", "pt"),
+        ("dublado", "pt"),
+        ("nordic", "nordic"),
+        ("swedish", "sv"),
+        ("danish", "da"),
+        ("norwegian", "no"),
+        ("finnish", "fi"),
+        ("korean", "ko"),
+        ("japanese", "ja"),
+        ("chinese", "zh"),
+        ("mandarin", "zh"),
+        ("cantonese", "zh"),
+        ("thai", "th"),
+        ("vietnamese", "vi"),
+        ("arabic", "ar"),
+        ("hebrew", "he"),
+        ("greek", "el"),
+        ("dutch", "nl"),
     ];
     let lower = release_title.to_lowercase();
     let tokens: Vec<&str> = lower
@@ -1144,10 +1147,19 @@ fn language_signal(release_title: &str) -> LanguageSignal {
     if has(RU_UK) {
         return LanguageSignal::Reject;
     }
-    if has(FOREIGN) {
-        return LanguageSignal::ForeignOnly;
+    if let Some((_, lang)) = FOREIGN.iter().find(|(tag, _)| tokens.contains(tag)) {
+        return LanguageSignal::ForeignOnly(lang);
     }
     LanguageSignal::Fine
+}
+
+/// Whether a foreign tag's language is the title's original (SKADI-T-0673).
+/// `nordic` covers the Nordic languages.
+fn is_original_language(tag_lang: &str, original: &str) -> bool {
+    if tag_lang == "nordic" {
+        return matches!(original, "sv" | "da" | "no" | "fi" | "is");
+    }
+    tag_lang == original
 }
 
 /// Whether a release's Torznab category is a plausible top-level group for the
@@ -1643,6 +1655,8 @@ pub fn decide_with(
         .collect();
 
     let kind = state.request.kind;
+    // The title's original language (SKADI-T-0673), when the domain knows it.
+    let original_language = state.request.original_language.clone();
     // Tally every gate's victims alongside the ranking (SKADI-T-0380). Counted
     // in the same pass as the decision so the two can never disagree about why a
     // candidate was dropped.
@@ -1672,14 +1686,23 @@ pub fn decide_with(
             tally.reject(RejectReason::Size);
             continue;
         }
-        // Language (SKADI-T-0671): dubs this library never wants are dropped;
-        // a release tagged only with another language ranks below every other.
+        // Language (SKADI-T-0671): dubs this library never wants are dropped.
+        // A release tagged only with another language is the title's own audio
+        // when that language is the original, and a dub when it is not
+        // (SKADI-T-0673); with the original unknown it ranks below every other.
         let lang_ok: u8 = match language_signal(&release.title) {
             LanguageSignal::Reject => {
                 tally.reject(RejectReason::Language);
                 continue;
             }
-            LanguageSignal::ForeignOnly => 0,
+            LanguageSignal::ForeignOnly(lang) => match original_language.as_deref() {
+                Some(orig) if is_original_language(lang, orig) => 1,
+                Some(_) => {
+                    tally.reject(RejectReason::Language);
+                    continue;
+                }
+                None => 0,
+            },
             LanguageSignal::Fine => 1,
         };
         let explanation = explain(release, scoring);
@@ -2156,6 +2179,38 @@ pub async fn import(state: &mut AcquireState, importer: &dyn Importer) -> Result
         .first()
         .copied()
         .unwrap_or(Category(2000));
+    // Audio language (SKADI-T-0673): a film or episode whose every audio track
+    // is neither English nor the title's original language is a dub, whatever
+    // the release name said. Checked before anything is placed, so a refusal
+    // leaves the library as it was.
+    if matches!(
+        state.request.kind,
+        skadi_core::MediaKind::Movie | skadi_core::MediaKind::Series
+    ) && let Some(original) = state.request.original_language.clone()
+    {
+        let videos: Vec<std::path::PathBuf> = files
+            .iter()
+            .filter(|f| skadi_importer::is_video_file(f) && !skadi_importer::looks_like_sample(f))
+            .cloned()
+            .collect();
+        let tracks = tokio::task::spawn_blocking(move || {
+            use skadi_media_probe::MediaProber;
+            videos
+                .iter()
+                .map(|v| {
+                    skadi_media_probe::DefaultProber
+                        .probe(v)
+                        .map(|m| m.audio_languages)
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        if let Some(why) = audio_language_refusal(&original, &tracks) {
+            return Err(AppError::Internal(format!("import refused: {why}")));
+        }
+    }
     let completed = CompletedDownload {
         handle,
         files,
@@ -2187,6 +2242,38 @@ pub async fn import(state: &mut AcquireState, importer: &dyn Importer) -> Result
     }
     state.outcome = Some(outcome);
     Ok(())
+}
+
+/// Why a download's audio is refused (SKADI-T-0673), or `None` to import it.
+/// `tracks` holds the audio languages of each probed video file, as the probe
+/// reports them (`eng`, `ger`, `und`). A file whose tracks name no language
+/// says nothing and is skipped; when no file says anything the import goes on.
+/// Otherwise at least one file must carry English or `original` (ISO 639-1).
+pub(crate) fn audio_language_refusal(original: &str, tracks: &[Vec<String>]) -> Option<String> {
+    let known: Vec<Vec<String>> = tracks
+        .iter()
+        .map(|langs| {
+            langs
+                .iter()
+                .filter_map(|l| skadi_core::lang::iso639_1(l))
+                .collect::<Vec<_>>()
+        })
+        .filter(|langs| !langs.is_empty())
+        .collect();
+    if known.is_empty() {
+        return None;
+    }
+    let wanted = |l: &String| l == "en" || l == original;
+    if known.iter().any(|langs| langs.iter().any(wanted)) {
+        return None;
+    }
+    let mut heard: Vec<String> = known.into_iter().flatten().collect();
+    heard.sort();
+    heard.dedup();
+    Some(format!(
+        "the audio is {} only, not English or the original language ({original})",
+        heard.join(", ")
+    ))
 }
 
 /// Whether a failed import says the download held **nothing usable**
@@ -2444,6 +2531,7 @@ mod snatch_monitor_tests {
         let mut s = AcquireState::new(
             AcquirableRef("ed-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -3566,6 +3654,7 @@ mod tests {
         AcquireState::new(
             AcquirableRef("ed-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -5090,6 +5179,7 @@ mod tests {
         let mut state = AcquireState::new(
             AcquirableRef("ed-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["The Matrix".into()],
@@ -5144,6 +5234,7 @@ mod tests {
         let mut state = AcquireState::new(
             AcquirableRef("ed-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Inception".into()],
@@ -5386,6 +5477,7 @@ mod tests {
         let mut state = AcquireState::new(
             AcquirableRef("ep-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Series,
                 titles: vec!["Lioness".into()],
@@ -5468,11 +5560,11 @@ mod tests {
         }
         assert_eq!(
             language_signal("The.Wailing.2016.KOREAN.1080p.BluRay.x264"),
-            ForeignOnly
+            ForeignOnly("ko")
         );
         assert_eq!(
             language_signal("Some Show S01E01 iTALiAN 1080p WEB"),
-            ForeignOnly
+            ForeignOnly("it")
         );
     }
 
@@ -5516,6 +5608,93 @@ mod tests {
         );
         decide(&mut state, &scoring).unwrap();
         assert!(state.chosen.as_ref().unwrap().title.contains("iTALiAN"));
+    }
+
+    /// SKADI-T-0673: with the original language known, a release tagged only
+    /// with it is the title's own audio and wins; one tagged only with another
+    /// language is a dub and is rejected, even when it is all there is.
+    #[test]
+    fn decide_keeps_original_language_releases_and_rejects_other_dubs() {
+        let (profile, defs) = profile_with_two_ranks();
+        let scoring = Scoring {
+            indexer_flags: &[],
+            definitions: &defs,
+            profile: &profile,
+            formats: &[],
+            min_seeders: 0,
+            blocklisted: &HashSet::new(),
+            audiobook: None,
+            current_quality: None,
+            current_format_score: None,
+            current_unplayable: false,
+        };
+        // A Korean film: its KOREAN release is accepted and outranks nothing it
+        // should not; an ITALIAN-only one is a dub.
+        let mut film = state_for(&[
+            "Movie.2020.KOREAN.1080p.BluRay.x264-GRP",
+            "Movie.2020.iTALiAN.1080p.BluRay.x264-GRP",
+        ]);
+        film.request.original_language = Some("ko".into());
+        decide(&mut film, &scoring).unwrap();
+        assert!(film.chosen.as_ref().unwrap().title.contains("KOREAN"));
+        assert_eq!(
+            film.tally.as_ref().unwrap().rejected.get("language"),
+            Some(&1)
+        );
+
+        // An English series: an Italian-only release is rejected even alone.
+        let mut show = tv_state(
+            &["Lioness.S03E02.1080p.BluRay.x264.iTALiAN-GRP"],
+            scope(3, Some(2)),
+        );
+        show.request.original_language = Some("en".into());
+        assert!(decide(&mut show, &scoring).is_err(), "nothing left to grab");
+        assert!(show.chosen.is_none(), "{:?}", show.chosen);
+        assert_eq!(
+            show.tally.as_ref().unwrap().rejected.get("language"),
+            Some(&1)
+        );
+
+        // Unknown original: the old rule, kept but ranked last.
+        let mut unknown = tv_state(
+            &["Lioness.S03E02.1080p.BluRay.x264.iTALiAN-GRP"],
+            scope(3, Some(2)),
+        );
+        decide(&mut unknown, &scoring).unwrap();
+        assert!(unknown.chosen.is_some());
+    }
+
+    /// SKADI-T-0673: import refuses a file whose audio is neither English
+    /// nor the original language; unknown tracks never refuse.
+    #[test]
+    fn audio_language_refusal_reads_the_probed_tracks() {
+        let v = |ls: &[&str]| ls.iter().map(|l| (*l).to_string()).collect::<Vec<_>>();
+        // A Korean film with Korean audio, or Korean plus English.
+        assert_eq!(audio_language_refusal("ko", &[v(&["kor"])]), None);
+        assert_eq!(audio_language_refusal("ko", &[v(&["kor", "eng"])]), None);
+        // An English series with Italian-only audio.
+        assert_eq!(
+            audio_language_refusal("en", &[v(&["ita"])]).as_deref(),
+            Some("the audio is it only, not English or the original language (en)")
+        );
+        // Nothing known: no refusal.
+        assert_eq!(audio_language_refusal("en", &[v(&["und"])]), None);
+        assert_eq!(audio_language_refusal("en", &[vec![]]), None);
+        assert_eq!(audio_language_refusal("en", &[]), None);
+        // One good file in the download is enough.
+        assert_eq!(
+            audio_language_refusal("en", &[v(&["ger"]), v(&["eng"])]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_nordic_tag_is_original_for_a_nordic_title() {
+        assert!(is_original_language("nordic", "sv"));
+        assert!(is_original_language("nordic", "da"));
+        assert!(!is_original_language("nordic", "en"));
+        assert!(is_original_language("ko", "ko"));
+        assert!(!is_original_language("it", "en"));
     }
 
     /// End to end through `decide`: the live 2026-09-05 shape. Wanted S3E2; the
@@ -5674,6 +5853,7 @@ mod tests {
             AcquireState::new(
                 AcquirableRef("ed-1".into()),
                 SearchSpec {
+                    original_language: None,
                     trigger: Default::default(),
                     kind: MediaKind::Movie,
                     titles: vec!["101 Dalmatians".into()],
@@ -6220,6 +6400,7 @@ mod tests {
         let mut state = AcquireState::new(
             AcquirableRef("ed-1".into()),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["The Matrix".into()],

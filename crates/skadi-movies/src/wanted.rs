@@ -161,6 +161,7 @@ impl MovieWantedQuery {
         AcquireSeed {
             acquirable: edition.acquirable_ref(),
             request: SearchSpec {
+                original_language: movie.original_language.clone(),
                 // Sweep-driven; the interactive paths override this just before
                 // searching (SKADI-T-0539).
                 trigger: skadi_hunter::SearchTrigger::Automatic,
@@ -501,6 +502,7 @@ mod tests {
     async fn seed(store: &Store, monitored: bool, status: AcquisitionStatus) -> Movie {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: skadi_core::ExternalIds {
@@ -707,6 +709,7 @@ mod tests {
         ) -> skadi_core::MovieEditionId {
             let movie = Movie {
                 content_rating: None,
+                original_language: None,
                 genres: Vec::new(),
                 id: skadi_core::MovieId::new(),
                 external_ids: skadi_core::ExternalIds {
@@ -794,6 +797,7 @@ mod tests {
         async fn seed_edition(store: &Store, tmdb: u64) -> skadi_core::MovieEditionId {
             let movie = Movie {
                 content_rating: None,
+                original_language: None,
                 genres: Vec::new(),
                 id: skadi_core::MovieId::new(),
                 external_ids: skadi_core::ExternalIds {
@@ -906,6 +910,7 @@ mod tests {
     async fn seed_unrelated_unmonitored(store: &Store) -> Movie {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: skadi_core::ExternalIds {
@@ -1078,6 +1083,7 @@ mod tests {
         // edition. Neither should be emitted.
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: skadi_core::ExternalIds {
@@ -1152,6 +1158,7 @@ mod tests {
     fn build_titles_includes_scene_variant() {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: Default::default(),
@@ -1178,6 +1185,7 @@ mod tests {
     fn build_titles_does_not_duplicate_scene_if_already_scene() {
         let movie = Movie {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::MovieId::new(),
             external_ids: Default::default(),

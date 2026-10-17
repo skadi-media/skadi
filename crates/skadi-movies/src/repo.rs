@@ -143,6 +143,8 @@ struct MovieRow {
     genres: Option<String>,
     /// US MPAA certification; NULL before a refresh reports one (SKADI-T-0610).
     content_rating: Option<String>,
+    /// ISO 639-1; NULL before a refresh reports one (SKADI-T-0673).
+    original_language: Option<String>,
 }
 
 /// Genres travel as one JSON text column: a list of a few short strings per
@@ -197,6 +199,7 @@ impl TryFrom<MovieRow> for Movie {
             },
             genres: decode_genres(r.genres.as_deref()),
             content_rating: r.content_rating,
+            original_language: r.original_language,
             editions: Vec::new(),
         })
     }
@@ -231,6 +234,7 @@ fn movie_to_row(m: &Movie) -> Result<MovieRow> {
         collection_name: m.collection.as_ref().map(|c| c.name.clone()),
         genres: encode_genres(&m.genres),
         content_rating: m.content_rating.clone(),
+        original_language: m.original_language.clone(),
     })
 }
 

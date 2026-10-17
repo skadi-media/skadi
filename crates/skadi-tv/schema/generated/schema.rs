@@ -26,6 +26,7 @@ diesel::table! {
         backdrop_url -> Nullable<Text>,
         genres -> Nullable<Text>,
         content_rating -> Nullable<Text>,
+        original_language -> Nullable<Text>,
     }
 }
 

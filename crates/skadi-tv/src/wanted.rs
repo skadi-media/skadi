@@ -57,6 +57,7 @@ pub fn episode_seed(series: &Series, episode: &Episode) -> AcquireSeed {
     AcquireSeed {
         acquirable: episode.acquirable_ref(),
         request: SearchSpec {
+            original_language: series.original_language.clone(),
             // Sweep-driven; the interactive paths override this just before
             // searching (SKADI-T-0539).
             trigger: skadi_hunter::SearchTrigger::Automatic,
@@ -255,6 +256,7 @@ impl SeriesWantedQuery {
             // Season-level acquirable ref: "season-{series_id}-{season}" (SKADI-T-0590).
             acquirable: crate::acquirable::TvAcquirable::season_ref(series.id, season),
             request: SearchSpec {
+                original_language: series.original_language.clone(),
                 // Sweep-driven; the interactive paths override this just before
                 // searching (SKADI-T-0539).
                 trigger: skadi_hunter::SearchTrigger::Automatic,
@@ -930,6 +932,7 @@ mod tests {
         use crate::series::SeriesType;
         let series = Series {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::SeriesId::new(),
             external_ids: ExternalIds::default(),
@@ -968,6 +971,7 @@ mod tests {
         use crate::series::SeriesType;
         let series = Series {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             id: skadi_core::SeriesId::new(),
             external_ids: ExternalIds::default(),

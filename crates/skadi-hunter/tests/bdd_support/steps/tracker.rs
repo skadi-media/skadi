@@ -215,6 +215,7 @@ fn shows_progress_fields(w: &mut World, acquirable: String, size: i64, done: i64
 )]
 fn titled(_w: &mut World, acquirable: String, title: String, season: u16, episode: u16) {
     let spec = skadi_hunter::SearchSpec {
+        original_language: None,
         kind: MediaKind::Series,
         trigger: Default::default(),
         titles: vec![title, "Alias".into()],

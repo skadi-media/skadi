@@ -429,6 +429,7 @@ async fn end_to_end_acquire_workflow_drives_to_imported() {
     let state = AcquireState::new(
         acquirable.clone(),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -632,6 +633,7 @@ async fn sweep_once_starts_one_run_per_wanted_item() {
         .map(|i| AcquireSeed {
             acquirable: AcquirableRef(format!("ed-{i}")),
             request: SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -715,6 +717,7 @@ async fn detached_sweep_frees_lanes_and_still_imports() {
         .map(|i| AcquireSeed {
             acquirable: AcquirableRef(format!("ed-{i}")),
             request: SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -886,6 +889,7 @@ async fn upgrade_run_with_no_better_release_preserves_imported_status() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -962,6 +966,7 @@ async fn sweep_once_dedupes_duplicate_seeds() {
     let seed = |r: &str| AcquireSeed {
         acquirable: AcquirableRef(r.into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -1107,6 +1112,7 @@ async fn sweep_once_bounds_concurrency() {
         .map(|i| AcquireSeed {
             acquirable: AcquirableRef(format!("ed-{i}")),
             request: SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -1172,6 +1178,7 @@ async fn start_acquire_skips_when_already_in_flight() {
     let seed = AcquireSeed {
         acquirable: AcquirableRef("ed-9".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -1379,6 +1386,7 @@ async fn failure_injection_lands_acquirable_in_failed_status() {
     let state = AcquireState::new(
         acquirable.clone(),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -1450,6 +1458,7 @@ async fn cloacina_state_persists_across_runner_restarts() {
     let seed_a = AcquireSeed {
         acquirable: AcquirableRef("ed-a".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -1498,6 +1507,7 @@ async fn cloacina_state_persists_across_runner_restarts() {
 
 fn seed_a_request() -> SearchSpec {
     SearchSpec {
+        original_language: None,
         tags: None,
         trigger: Default::default(),
         kind: MediaKind::Movie,
@@ -1774,6 +1784,7 @@ async fn new_grain_no_suitable_release_launches_no_workflow() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -1911,6 +1922,7 @@ async fn new_grain_per_release_failure_is_isolated_and_retried_with_backoff() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -2021,6 +2033,7 @@ async fn new_grain_no_release_sweep_writes_zero_workflow_rows() {
         .map(|i| AcquireSeed {
             acquirable: AcquirableRef(format!("ed-{i}")),
             request: SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -2184,6 +2197,7 @@ async fn terminal_download_failure_blocklists_the_release() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -2303,6 +2317,7 @@ async fn import_failure_blocklists_the_release() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -2515,6 +2530,7 @@ async fn blocklisted_release_is_skipped_so_next_sweep_grabs_next_best() {
     let mk_seed = || AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -2686,6 +2702,7 @@ async fn activity_tracker_exposes_stage_chosen_and_decision_mid_run() {
     let seed = AcquireSeed {
         acquirable: AcquirableRef("ed-act".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -2893,6 +2910,7 @@ async fn rss_sweep_only_acquires_wanted_items_present_in_the_feed() {
     let mk = |aref: &str, title: &str| AcquireSeed {
         acquirable: AcquirableRef(aref.into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec![title.into()],
@@ -2992,6 +3010,7 @@ async fn rss_sweep_is_a_noop_when_feed_is_empty() {
     let seed = AcquireSeed {
         acquirable: AcquirableRef("ed-x".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Whatever".into()],
@@ -3061,6 +3080,7 @@ async fn search_all_trigger_runs_a_sweep_on_demand() {
     let seed = AcquireSeed {
         acquirable: AcquirableRef("ed-trigger".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -3204,6 +3224,7 @@ async fn importer_factory_error_does_not_blocklist_the_release() {
     let seed = AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -3358,6 +3379,7 @@ async fn replayed_duplicate_workflow_after_restart_snatches_exactly_once() {
         let mut state = AcquireState::new(
             acquirable.clone(),
             SearchSpec {
+                original_language: None,
                 trigger: Default::default(),
                 kind: MediaKind::Movie,
                 titles: vec!["Movie".into()],
@@ -3570,6 +3592,7 @@ async fn acquire_through_the_queue(
     let seed = AcquireSeed {
         acquirable: AcquirableRef("ed-row".into()),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],
@@ -3814,6 +3837,7 @@ async fn run_operator_removal(action: OperatorAction, second_run: bool) -> Remov
     let mk_seed = || AcquireSeed {
         acquirable: acquirable.clone(),
         request: SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["Movie".into()],

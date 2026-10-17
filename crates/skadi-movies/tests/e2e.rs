@@ -164,6 +164,7 @@ async fn movies_module_drives_a_full_acquire_run_end_to_end() {
     // Seed: a monitored movie with a Missing Theatrical edition.
     let movie = Movie {
         content_rating: None,
+        original_language: None,
         genres: Vec::new(),
         id: skadi_core::MovieId::new(),
         external_ids: ExternalIds {
@@ -264,6 +265,7 @@ async fn movies_module_drives_a_full_acquire_run_end_to_end() {
     let seed = AcquireSeed {
         acquirable: edition.acquirable_ref(),
         request: skadi_hunter::SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["The Matrix".into()],
@@ -359,6 +361,7 @@ async fn wedged_edition_is_recovered_and_reacquired_by_sweep() {
     // updated_at is well past the grace and no run is in the (empty) tracker.
     let movie = Movie {
         content_rating: None,
+        original_language: None,
         genres: Vec::new(),
         id: skadi_core::MovieId::new(),
         external_ids: ExternalIds {

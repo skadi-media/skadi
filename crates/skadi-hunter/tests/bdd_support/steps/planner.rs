@@ -16,6 +16,7 @@ fn spec_episode(w: &mut World, title: String, season: u16, episode: u16) {
     w.state = Some(AcquireState::new(
         AcquirableRef("ep".into()),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Series,
             titles: vec![title],
@@ -50,6 +51,7 @@ fn spec_movie(w: &mut World, title: String, year: u16, tmdb: u64) {
     w.state = Some(AcquireState::new(
         AcquirableRef("mv".into()),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec![title],
@@ -140,6 +142,7 @@ fn first_run(w: &mut World, run: String, acquirable: String, title: String) {
     let st = AcquireState::new(
         AcquirableRef(acquirable.clone()),
         SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind,
             titles: vec![title],

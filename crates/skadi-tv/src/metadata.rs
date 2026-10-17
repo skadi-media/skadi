@@ -56,6 +56,10 @@ fn apply_descriptive(series: &mut Series, meta: &SeriesMetadata) {
     if rec.content_rating.is_some() {
         series.content_rating = rec.content_rating.clone();
     }
+    // A lookup without a language keeps the stored one (SKADI-T-0673).
+    if rec.original_language.is_some() {
+        series.original_language = rec.original_language.clone();
+    }
     series.poster_url = image(meta, ImageKind::Poster);
     series.backdrop_url = image(meta, ImageKind::Backdrop);
     // Carry along the cross-reference ids the source provides (tvdb stays the key).

@@ -208,6 +208,14 @@ async fn list_series(
             Json(serde_json::to_value(slim).unwrap_or_default()),
         ));
     }
+    // Each record carries its sort key (SKADI-T-0737).
+    let series: Vec<_> = series
+        .into_iter()
+        .map(|s| {
+            let title = s.title.clone();
+            skadi_core::sorting::Titled::new(s, &title)
+        })
+        .collect();
     Ok((
         [("x-total-count", total.to_string())],
         Json(serde_json::to_value(series).unwrap_or_default()),
@@ -267,6 +275,10 @@ impl From<&Series> for SeriesSummaryDto {
         let mut v = serde_json::to_value(s).unwrap_or_default();
         if let Some(obj) = v.as_object_mut() {
             obj.remove("episodes");
+            obj.insert(
+                "sort_title".into(),
+                skadi_core::sorting::title_sort_key(&s.title).into(),
+            );
         }
         Self {
             series: v,

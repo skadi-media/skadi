@@ -38,6 +38,7 @@ import com.skadi.core.SkadiApi
 import com.skadi.core.Work
 import com.skadi.core.nameKey
 import kotlinx.coroutines.launch
+import com.skadi.core.sortKey
 
 /**
  * Audiobook explore (SKADI-T-0604): an author's or a series' whole body of
@@ -51,6 +52,8 @@ import kotlinx.coroutines.launch
 private data class WorkRow(
     val key: String,
     val title: String,
+    /** The server's title key (SKADI-T-0737), the tie-break after position. */
+    val sortKey: String,
     val cover: String?,
     val series: String?,
     val position: String?,
@@ -74,7 +77,7 @@ private fun mergeRows(library: List<Book>, works: List<Work>): List<WorkRow> {
         val b = byAsin[w.asin.uppercase()] ?: byTitle[nameKey(w.title)]
         b?.let { seen += it.id }
         rows += WorkRow(
-            key = "w:" + w.asin, title = w.title, cover = w.coverUrl ?: b?.coverUrl,
+            key = "w:" + w.asin, title = w.title, sortKey = w.sortKey, cover = w.coverUrl ?: b?.coverUrl,
             series = w.seriesName ?: b?.series?.name, position = w.seriesPosition ?: b?.series?.position,
             year = w.releaseDate?.take(4) ?: b?.year?.toString(), book = b, asin = w.asin,
         )
@@ -82,7 +85,7 @@ private fun mergeRows(library: List<Book>, works: List<Work>): List<WorkRow> {
     for (b in library) {
         if (b.id in seen) continue
         rows += WorkRow(
-            key = "b:" + b.id, title = b.title, cover = b.coverUrl, series = b.series?.name,
+            key = "b:" + b.id, title = b.title, sortKey = b.sortKey, cover = b.coverUrl, series = b.series?.name,
             position = b.series?.position, year = b.year?.toString(), book = b, asin = b.external_ids?.asin ?: b.asin,
         )
     }
@@ -198,7 +201,7 @@ fun AuthorScreen(
                         modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
                     )
                 }
-                items(list.sortedWith(compareBy({ posKey(it.position) }, { it.title.lowercase() })), key = { it.key }) { r ->
+                items(list.sortedWith(compareBy({ posKey(it.position) }, { it.sortKey })), key = { it.key }) { r ->
                     WorkRowView(
                         r = r,
                         added = r.asin in added,
@@ -238,7 +241,7 @@ fun SeriesExploreScreen(
         resolved = true
     }
     val rows = remember(mine, works) {
-        mergeRows(mine, works ?: emptyList()).sortedWith(compareBy({ posKey(it.position) }, { it.title.lowercase() }))
+        mergeRows(mine, works ?: emptyList()).sortedWith(compareBy({ posKey(it.position) }, { it.sortKey }))
     }
     // Numbered members, then the unpositioned ones under "Related"; only the
     // numbered ones count (SKADI-T-0654), matching the server's rollup.

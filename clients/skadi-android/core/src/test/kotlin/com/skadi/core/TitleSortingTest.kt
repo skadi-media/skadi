@@ -4,59 +4,54 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * One title rule, and the rail cannot drift from it (SKADI-T-0648 F3). The
- * vector here is the one skadi-web asserts (`sorting.rs`), so the two clients
- * provably order alike.
+ * The app orders by the key the server emits (SKADI-T-0737) and the rail
+ * cannot drift from it (SKADI-T-0648 F3). The title vector itself is tested
+ * once, on the server, in `skadi_core::sorting`.
  */
 class TitleSortingTest {
-    /** Title, key, rail letter — listed in the order both clients must produce. */
-    private val vector = listOf(
-        Triple("1984", "1984", '#'),
-        Triple("A.I. Artificial Intelligence", "a.i. artificial intelligence", 'A'),
-        Triple("Anathem", "anathem", 'A'),
-        Triple("Dune", "dune", 'D'),
-        Triple("A Game of Thrones", "game of thrones", 'G'),
-        Triple("The Hobbit", "hobbit", 'H'),
-        Triple("  the martian ", "martian", 'M'),
-        Triple("Thelma & Louise", "thelma & louise", 'T'),
-        Triple("Them!", "them!", 'T'),
-        Triple("An Unkindness of Ghosts", "unkindness of ghosts", 'U'),
-        Triple("¡Three Amigos!", "¡three amigos!", '#'),
-    )
-
     @Test
-    fun `shared title vector keys and letters`() {
-        for ((title, key, letter) in vector) {
-            assertEquals(title, key, TitleSorting.key(title))
-            assertEquals(title, letter, TitleSorting.letter(title))
-        }
+    fun `the server key wins over the title`() {
+        assertEquals("hobbit", TitleSorting.key("hobbit", "The Hobbit"))
+        val m = Movie(id = "m", title = "The Matrix", sort_title = "matrix")
+        assertEquals("matrix", m.sortKey)
     }
 
     @Test
-    fun `shared title vector orders as listed`() {
-        val shuffled = vector.map { it.first }.reversed().toMutableList()
-        shuffled[2] = shuffled[7].also { shuffled[7] = shuffled[2] }
-        val railed = TitleSorting.railed(shuffled) { it }
-        assertEquals(vector.map { it.first }, railed.items)
-        assertEquals(vector.map { it.third }, railed.letters)
+    fun `without a key the raw title orders`() {
+        // An older server: "The Hobbit" files under T.
+        assertEquals("the hobbit", TitleSorting.key(null, "  The Hobbit "))
+        assertEquals("the hobbit", Book(id = "b", title = "The Hobbit").sortKey)
+        // An empty key is trusted only for a blank title.
+        assertEquals("dune", TitleSorting.key("", "Dune"))
+        assertEquals("", TitleSorting.key("", "  "))
     }
 
     @Test
-    fun `letter follows the key`() {
-        for ((title, _, _) in vector) {
-            val c = TitleSorting.key(title).firstOrNull()?.uppercaseChar()
-            val fromKey = if (c != null && c in 'A'..'Z') c else '#'
-            assertEquals(title, fromKey, TitleSorting.letter(title))
-        }
-        assertEquals('#', TitleSorting.letter(""))
-        assertEquals('#', TitleSorting.letter("   "))
-        assertEquals('#', TitleSorting.letter("The 100"))
+    fun `railed orders by the key and letters from it`() {
+        val items = listOf("The Hobbit" to "hobbit", "1984" to "1984", "Dune" to "dune", "Anathem" to "anathem")
+        val railed = TitleSorting.railed(items) { it.second }
+        assertEquals(listOf("1984", "Anathem", "Dune", "The Hobbit"), railed.items.map { it.first })
+        assertEquals(listOf('#', 'A', 'D', 'H'), railed.letters)
     }
 
     @Test
-    fun `names keep their article`() {
-        // The title rule and the name rule are different rules on purpose.
-        assertEquals("na", TitleSorting.key("An Na"))
-        assertEquals("na an", NameSorting.key("An Na"))
+    fun `keys that do not start with a latin letter bucket together`() {
+        assertEquals('#', TitleSorting.letterOfKey("¡three amigos!"))
+        assertEquals('#', TitleSorting.letterOfKey("100"))
+        assertEquals('#', TitleSorting.letterOfKey(""))
+        assertEquals('T', TitleSorting.letterOfKey("them!"))
+    }
+
+    @Test
+    fun `a franchise tile orders by the franchise key`() {
+        val m = Movie(
+            id = "m",
+            title = "Taken 2",
+            sort_title = "taken 2",
+            collection = MovieCollection(tmdb_id = 1, name = "The Taken Collection"),
+            sort_collection = "taken collection",
+        )
+        assertEquals("taken collection", m.collectionSortKey)
+        assertEquals("the taken collection", m.copy(sort_collection = null).collectionSortKey)
     }
 }

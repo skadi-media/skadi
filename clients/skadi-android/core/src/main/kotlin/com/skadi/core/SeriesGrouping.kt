@@ -6,6 +6,9 @@ data class SeriesGroup(
     val seriesId: String,
     val name: String,
     val books: List<Book>,
+    /** The series name's key, from the server (SKADI-T-0737); the list orders
+     *  by it and the rail letters from it. */
+    val sortKey: String = TitleSorting.key(null, name),
 )
 
 /** Numeric sort key for a series position string ("1", "1.5", "0.5"); missing
@@ -38,11 +41,12 @@ fun groupBooksBySeries(books: List<Book>): Pair<List<SeriesGroup>, List<Book>> {
                 seriesId = id,
                 name = names[id] ?: id,
                 books = bs.sortedWith(
-                    compareBy({ seriesPosKey(it) }, { TitleSorting.key(it.title) }),
+                    compareBy({ seriesPosKey(it) }, { it.sortKey }),
                 ),
+                sortKey = TitleSorting.key(bs.first().sortSeries, names[id] ?: id),
             )
         }
-        .sortedBy { TitleSorting.key(it.name) }
+        .sortedBy { it.sortKey }
     return sortedGroups to standalone
 }
 

@@ -101,6 +101,8 @@ pub fn audiobook_response_schemas() -> skadi_api::openapi::Schemas {
     // directly, so this is the schema for the type the handler actually returns
     // — not a hand-written description of it that could disagree.
     out.extend(skadi_api::openapi::schema_for::<crate::book::Book>());
+    // The list record: a `Book` plus its sort keys (SKADI-T-0737).
+    out.extend(skadi_api::openapi::schema_for::<ListedBook>());
     out
 }
 
@@ -250,7 +252,51 @@ async fn list_authors(
             monitored: params.monitored,
         })
         .await?;
+    let authors: Vec<ListedAuthor> = authors.into_iter().map(ListedAuthor::from).collect();
     Ok(Json(authors))
+}
+
+/// An author as `GET /authors` lists it: the record plus its surname-first
+/// `sort_name` (SKADI-T-0737).
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct ListedAuthor {
+    #[serde(flatten)]
+    author: crate::author::Author,
+    sort_name: String,
+}
+
+impl From<crate::author::Author> for ListedAuthor {
+    fn from(author: crate::author::Author) -> Self {
+        Self {
+            sort_name: skadi_core::sorting::name_sort_key(&author.name),
+            author,
+        }
+    }
+}
+
+/// A book as `GET /books` lists it: the record plus the keys its walls sort
+/// by (SKADI-T-0737). `sort_authors` is index for index with `authors`, and
+/// `sort_series` is set when the book is in a series.
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct ListedBook {
+    #[serde(flatten)]
+    book: Book,
+    sort_title: String,
+    sort_authors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort_series: Option<String>,
+}
+
+impl From<Book> for ListedBook {
+    fn from(book: Book) -> Self {
+        use skadi_core::sorting::{name_sort_key, title_sort_key};
+        Self {
+            sort_title: title_sort_key(&book.title),
+            sort_authors: book.authors.iter().map(|a| name_sort_key(a)).collect(),
+            sort_series: book.series.as_ref().map(|s| title_sort_key(&s.name)),
+            book,
+        }
+    }
 }
 
 async fn get_author(
@@ -559,6 +605,8 @@ struct WorksParams {
 struct WorkDto {
     asin: String,
     title: String,
+    /// The title's sort key (SKADI-T-0737).
+    sort_title: String,
     authors: Vec<String>,
     series_name: Option<String>,
     series_position: Option<String>,
@@ -642,6 +690,7 @@ async fn list_works(
                 book_id,
                 watched,
                 asin: w.asin.0,
+                sort_title: skadi_core::sorting::title_sort_key(&w.title),
                 title: w.title,
                 authors: w.authors,
                 series_name: w.series_name,
@@ -656,7 +705,7 @@ async fn list_works(
         series_pos_key(a.series_position.as_deref())
             .partial_cmp(&series_pos_key(b.series_position.as_deref()))
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+            .then_with(|| a.sort_title.cmp(&b.sort_title))
     });
     Ok(Json(out))
 }
@@ -717,6 +766,7 @@ async fn discover(
             book_id: None,
             watched: false,
             asin: w.asin.0,
+            sort_title: skadi_core::sorting::title_sort_key(&w.title),
             title: w.title,
             authors: w.authors,
             series_name: w.series_name,
@@ -935,6 +985,7 @@ async fn list_books(
             }
         }
     };
+    let books: Vec<ListedBook> = books.into_iter().map(ListedBook::from).collect();
     Ok(([("x-total-count", total.to_string())], Json(books)))
 }
 

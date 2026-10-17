@@ -215,7 +215,8 @@ fun filterWanted(items: List<WantedItem>, kind: String, status: String, q: Strin
             val eds = i.editions.filter { status == "all" || it.status_kind == status }
             if (eds.isEmpty()) null else i.copy(editions = eds)
         }
-        .sortedBy { it.title.lowercase() }
+        // By the server's key (SKADI-T-0737), else the raw title.
+        .sortedBy { com.skadi.core.TitleSorting.key(it.sort_title, it.title) }
         .toList()
 }
 

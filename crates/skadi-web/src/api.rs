@@ -652,6 +652,9 @@ impl MediaInfo {
 pub struct Movie {
     pub id: String,
     pub title: String,
+    /// The server's sort key (SKADI-T-0737); absent from an older server.
+    #[serde(default)]
+    pub sort_title: Option<String>,
     #[serde(default)]
     pub year: Option<u16>,
     #[serde(default)]
@@ -868,6 +871,9 @@ pub struct Series {
     #[serde(default)]
     pub external_ids: SeriesExternalIds,
     pub title: String,
+    /// The server's sort key (SKADI-T-0737); absent from an older server.
+    #[serde(default)]
+    pub sort_title: Option<String>,
     #[serde(default)]
     pub year: Option<u16>,
     #[serde(default)]
@@ -1049,6 +1055,9 @@ pub struct WantedItem {
     pub kind: String,
     pub id: String,
     pub title: String,
+    /// The server's sort key (SKADI-T-0737); absent from an older server.
+    #[serde(default)]
+    pub sort_title: Option<String>,
     #[serde(default)]
     pub year: Option<u16>,
     #[serde(default)]
@@ -2751,6 +2760,9 @@ pub struct Author {
     #[serde(default)]
     pub asin: Option<String>,
     pub name: String,
+    /// Surname first, from the server (SKADI-T-0737).
+    #[serde(default)]
+    pub sort_name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -2793,6 +2805,15 @@ pub struct Book {
     #[serde(default)]
     pub external_ids: BookExternalIds,
     pub title: String,
+    /// The server's sort keys (SKADI-T-0737): the title's, each credit's
+    /// (index for index with `authors`) and the series name's. Absent from an
+    /// older server.
+    #[serde(default)]
+    pub sort_title: Option<String>,
+    #[serde(default)]
+    pub sort_authors: Vec<String>,
+    #[serde(default)]
+    pub sort_series: Option<String>,
     #[serde(default)]
     pub subtitle: Option<String>,
     /// The linked author record, set by the server when exactly one record
@@ -3233,6 +3254,9 @@ pub async fn list_watchers() -> Result<Vec<Watcher>, ApiError> {
 pub struct Work {
     pub asin: String,
     pub title: String,
+    /// The server's sort key (SKADI-T-0737); absent from an older server.
+    #[serde(default)]
+    pub sort_title: Option<String>,
     #[serde(default)]
     pub authors: Vec<String>,
     #[serde(default)]

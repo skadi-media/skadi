@@ -148,6 +148,17 @@ fn statuses_from(step: &Step) -> Vec<DownloadStatus> {
                     progress: pct / 100.0,
                 }
             }
+            s if s.starts_with("Paused") => {
+                let pct: f32 = s
+                    .trim_start_matches("Paused")
+                    .trim()
+                    .trim_end_matches('%')
+                    .parse()
+                    .expect("percent");
+                DownloadStatus::Paused {
+                    progress: pct / 100.0,
+                }
+            }
             other => panic!("unknown status {other}"),
         })
         .collect()

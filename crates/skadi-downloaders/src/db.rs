@@ -137,11 +137,25 @@ impl Downloader for DbDownloader {
             {
                 DownloadStatus::Queued
             }
-            DownloadJobStatus::Downloading
-            | DownloadJobStatus::Paused
-            | DownloadJobStatus::Stalled => DownloadStatus::Downloading {
+            // A paused transfer is surfaced as such (SKADI-T-0710): the row
+            // status when the operator paused it, or the client state when the
+            // worker paused it in librqbit (the active cap). Either way it is
+            // not live, so the hunter's stall clock must not run on it.
+            DownloadJobStatus::Paused => DownloadStatus::Paused {
                 progress: progress_fraction(job.progress_bytes, job.total_bytes),
             },
+            DownloadJobStatus::Downloading | DownloadJobStatus::Stalled
+                if job.client_state.as_deref().is_some_and(|s| s == "paused") =>
+            {
+                DownloadStatus::Paused {
+                    progress: progress_fraction(job.progress_bytes, job.total_bytes),
+                }
+            }
+            DownloadJobStatus::Downloading | DownloadJobStatus::Stalled => {
+                DownloadStatus::Downloading {
+                    progress: progress_fraction(job.progress_bytes, job.total_bytes),
+                }
+            }
             // `Seeded` (seed limit reached, seeding stopped) is still a completed
             // download from the hunter's view — the files are on disk.
             DownloadJobStatus::Completed | DownloadJobStatus::Seeded => DownloadStatus::Completed {

@@ -1995,6 +1995,9 @@ async fn try_snatch(
 #[async_trait::async_trait]
 pub trait ProgressSink: Send + Sync {
     async fn report(&self, progress: f32);
+    /// The client holds the transfer paused (SKADI-T-0710). Nothing to write
+    /// for the item; the hunter's watch stops its stall clock.
+    async fn paused(&self) {}
 }
 
 /// `monitor`: poll the downloader for `state.handle` until the transfer
@@ -2041,6 +2044,17 @@ pub async fn monitor(
             DownloadStatus::Downloading { progress: p } => {
                 if let Some(sink) = progress {
                     sink.report(p).await;
+                }
+                if poll + 1 < max_polls.max(1) {
+                    tokio::time::sleep(interval).await;
+                }
+            }
+            DownloadStatus::Paused { .. } => {
+                // Held by the operator or the worker's cap: in flight, not live
+                // (SKADI-T-0710). The watch pauses its clock; no progress to
+                // report, and never a failure.
+                if let Some(sink) = progress {
+                    sink.paused().await;
                 }
                 if poll + 1 < max_polls.max(1) {
                     tokio::time::sleep(interval).await;

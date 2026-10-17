@@ -353,9 +353,20 @@ fn test_fails(w: &mut World, needle: String) {
 fn in_flight(w: &mut World, yes: String) {
     let in_flight = matches!(
         status_of(w),
-        DownloadStatus::Queued | DownloadStatus::Downloading { .. }
+        DownloadStatus::Queued | DownloadStatus::Downloading { .. } | DownloadStatus::Paused { .. }
     );
     assert_eq!(in_flight, yes == "still", "{:?}", w.status);
+}
+
+#[then(regex = r"^the status is paused at (\d+)%$")]
+fn is_paused(w: &mut World, pct: u32) {
+    match status_of(w) {
+        DownloadStatus::Paused { progress } => {
+            let got = (progress * 100.0).round() as u32;
+            assert_eq!(got, pct, "progress {progress}");
+        }
+        other => panic!("expected paused, got {other:?}"),
+    }
 }
 
 #[then(regex = r#"^the handle's native id is "([^"]*)"$"#)]

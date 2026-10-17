@@ -89,6 +89,19 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     And the hunter reads the status
     Then the download is still in flight from the hunter's view
 
+  # SKADI-T-0710: the hunter sees a pause as paused, not as a live transfer, so
+  # its stall clock does not run on it.
+  @C16 @passing
+  Scenario: an operator-paused transfer is surfaced as paused and stays in flight
+    Given a magnet release "The Matrix" with info hash "abc"
+    When the hunter adds the release under category 2000
+    And the worker claims the job as "w1"
+    And the worker reports 500 of 1000 bytes with 0 peers
+    And the operator pauses the job
+    And the hunter reads the status
+    Then the status is paused at 50%
+    And the download is still in flight from the hunter's view
+
   @C16 @passing
   Scenario: removing a download flags the row for the worker, with or without deleting data
     Given a magnet release "Dune" with info hash "abc"

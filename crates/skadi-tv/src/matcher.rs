@@ -185,28 +185,30 @@ impl EpisodeMatcher {
     }
 }
 
-impl AcquirableMatcher for EpisodeMatcher {
-    fn match_file(
+impl EpisodeMatcher {
+    /// The matches for `source`, or why there are none (SKADI-T-0588). One
+    /// function for both, so the reason a rejection gives is the rule that
+    /// rejected it.
+    fn decide(
         &self,
-        _parsed: &ParsedRelease,
         source: &Path,
         completed: &CompletedDownload,
-    ) -> Vec<AcquirableMatch> {
+    ) -> Result<Vec<AcquirableMatch>, String> {
         if skadi_importer::looks_like_sample(source) {
-            return vec![];
+            return Err("a sample, not an episode".into());
         }
         // Only a video container can be an episode (SKADI-T-0591). A pack's
         // per-episode PNG screencaps (`s13e01 ….png`) parsed to a valid episode
         // code, were placed as the episodes, and superseded — deleted — the
         // real files already in the library.
         if !skadi_importer::is_video_file(source) {
-            return vec![];
+            return Err("not a video file".into());
         }
         let name = source
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        let p = parse_tv(name);
+        let mut p = parse_tv(name);
         // The file must actually belong to this series (SKADI-T-0445). Sonarr
         // checks the series title before importing; without this a mis-grabbed
         // `The.Wire.S01E01` was placed as Game of Thrones S01E01, because the
@@ -219,17 +221,41 @@ impl AcquirableMatcher for EpisodeMatcher {
         // instead (SKADI-T-0591): the release folder carries the full title, and
         // the download was already accepted for this series by the identity gate.
         if !self.is_this_series(&p) && !self.download_folder_is_this_series(completed) {
-            return vec![];
+            return Err(format!(
+                "the title does not match the series {}",
+                self.series.title
+            ));
+        }
+        // A file whose name carries no episode at all (`info[EZTVx.to].mkv`, the
+        // Rick and Morty S09E05 download of 2026-09-14) takes its episode from
+        // the download's folder, but only when the download holds no other
+        // video: in a pack, one folder name cannot say which file is which
+        // (SKADI-T-0588).
+        if names_no_episode(&p)
+            && let Some(fp) = self.single_video_folder_parse(completed)
+        {
+            p = fp;
         }
         let targets = self.resolve(&p);
         if targets.is_empty() {
-            return vec![];
+            return Err(match (p.season, p.episodes.as_slice()) {
+                _ if names_no_episode(&p) => "no episode number in the name".to_string(),
+                (Some(s), eps) => format!(
+                    "{} has no episode {}",
+                    self.series.title,
+                    eps.iter()
+                        .map(|e| format!("S{s:02}E{e:02}"))
+                        .collect::<Vec<_>>()
+                        .join("+")
+                ),
+                _ => format!("{} has no episode with that number", self.series.title),
+            });
         }
         let dest = self.dest(source, &p, &targets);
         // A multi-episode file satisfies several acquirables at one path; Overwrite
         // so each placement (a hardlink to the same inode) records its episode.
         let multi = targets.len() > 1;
-        targets
+        Ok(targets
             .iter()
             .map(|ep| {
                 let mut m = AcquirableMatch::new(ep.acquirable_ref(), dest.clone());
@@ -241,7 +267,48 @@ impl AcquirableMatcher for EpisodeMatcher {
                 }
                 m
             })
-            .collect()
+            .collect())
+    }
+
+    /// The download folder's parse, when the download holds exactly one video
+    /// file and the folder names an episode of this series (SKADI-T-0588).
+    fn single_video_folder_parse(&self, completed: &CompletedDownload) -> Option<ParsedRelease> {
+        let videos = completed
+            .files
+            .iter()
+            .filter(|f| skadi_importer::is_video_file(f) && !skadi_importer::looks_like_sample(f))
+            .count();
+        if videos != 1 {
+            return None;
+        }
+        let fp = parse_tv(&skadi_importer::download_root_name(completed)?);
+        (fp.title.is_some() && self.is_this_series(&fp) && !names_no_episode(&fp)).then_some(fp)
+    }
+}
+
+/// Whether a parse names no episode by any scheme: no SxxEyy, no absolute
+/// number, no air date.
+fn names_no_episode(p: &ParsedRelease) -> bool {
+    p.episodes.is_empty() && p.absolute.is_empty() && p.air_date.is_none()
+}
+
+impl AcquirableMatcher for EpisodeMatcher {
+    fn match_file(
+        &self,
+        _parsed: &ParsedRelease,
+        source: &Path,
+        completed: &CompletedDownload,
+    ) -> Vec<AcquirableMatch> {
+        self.decide(source, completed).unwrap_or_default()
+    }
+
+    fn explain_ignore(
+        &self,
+        _parsed: &ParsedRelease,
+        source: &Path,
+        completed: &CompletedDownload,
+    ) -> Option<String> {
+        self.decide(source, completed).err()
     }
 }
 
@@ -289,6 +356,64 @@ pub(crate) mod tests {
     fn match_one(m: &EpisodeMatcher, file: &str) -> Vec<AcquirableMatch> {
         let src = PathBuf::from(format!("/dl/{file}"));
         m.match_file(&ParsedRelease::default(), &src, &completed())
+    }
+
+    /// SKADI-T-0588: the Rick and Morty S09E05 download of 2026-09-14 held one
+    /// file, `info[EZTVx.to].mkv`. The folder names the episode, so it places;
+    /// the same file in a pack does not, and says why.
+    #[test]
+    fn a_lone_file_with_no_episode_code_takes_it_from_the_folder() {
+        let mut s = series(crate::SeriesType::Standard);
+        s.title = "Rick and Morty".into();
+        s.year = Some(2013);
+        let e = ep(&s, 9, 5);
+        let m = EpisodeMatcher::new(s, vec![e.clone()]);
+        let folder =
+            "/dl/complete/Rick and Morty S09E05 Jer Bud 1080p AMZN WEB-DL DDP5 1 H 264-FLUX [eztv]";
+        let file = PathBuf::from(format!("{folder}/info[EZTVx.to].mkv"));
+        let mut c = completed();
+        c.files = vec![file.clone()];
+        let got = m.match_file(&ParsedRelease::default(), &file, &c);
+        assert_eq!(got.len(), 1, "the folder names S09E05");
+        assert_eq!(got[0].acquirable, e.acquirable_ref());
+
+        c.files.push(PathBuf::from(format!("{folder}/other.mkv")));
+        assert!(
+            m.match_file(&ParsedRelease::default(), &file, &c)
+                .is_empty()
+        );
+        let why = m
+            .explain_ignore(&ParsedRelease::default(), &file, &c)
+            .expect("a reason");
+        assert_eq!(why, "no episode number in the name");
+    }
+
+    /// SKADI-T-0588: a rejection says why.
+    #[test]
+    fn a_rejection_names_its_reason() {
+        let s = series(crate::SeriesType::Standard);
+        let e = ep(&s, 1, 1);
+        let m = EpisodeMatcher::new(s, vec![e]);
+        let why = |file: &str| {
+            m.explain_ignore(
+                &ParsedRelease::default(),
+                &PathBuf::from(format!("/dl/{file}")),
+                &completed(),
+            )
+        };
+        assert_eq!(why("Game.of.Thrones.S01E01.1080p.mkv"), None);
+        assert_eq!(
+            why("Game.of.Thrones.S01E01.1080p.srt").as_deref(),
+            Some("not a video file")
+        );
+        assert_eq!(
+            why("The.Wire.S01E01.1080p.mkv").as_deref(),
+            Some("the title does not match the series Game of Thrones")
+        );
+        assert_eq!(
+            why("Game.of.Thrones.S01E09.1080p.mkv").as_deref(),
+            Some("Game of Thrones has no episode S01E09")
+        );
     }
 
     /// The MST3K season 13 pack (SKADI-T-0591): a per-episode screencap is not

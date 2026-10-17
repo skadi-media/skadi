@@ -264,6 +264,18 @@ pub trait AcquirableMatcher: Send + Sync {
     /// [`FileDisposition::Quarantine`], so the importer sets the file aside for manual review
     /// (SKADI-T-0311) instead of guessing a destination. Place-or-ignore matchers (movies, TV)
     /// keep the default untouched.
+    ///
+    /// Why the matcher placed nothing for this file (SKADI-T-0588), for the rejection the
+    /// importer records. `None` when the matcher does not say; the default.
+    fn explain_ignore(
+        &self,
+        _parsed: &ParsedRelease,
+        _source: &Path,
+        _completed: &CompletedDownload,
+    ) -> Option<String> {
+        None
+    }
+
     fn disposition(
         &self,
         parsed: &ParsedRelease,
@@ -485,10 +497,9 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                     continue;
                 }
                 FileDisposition::Ignore => {
-                    tracing::debug!(src = ?source, "import rejected: no matching acquirable");
-                    outcome
-                        .rejected
-                        .push((source.clone(), "no matching acquirable".to_string()));
+                    let reason = ignore_reason(&self.matcher, &parsed, source, &completed);
+                    tracing::info!(src = ?source, %reason, "import rejected");
+                    outcome.rejected.push((source.clone(), reason));
                     continue;
                 }
             };
@@ -776,8 +787,8 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                     continue;
                 }
                 FileDisposition::Ignore => {
-                    plan.would_reject
-                        .push((source.clone(), "no matching acquirable".to_string()));
+                    let reason = ignore_reason(&self.matcher, &parsed, source, &completed);
+                    plan.would_reject.push((source.clone(), reason));
                     continue;
                 }
             };
@@ -880,6 +891,31 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "mts", "webm", "mpg", "mpeg", "flv",
     "ogm", "ogv", "divx", "vob", "3gp",
 ];
+
+/// The rejection of a file the matcher placed nothing for (SKADI-T-0588): the
+/// file's name, what the name parsed to, and the matcher's reason. It used to
+/// say only "no matching acquirable", logged at debug, so a rejected grab could
+/// not be diagnosed after the fact.
+fn ignore_reason<M: AcquirableMatcher + ?Sized>(
+    matcher: &M,
+    parsed: &ParsedRelease,
+    source: &Path,
+    completed: &CompletedDownload,
+) -> String {
+    let file = source.file_name().map_or_else(
+        || source.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let seen = match (parsed.title.as_deref(), parsed.year) {
+        (Some(t), Some(y)) => format!("parsed as \"{t}\" ({y})"),
+        (Some(t), None) => format!("parsed as \"{t}\""),
+        (None, _) => "no title parsed".to_string(),
+    };
+    let why = matcher
+        .explain_ignore(parsed, source, completed)
+        .unwrap_or_else(|| "the matcher gave no reason".to_string());
+    format!("no matching acquirable: {file}, {seen}: {why}")
+}
 
 /// Whether `path` has a video container extension (case-insensitive).
 #[must_use]
@@ -1678,6 +1714,58 @@ mod tests {
         ) -> FileDisposition {
             FileDisposition::Quarantine(self.review.join(source.file_name().unwrap()))
         }
+    }
+
+    /// SKADI-T-0588: a rejection names the file, what it parsed to and the
+    /// matcher's reason; a matcher that gives none still says so.
+    #[tokio::test]
+    async fn a_rejection_names_the_file_the_parse_and_the_reason() {
+        struct Explains(Option<&'static str>);
+        impl AcquirableMatcher for Explains {
+            fn match_file(
+                &self,
+                _: &ParsedRelease,
+                _: &Path,
+                _: &CompletedDownload,
+            ) -> Vec<AcquirableMatch> {
+                vec![]
+            }
+            fn explain_ignore(
+                &self,
+                _: &ParsedRelease,
+                _: &Path,
+                _: &CompletedDownload,
+            ) -> Option<String> {
+                self.0.map(str::to_string)
+            }
+        }
+        let dir = unique_dir("why");
+        let src = dir.join("Lord.of.War.2005.REMASTERED.1080p.BluRay.x265-RARBG.mkv");
+        std::fs::write(&src, b"video").unwrap();
+        let outcome = DefaultImporter::new(Explains(Some("the Remastered edition is not enabled")))
+            .import(completed(vec![src.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome.rejected,
+            vec![(
+                src.clone(),
+                "no matching acquirable: Lord.of.War.2005.REMASTERED.1080p.BluRay.x265-RARBG.mkv, \
+                 parsed as \"Lord of War\" (2005): the Remastered edition is not enabled"
+                    .to_string()
+            )]
+        );
+        let outcome = DefaultImporter::new(Explains(None))
+            .import(completed(vec![src.clone()]))
+            .await
+            .unwrap();
+        assert!(
+            outcome.rejected[0]
+                .1
+                .ends_with(": the matcher gave no reason"),
+            "{:?}",
+            outcome.rejected
+        );
     }
 
     #[tokio::test]

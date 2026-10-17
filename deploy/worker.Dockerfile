@@ -23,7 +23,14 @@ WORKDIR /src
 COPY . .
 
 # The worker is its own (excluded) package, so its target dir is crate-local.
-RUN cargo build --release --manifest-path crates/skadi-downloader-worker/Cargo.toml
+# WORKER_FEATURES=heap-profile builds jemalloc's profiler in (SKADI-T-0645).
+# Empty by default: the normal image is unchanged.
+ARG WORKER_FEATURES=
+RUN cargo build --release --manifest-path crates/skadi-downloader-worker/Cargo.toml \
+        ${WORKER_FEATURES:+--features "$WORKER_FEATURES"} \
+    # jemalloc's `jeprof` reads the profiles; keep it beside the binary so the
+    # dumps can be read with the same build. An empty file when not built.
+    && (cp "$(find crates/skadi-downloader-worker/target/release/build -path '*tikv-jemalloc-sys*' -name jeprof -type f | head -1)" /src/jeprof 2>/dev/null || touch /src/jeprof)
 
 # --- runtime stage -------------------------------------------------------
 FROM debian:bookworm-slim
@@ -45,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder \
     /src/crates/skadi-downloader-worker/target/release/skadi-downloader-worker \
     /usr/local/bin/skadi-downloader-worker
+COPY --from=builder /src/jeprof /usr/local/share/skadi/jeprof
 
 USER skadi
 WORKDIR /home/skadi

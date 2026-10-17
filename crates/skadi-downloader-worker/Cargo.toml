@@ -17,6 +17,11 @@ authors = ["Dylan Storey"]
 description = "Skadi-native torrent download worker: a librqbit session driven by the downloads queue"
 publish = false
 
+[features]
+# Heap profiling (SKADI-T-0645): jemalloc built with its profiler, switched on
+# at run time with `prof:true` in `_RJEM_MALLOC_CONF`. Off in normal images.
+heap-profile = ["tikv-jemallocator/profiling"]
+
 [dependencies]
 skadi-store = { path = "../skadi-store" }
 skadi-config = { path = "../skadi-config" }

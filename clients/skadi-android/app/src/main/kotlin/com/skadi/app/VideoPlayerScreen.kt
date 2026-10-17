@@ -65,6 +65,13 @@ fun VideoPlayerScreen(
     nextLabel: String? = null,
     /** Advance: called at the end of the file and from the Next button. */
     onNext: (() -> Unit)? = null,
+    /**
+     * Set when [url] is a file on the phone (SKADI-T-0637): subtitles and skip
+     * markers come from the download, not the server, so it plays the same
+     * with no network.
+     */
+    offline: com.skadi.core.OfflineVideo? = null,
+    offlineStore: com.skadi.core.OfflineVideoStore? = null,
 ) {
     // The listener below is created once; without this it would keep the
     // `onNext` that existed at creation — usually the `null` from before the
@@ -88,7 +95,7 @@ fun VideoPlayerScreen(
     // position that decides when their buttons show.
     var markers by remember { mutableStateOf(com.skadi.core.SkipMarkers()) }
     var positionS by remember { mutableStateOf(0.0) }
-    LaunchedEffect(url) { markers = com.skadi.core.Markers.fetch(url) }
+    LaunchedEffect(url) { markers = offline?.markers ?: com.skadi.core.Markers.fetch(url) }
     // Set while a track change is the viewer's, made in the player's own menu,
     // rather than ours: only theirs is remembered for the series.
     val viewerChose = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -119,7 +126,10 @@ fun VideoPlayerScreen(
             // Keep the CPU alive while streaming, as the audio service does — a
             // film paused by doze mid-stream is the same failure SKADI-T-0358
             // fixed for downloads.
-            .setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
+            .setWakeMode(
+                if (offline != null) androidx.media3.common.C.WAKE_MODE_LOCAL
+                else androidx.media3.common.C.WAKE_MODE_NETWORK,
+            )
             // Unplugging headphones pauses rather than blaring from the speaker.
             .setHandleAudioBecomingNoisy(true)
             .build()
@@ -133,11 +143,20 @@ fun VideoPlayerScreen(
         // Start with the viewer's languages (SKADI-T-0664) — the series' own
         // choice when this is an episode, else the global one.
         applyTrackPrefs(player, trackPrefs.effective(progressKey))
-        val subs = com.skadi.core.Subtitles.fetch(url)
+        val configs = if (offline != null && offlineStore != null) {
+            offline.subtitles.mapNotNull { t ->
+                offlineStore.subtitleFile(offline.key, t).takeIf { it.isFile }
+                    ?.let { f -> subtitleConfiguration(android.net.Uri.fromFile(f), t) }
+            }
+        } else {
+            com.skadi.core.Subtitles.fetch(url).map { t ->
+                subtitleConfiguration(android.net.Uri.parse(com.skadi.core.Subtitles.fileUrl(url, t.index)), t)
+            }
+        }
         player.setMediaItem(
             MediaItem.Builder()
                 .setUri(url)
-                .setSubtitleConfigurations(subs.map { t -> subtitleConfiguration(url, t) })
+                .setSubtitleConfigurations(configs)
                 .build(),
         )
         // Seek BEFORE prepare: media3 applies a pending seek as the start
@@ -445,12 +464,10 @@ fun VideoPlayerScreen(
 
 /** One server subtitle file as a media3 side-loaded track (SKADI-T-0663). */
 private fun subtitleConfiguration(
-    videoUrl: String,
+    uri: android.net.Uri,
     t: com.skadi.core.SubtitleTrack,
 ): MediaItem.SubtitleConfiguration =
-    MediaItem.SubtitleConfiguration.Builder(
-        android.net.Uri.parse(com.skadi.core.Subtitles.fileUrl(videoUrl, t.index)),
-    )
+    MediaItem.SubtitleConfiguration.Builder(uri)
         .setMimeType(
             when (t.format) {
                 "vtt" -> androidx.media3.common.MimeTypes.TEXT_VTT

@@ -1230,7 +1230,10 @@ async fn a_manual_import_with_a_download_id_records_its_outcome_on_the_row() {
     let named_row = row(&named.id);
     assert_eq!(named_row["import"]["state"], "failed", "{named_row}");
     assert!(
-        !named_row["import"]["error"].as_str().unwrap_or("").is_empty(),
+        !named_row["import"]["error"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
         "the reason is recorded: {named_row}"
     );
     let silent_row = row(&silent.id);

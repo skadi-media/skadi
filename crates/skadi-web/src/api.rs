@@ -652,6 +652,9 @@ impl MediaInfo {
 pub struct Movie {
     pub id: String,
     pub title: String,
+    /// The TMDB id an import list knows the movie by (SKADI-T-0733).
+    #[serde(default)]
+    pub external_ids: MovieExternalIds,
     /// The server's sort key (SKADI-T-0737); absent from an older server.
     #[serde(default)]
     pub sort_title: Option<String>,
@@ -825,6 +828,13 @@ pub async fn reset_edition(at: &AcquirablePath) -> Result<(), ApiError> {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct MovieExternalIds {
+    #[serde(default)]
+    pub tmdb: Option<u64>,
+}
+
+/// The ids a series is known by elsewhere.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct SeriesExternalIds {
     #[serde(default)]
     pub tvdb: Option<u64>,

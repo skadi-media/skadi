@@ -274,6 +274,7 @@ fn movie_counts_rolls_up_editions() {
         added_at: None,
         title: "t".into(),
         sort_title: None,
+        external_ids: Default::default(),
         year: None,
         overview: None,
         poster_url: None,
@@ -3290,4 +3291,22 @@ mod import_lists {
         assert_eq!(default_id_kind("series"), "tvdb");
         assert_eq!(default_id_kind("audiobook"), "asin");
     }
+}
+
+/// The library's "Exclude from lists" posts the item's own id (SKADI-T-0733).
+#[wasm_bindgen_test]
+fn an_item_excludes_by_its_list_id() {
+    use skadi_web::import_lists::exclusion_for;
+    let e = exclusion_for("movie", "tmdb", Some("603".into()), "The Matrix").unwrap();
+    assert_eq!(
+        (
+            e.target_domain.as_str(),
+            e.id_kind.as_str(),
+            e.external_id.as_str()
+        ),
+        ("movie", "tmdb", "603")
+    );
+    assert_eq!(e.title.as_deref(), Some("The Matrix"));
+    assert!(exclusion_for("series", "tvdb", None, "Andor").is_none());
+    assert!(exclusion_for("series", "tvdb", Some(" ".into()), "Andor").is_none());
 }

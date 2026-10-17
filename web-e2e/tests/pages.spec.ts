@@ -205,3 +205,28 @@ test("an import list is created, synced, edited and deleted; an item is excluded
   await expect(page.getByText(`Deleted ${name}.`)).toBeVisible();
   await expect(row).toHaveCount(0);
 });
+
+test("a movie page excludes the movie from import lists; a member is not offered it (SKADI-T-0733)", async ({ page, request }) => {
+  await steps.givenDomainEnabled(request, "movies");
+  await steps.givenMovieAdded(request, 603, LIBRARY);
+  await steps.whenOpens(page, "/movies");
+  await steps.whenOpensFirstTile(page, "The Matrix");
+  await page.getByRole("button", { name: "Exclude from lists" }).click();
+  await expect(page.getByRole("button", { name: "Excluded from lists" })).toBeDisabled();
+  const all = (await (await request.get(`${steps.API}/importlists/exclusions`)).json()) as {
+    id: string; id_kind: string; external_id: string; title?: string;
+  }[];
+  const mine = all.filter((e) => e.id_kind === "tmdb" && e.external_id === "603");
+  expect(mine.length, "the exclusion names the movie's TMDB id").toBeGreaterThan(0);
+  expect(mine[0].title).toBe("The Matrix");
+  for (const e of mine) await request.delete(`${steps.API}/importlists/exclusions/${e.id}`);
+
+  const restore = await steps.givenSignedInAs(request, page, "member");
+  try {
+    await steps.whenOpens(page, "/movies");
+    await steps.whenOpensFirstTile(page, "The Matrix");
+    await expect(page.getByRole("button", { name: "Exclude from lists" })).toHaveCount(0);
+  } finally {
+    await restore();
+  }
+});

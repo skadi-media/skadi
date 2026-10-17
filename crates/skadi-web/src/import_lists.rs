@@ -578,3 +578,62 @@ fn Exclusions(
         </Panel>
     }
 }
+
+/// The exclusion a library item's "Exclude from lists" button posts, or `None`
+/// when the item has no id a list could offer it by.
+#[must_use]
+pub fn exclusion_for(
+    domain: &str,
+    id_kind: &str,
+    external_id: Option<String>,
+    title: &str,
+) -> Option<ImportListExclusion> {
+    let id = external_id?.trim().to_string();
+    (!id.is_empty()).then(|| ImportListExclusion {
+        target_domain: domain.to_string(),
+        id_kind: id_kind.to_string(),
+        external_id: id,
+        title: Some(title.to_string()).filter(|t| !t.trim().is_empty()),
+        ..ImportListExclusion::default()
+    })
+}
+
+/// "Exclude from lists" on a library item's page (SKADI-T-0733): no import list
+/// adds the item again, even after it is deleted. Drawn only for a role the
+/// API lets add an exclusion, and only when the item has an id.
+#[component]
+pub fn ExcludeFromListsButton(exclusion: Option<ImportListExclusion>) -> impl IntoView {
+    let role = use_context::<crate::subnav::RoleCtx>().and_then(|r| r.0.get_untracked());
+    let allowed = crate::surface::may_send(
+        role.as_deref(),
+        "POST",
+        &format!("{}/importlists/exclusions", api::API_BASE),
+    );
+    let done = RwSignal::new(false);
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(String::new());
+    exclusion.filter(|_| allowed).map(|e| {
+        let on_click = move |()| {
+            let e = e.clone();
+            busy.set(true);
+            spawn_local(async move {
+                match api::add_import_exclusion(&e).await {
+                    Ok(_) => {
+                        done.set(true);
+                        msg.set(String::new());
+                    }
+                    Err(err) => msg.set(err.0),
+                }
+                busy.set(false);
+            });
+        };
+        view! {
+            <Button variant="default" size="xs" loading=busy disabled=done
+                title="No import list will add this again, even after it is deleted"
+                on_click=Callback::new(on_click)>
+                {move || if done.get() { "Excluded from lists" } else { "Exclude from lists" }}
+            </Button>
+            <span class="muted">{move || msg.get()}</span>
+        }
+    })
+}

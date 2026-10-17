@@ -1469,11 +1469,17 @@ pub fn BookDetailPage() -> impl IntoView {
     on_cleanup(move || alive.set(false));
 
     // When the book (re)loads, fetch the on-disk location for each imported file
-    // that we haven't cached yet.
+    // that we haven't cached yet. The folder on the server is the operator's:
+    // `household::path_allowed` refuses `…/location` to every other role, so
+    // it is asked only for a role that may read it, and an unresolved role
+    // asks nothing (SKADI-T-0639). The role is read here, in the effect, so
+    // the fetch follows `/me`.
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
     Effect::new(move |_| {
         let Some(b) = book.get() else {
             return;
         };
+        let role = role_ctx.and_then(|r| r.get());
         let book_id = b.id.clone();
         for f in &b.files {
             let label = api::status_label(&f.status);
@@ -1481,6 +1487,10 @@ pub fn BookDetailPage() -> impl IntoView {
                 continue;
             }
             let fid = f.id.clone();
+            let path = format!("/books/{book_id}/files/{fid}/location");
+            if !crate::surface::offered(role.as_deref(), "GET", &path) {
+                continue;
+            }
             if locations.with_untracked(|m| m.contains_key(&fid)) {
                 continue;
             }
@@ -1501,7 +1511,6 @@ pub fn BookDetailPage() -> impl IntoView {
 
     let reload = Callback::new(move |_: ()| load());
     let nav = use_navigate();
-    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
 
     let body = move || {
         let Some(b) = book.get() else {

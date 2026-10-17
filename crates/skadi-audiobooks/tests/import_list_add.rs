@@ -1,5 +1,6 @@
 //! The audiobooks import-list add hook (SKADI-T-0733): a book on a list is added
 //! by ASIN through `add_book`, the path `POST /books` takes, and is monitored
+//! unless the list's switch is off (it starts on for an audiobook list)
 //! (Dylan's decision, note n-4 on SKADI-T-0733).
 
 use std::sync::Arc;
@@ -86,10 +87,10 @@ async fn a_book_on_a_list_is_added_monitored_once() {
         asin("B08G9PRS1K"),
         asin("B000000000"),
     ]))];
-    // The list's monitored switch is off, its default: books are monitored anyway.
+    // An audiobook list's monitored switch starts on (Dylan, 2026-10-17).
     let mut list = ImportList::new("To listen", "stub", "audiobook");
     list.settings = serde_json::json!({});
-    assert!(!list.add_monitored);
+    assert!(list.add_monitored);
 
     let report = sync_list(&list, &providers, &domains, &store)
         .await
@@ -158,4 +159,30 @@ async fn without_a_provider_the_hook_says_so() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no metadata provider"), "{err}");
+}
+
+#[tokio::test]
+async fn a_list_with_the_switch_off_adds_the_book_unmonitored() {
+    let (_db, store) = setup().await;
+    let library = AudiobooksLibrary::new(store.clone()).with_provider(Arc::new(FakeProvider));
+    let domains: Vec<Arc<dyn LibraryProvider>> = vec![Arc::new(library)];
+    let providers: Vec<Arc<dyn ImportListProvider>> =
+        vec![Arc::new(StubList(vec![asin("B08G9PRS1K")]))];
+    let mut list = ImportList::new("Maybe later", "stub", "audiobook");
+    list.add_monitored = false;
+    let report = sync_list(&list, &providers, &domains, &store)
+        .await
+        .unwrap();
+    assert_eq!(report.added, 1, "{report:?}");
+    let book = (&store as &dyn AudiobooksRepo)
+        .get_book_by_asin(&AsinId("B08G9PRS1K".into()))
+        .await
+        .unwrap()
+        .expect("added");
+    assert!(!book.monitored, "the switch is off");
+    let files = (&store as &dyn AudiobooksRepo)
+        .list_book_files(book.id)
+        .await
+        .unwrap();
+    assert!(files.iter().all(|f| !f.monitored), "no edition is wanted");
 }

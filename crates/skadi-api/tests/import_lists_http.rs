@@ -185,3 +185,33 @@ async fn a_failed_sync_is_stored_in_the_words_the_caller_saw() {
     assert_eq!(stored.last_error.as_deref(), body["message"].as_str());
     assert!(!stored.last_error.unwrap().starts_with("Validation error"));
 }
+
+#[tokio::test]
+async fn an_audiobook_list_starts_monitored_and_a_film_list_does_not() {
+    let (state, _db) = state().await;
+    let (_, books) = call(
+        &state,
+        "POST",
+        "/api/v1/importlists",
+        Some(json!({ "name": "To listen", "kind": "stub", "target_domain": "audiobook" })),
+    )
+    .await;
+    assert_eq!(books["add_monitored"], true);
+    let (_, films) = call(
+        &state,
+        "POST",
+        "/api/v1/importlists",
+        Some(json!({ "name": "Bond", "kind": "tmdb_collection", "target_domain": "movie" })),
+    )
+    .await;
+    assert_eq!(films["add_monitored"], false);
+    // A body that says so wins.
+    let (_, off) = call(
+        &state,
+        "POST",
+        "/api/v1/importlists",
+        Some(json!({ "name": "Later", "kind": "stub", "target_domain": "audiobook", "add_monitored": false })),
+    )
+    .await;
+    assert_eq!(off["add_monitored"], false);
+}

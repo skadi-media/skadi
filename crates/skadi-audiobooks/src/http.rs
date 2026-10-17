@@ -2666,8 +2666,18 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
         // in movies.
         let root_folder =
             RootFolder::for_domain(library_root(&self.store).await, MediaKind::Audiobook);
-        // `add_book` builds the book with `Book::new`, which is monitored.
-        add_book(repo, provider.as_ref(), asin, profile, root_folder).await?;
+        // `add_book` builds the book with `Book::new`, which is monitored. The
+        // list's switch decides (Dylan, 2026-10-17); an audiobook list starts
+        // with it on.
+        let mut book = add_book(repo, provider.as_ref(), asin, profile, root_folder).await?;
+        if !opts.monitored {
+            book.monitored = false;
+            repo.upsert_book(&book).await?;
+            for mut f in repo.list_book_files(book.id).await? {
+                f.monitored = false;
+                repo.upsert_book_file(&f).await?;
+            }
+        }
         Ok(skadi_api::library::ListAdd::Added)
     }
 

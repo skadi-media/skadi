@@ -749,7 +749,10 @@ async fn delete_one(http: &MoviesHttp, id: MovieId, delete_files: bool) -> Resul
             skadi_importer::delete_files_and_prune(&paths, &root)
         })
         .await
-        .map_err(|e| ApiError(AppError::Internal(format!("delete task panicked: {e}"))))?;
+        .map_err(|e| ApiError(AppError::Internal(format!("delete task panicked: {e}"))))?
+        // A recorded path outside the root refuses the whole delete, files and
+        // rows, and the response names it (SKADI-T-0712).
+        .map_err(|e| ApiError(AppError::Validation(format!("delete with files refused: {e}"))))?;
         tracing::info!(movie = %id, removed = removed.len(), "deleted movie files on library delete");
     }
     // Take the item's tag membership with it (SKADI-T-0560). Otherwise the rows
@@ -828,6 +831,7 @@ fn acquire_seed(movie: &Movie, edition: &MovieEdition) -> AcquireSeed {
     AcquireSeed {
         acquirable: edition.acquirable_ref(),
         request: SearchSpec {
+            original_language: movie.original_language.clone(),
             // Sweep-driven; the interactive paths override this just before
             // searching (SKADI-T-0539).
             trigger: skadi_hunter::SearchTrigger::Automatic,

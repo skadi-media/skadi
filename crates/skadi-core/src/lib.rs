@@ -10,6 +10,7 @@ pub mod external;
 pub mod folder;
 pub mod id;
 pub mod item;
+pub mod lang;
 pub mod media;
 pub mod module;
 pub mod nfo;

@@ -88,6 +88,7 @@ diesel::table! {
         import_state -> Nullable<Text>,
         import_error -> Nullable<Text>,
         priority -> Integer,
+        stalled_at -> Nullable<Timestamp>,
     }
 }
 

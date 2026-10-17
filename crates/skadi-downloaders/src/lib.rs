@@ -36,6 +36,12 @@ pub enum DownloadStatus {
     Downloading {
         progress: f32,
     },
+    /// The transfer is held: paused by the operator, or by the worker to stay
+    /// under its active cap (SKADI-T-0710). Still in flight, but not live, so
+    /// the hunter's stall clock does not run and no blocklist can come of it.
+    Paused {
+        progress: f32,
+    },
     Completed {
         files: Vec<PathBuf>,
     },

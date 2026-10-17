@@ -132,6 +132,13 @@ pub struct TransferWatch {
     /// transfer that has not started cannot be stalled, and 46 releases were
     /// permanently blocklisted on 2026-09-06 for exactly that mistake.
     pub live_since: Option<DateTime<Utc>>,
+    /// When the client last reported the transfer paused, `None` while it is
+    /// not (SKADI-T-0710). While set, neither the stall clock nor the lifetime
+    /// cap runs: the pause is the operator's or the worker cap's choice.
+    pub paused_at: Option<DateTime<Utc>>,
+    /// Seconds the transfer spent paused, credited back against the lifetime
+    /// cap on resume.
+    pub paused_secs: i64,
 }
 
 /// Who the tracked run for an acquirable belongs to, as seen from a workflow
@@ -390,6 +397,13 @@ impl InFlightTracker {
                     w.best_progress = progress;
                     w.progress_at = now;
                 }
+                if live && let Some(paused_at) = w.paused_at.take() {
+                    // Resumed: the pause does not count against the lifetime
+                    // cap, and the stall clock starts again from here
+                    // (SKADI-T-0710).
+                    w.paused_secs += (now - paused_at).num_seconds().max(0);
+                    w.progress_at = now;
+                }
                 if live && w.live_since.is_none() {
                     // First time the client reports it running: this is when the
                     // stall clock starts, and progress made before now doesn't
@@ -404,6 +418,8 @@ impl InFlightTracker {
                 best_progress: progress,
                 progress_at: now,
                 live_since: live.then_some(now),
+                paused_at: None,
+                paused_secs: 0,
             },
         };
         meta.transfer = Some(watch);
@@ -414,6 +430,38 @@ impl InFlightTracker {
             meta.last_flushed = Some((progress, now));
         }
         Some(Observation { watch, flush })
+    }
+
+    /// The client holds the transfer paused (SKADI-T-0710): a sign of life for
+    /// the run, and the watch's clocks stop until the next live observation.
+    /// Never flushes (there is no progress to write). `None` when the run isn't
+    /// tracked.
+    pub fn observe_paused(&self, acquirable_ref: &str) -> Option<Observation> {
+        let mut runs = self.runs.write().ok()?;
+        let meta = runs.get_mut(acquirable_ref)?;
+        let now = Utc::now();
+        meta.last_seen = now;
+        let watch = match meta.transfer {
+            Some(mut w) => {
+                if w.paused_at.is_none() {
+                    w.paused_at = Some(now);
+                }
+                w
+            }
+            None => TransferWatch {
+                since: now,
+                best_progress: 0.0,
+                progress_at: now,
+                live_since: None,
+                paused_at: Some(now),
+                paused_secs: 0,
+            },
+        };
+        meta.transfer = Some(watch);
+        Some(Observation {
+            watch,
+            flush: false,
+        })
     }
 
     /// The transfer watch for `acquirable_ref`, if it's tracked and `monitor`
@@ -899,6 +947,37 @@ mod tests {
         assert!(t.is_active("adopted-live"), "touched runs survive");
     }
 
+    /// SKADI-T-0710: a pause stops the clocks, a resume restarts the stall
+    /// clock and credits the paused time back.
+    #[test]
+    fn a_pause_stops_the_watch_and_a_resume_restarts_it() {
+        let t = InFlightTracker::default();
+        let hb = chrono::Duration::minutes(5);
+        assert!(t.observe_paused("untracked").is_none());
+
+        t.adopt(MediaKind::Series, "r", "downloading", None);
+        let live = t.observe_progress("r", 0.10, hb).unwrap();
+        assert!(live.watch.paused_at.is_none());
+
+        let paused = t.observe_paused("r").unwrap();
+        assert!(paused.watch.paused_at.is_some());
+        assert!(!paused.flush, "nothing to write for a pause");
+        let again = t.observe_paused("r").unwrap();
+        assert_eq!(
+            again.watch.paused_at, paused.watch.paused_at,
+            "a second paused poll keeps the first pause time"
+        );
+
+        let resumed = t.observe_progress("r", 0.10, hb).unwrap();
+        assert!(resumed.watch.paused_at.is_none(), "resumed");
+        assert!(resumed.watch.paused_secs >= 0);
+        assert!(
+            resumed.watch.progress_at >= paused.watch.progress_at,
+            "the stall clock restarts from the resume"
+        );
+        assert_eq!(resumed.watch.live_since, live.watch.live_since);
+    }
+
     #[test]
     fn observe_progress_tracks_best_progress_and_throttles_flushes() {
         let t = InFlightTracker::default();
@@ -969,6 +1048,7 @@ mod tests {
             updated_at: now,
             completed_at: None,
             lease_expires_at: None,
+            stalled_at: None,
             client_state: None,
             target_kind: None,
             target_ref: target.map(str::to_string),

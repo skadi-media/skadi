@@ -1157,3 +1157,88 @@ async fn a_queued_download_moves_to_the_top_and_is_claimed_next() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+/// SKADI-T-0709: an import that names its download row records the outcome
+/// on the row (here a failure, since the test daemon has no importer wired),
+/// and a request without `download_id` leaves the row as it was.
+#[tokio::test]
+async fn a_manual_import_with_a_download_id_records_its_outcome_on_the_row() {
+    use skadi_store::{DownloadJobRepo, NewDownloadJob};
+    let (state, db) = state(true).await;
+    let enqueue = |name: &'static str| {
+        let store = db.store.clone();
+        async move {
+            let job = store
+                .enqueue(&NewDownloadJob {
+                    acquirable_ref: format!("{name}.Release.1080p"),
+                    source: format!("magnet:?xt=urn:btih:{name}0709"),
+                    category: None,
+                    incomplete_dir: Some("/dl/incomplete".into()),
+                    complete_dir: Some("/dl/complete".into()),
+                })
+                .await
+                .unwrap();
+            store
+                .mark_complete(&job.id, &["/dl/complete/Movie.mkv".into()])
+                .await
+                .unwrap();
+            store
+                .set_download_target(&job.id, "movie", "ed-0709")
+                .await
+                .unwrap();
+            job
+        }
+    };
+    let named = enqueue("named").await;
+    let silent = enqueue("silent").await;
+    let body = |download_id: Option<&str>| {
+        let mut v = serde_json::json!({
+            "path": "/nonexistent/skadi-0709",
+            "kind": "movie",
+            "acquirable_ref": "ed-0709",
+        });
+        if let Some(id) = download_id {
+            v["download_id"] = serde_json::json!(id);
+        }
+        v
+    };
+
+    let (status, _) = call_json(
+        &state,
+        "POST",
+        "/api/v1/downloads/import",
+        body(Some(&named.id)),
+    )
+    .await;
+    assert!(
+        !status.is_success(),
+        "the test daemon cannot import: {status}"
+    );
+    let (status, _) = call_json(&state, "POST", "/api/v1/downloads/import", body(None)).await;
+    assert!(!status.is_success(), "{status}");
+
+    let (status, rows) = call(&state, "/api/v1/downloads").await;
+    assert_eq!(status, StatusCode::OK);
+    let row = |id: &str| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .cloned()
+            .expect("row")
+    };
+    let named_row = row(&named.id);
+    assert_eq!(named_row["import"]["state"], "failed", "{named_row}");
+    assert!(
+        !named_row["import"]["error"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
+        "the reason is recorded: {named_row}"
+    );
+    let silent_row = row(&silent.id);
+    assert_eq!(
+        silent_row["import"]["state"], "pending",
+        "unchanged: {silent_row}"
+    );
+}

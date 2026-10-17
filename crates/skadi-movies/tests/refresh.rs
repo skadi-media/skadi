@@ -110,6 +110,7 @@ async fn refresh_breaker_trips_blocks_then_recovers() {
     // Seed a monitored movie with a TMDB id and stale title (never refreshed).
     let movie = Movie {
         content_rating: None,
+        original_language: None,
         genres: Vec::new(),
         id: skadi_core::MovieId::new(),
         external_ids: ExternalIds {

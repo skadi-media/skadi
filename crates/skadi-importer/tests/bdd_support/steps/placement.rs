@@ -87,7 +87,8 @@ fn library_holds_file(w: &mut World, rel: String) {
 #[when(expr = "the library item's files {string} are deleted")]
 fn delete_item(w: &mut World, rels: String) {
     let files: Vec<_> = rels.split(',').map(|r| w.lib(r.trim())).collect();
-    w.removed = delete_files_and_prune(&files, &w.library());
+    w.removed =
+        delete_files_and_prune(&files, &w.library()).expect("every file is under the library");
 }
 
 #[then(expr = "{int} file(s) was/were removed")]

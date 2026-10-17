@@ -264,6 +264,18 @@ pub trait AcquirableMatcher: Send + Sync {
     /// [`FileDisposition::Quarantine`], so the importer sets the file aside for manual review
     /// (SKADI-T-0311) instead of guessing a destination. Place-or-ignore matchers (movies, TV)
     /// keep the default untouched.
+    ///
+    /// Why the matcher placed nothing for this file (SKADI-T-0588), for the rejection the
+    /// importer records. `None` when the matcher does not say; the default.
+    fn explain_ignore(
+        &self,
+        _parsed: &ParsedRelease,
+        _source: &Path,
+        _completed: &CompletedDownload,
+    ) -> Option<String> {
+        None
+    }
+
     fn disposition(
         &self,
         parsed: &ParsedRelease,
@@ -485,10 +497,9 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                     continue;
                 }
                 FileDisposition::Ignore => {
-                    tracing::debug!(src = ?source, "import rejected: no matching acquirable");
-                    outcome
-                        .rejected
-                        .push((source.clone(), "no matching acquirable".to_string()));
+                    let reason = ignore_reason(&self.matcher, &parsed, source, &completed);
+                    tracing::info!(src = ?source, %reason, "import rejected");
+                    outcome.rejected.push((source.clone(), reason));
                     continue;
                 }
             };
@@ -776,8 +787,8 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                     continue;
                 }
                 FileDisposition::Ignore => {
-                    plan.would_reject
-                        .push((source.clone(), "no matching acquirable".to_string()));
+                    let reason = ignore_reason(&self.matcher, &parsed, source, &completed);
+                    plan.would_reject.push((source.clone(), reason));
                     continue;
                 }
             };
@@ -880,6 +891,31 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "mts", "webm", "mpg", "mpeg", "flv",
     "ogm", "ogv", "divx", "vob", "3gp",
 ];
+
+/// The rejection of a file the matcher placed nothing for (SKADI-T-0588): the
+/// file's name, what the name parsed to, and the matcher's reason. It used to
+/// say only "no matching acquirable", logged at debug, so a rejected grab could
+/// not be diagnosed after the fact.
+fn ignore_reason<M: AcquirableMatcher + ?Sized>(
+    matcher: &M,
+    parsed: &ParsedRelease,
+    source: &Path,
+    completed: &CompletedDownload,
+) -> String {
+    let file = source.file_name().map_or_else(
+        || source.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let seen = match (parsed.title.as_deref(), parsed.year) {
+        (Some(t), Some(y)) => format!("parsed as \"{t}\" ({y})"),
+        (Some(t), None) => format!("parsed as \"{t}\""),
+        (None, _) => "no title parsed".to_string(),
+    };
+    let why = matcher
+        .explain_ignore(parsed, source, completed)
+        .unwrap_or_else(|| "the matcher gave no reason".to_string());
+    format!("no matching acquirable: {file}, {seen}: {why}")
+}
 
 /// Whether `path` has a video container extension (case-insensitive).
 #[must_use]
@@ -1517,14 +1553,62 @@ pub fn place_file(src: &Path, dest: &Path, allow_hardlink: bool) -> Result<()> {
     Ok(())
 }
 
+/// The paths a delete refused because they do not resolve to a place under the
+/// library root (SKADI-T-0712). Nothing was deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutsideRoot(pub Vec<PathBuf>);
+
+impl std::fmt::Display for OutsideRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "not under the library root, so nothing was deleted: {}",
+            self.0
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+impl std::error::Error for OutsideRoot {}
+
 /// Delete `files` from disk and prune now-empty ancestor directories up to (but not including)
 /// `root` — the file side of a proper library-item delete (SKADI-T-0316). Best-effort and **safe**:
 /// a missing file or a still-non-empty directory is skipped, never an error; `remove_file` only
 /// touches the exact paths given and `remove_dir` only removes a directory once it is empty, so
 /// this can never cascade outside the files it was handed. Pruning stops at `root` (the domain
 /// library root), which is never removed. Returns the files actually removed.
-#[must_use]
-pub fn delete_files_and_prune(files: &[PathBuf], root: &Path) -> Vec<PathBuf> {
+///
+/// A path that does not resolve under `root` is refused (SKADI-T-0712): the check is on the
+/// canonical paths, so a symlink under the root that points outside it, or a `..`, is caught.
+/// One refused path refuses the whole call, before anything is removed, and the error names
+/// every refused path. A root that cannot be resolved (a dropped mount) refuses every path.
+pub fn delete_files_and_prune(
+    files: &[PathBuf],
+    root: &Path,
+) -> std::result::Result<Vec<PathBuf>, OutsideRoot> {
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Err(OutsideRoot(files.to_vec()));
+    };
+    let refused: Vec<PathBuf> = files
+        .iter()
+        .filter(|f| match f.canonicalize() {
+            Ok(real) => !real.starts_with(&canonical_root),
+            // A missing file is the safe no-op below, wherever its path points.
+            Err(_) => false,
+        })
+        .cloned()
+        .collect();
+    if !refused.is_empty() {
+        tracing::warn!(
+            root = %root.display(),
+            refused = ?refused,
+            "delete refused: file paths outside the library root"
+        );
+        return Err(OutsideRoot(refused));
+    }
     let mut removed = Vec::new();
     let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     for f in files {
@@ -1547,7 +1631,7 @@ pub fn delete_files_and_prune(files: &[PathBuf], root: &Path) -> Vec<PathBuf> {
     for d in &dirs {
         let _ = std::fs::remove_dir(d); // succeeds only if the dir is now empty
     }
-    removed
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1630,6 +1714,58 @@ mod tests {
         ) -> FileDisposition {
             FileDisposition::Quarantine(self.review.join(source.file_name().unwrap()))
         }
+    }
+
+    /// SKADI-T-0588: a rejection names the file, what it parsed to and the
+    /// matcher's reason; a matcher that gives none still says so.
+    #[tokio::test]
+    async fn a_rejection_names_the_file_the_parse_and_the_reason() {
+        struct Explains(Option<&'static str>);
+        impl AcquirableMatcher for Explains {
+            fn match_file(
+                &self,
+                _: &ParsedRelease,
+                _: &Path,
+                _: &CompletedDownload,
+            ) -> Vec<AcquirableMatch> {
+                vec![]
+            }
+            fn explain_ignore(
+                &self,
+                _: &ParsedRelease,
+                _: &Path,
+                _: &CompletedDownload,
+            ) -> Option<String> {
+                self.0.map(str::to_string)
+            }
+        }
+        let dir = unique_dir("why");
+        let src = dir.join("Lord.of.War.2005.REMASTERED.1080p.BluRay.x265-RARBG.mkv");
+        std::fs::write(&src, b"video").unwrap();
+        let outcome = DefaultImporter::new(Explains(Some("the Remastered edition is not enabled")))
+            .import(completed(vec![src.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome.rejected,
+            vec![(
+                src.clone(),
+                "no matching acquirable: Lord.of.War.2005.REMASTERED.1080p.BluRay.x265-RARBG.mkv, \
+                 parsed as \"Lord of War\" (2005): the Remastered edition is not enabled"
+                    .to_string()
+            )]
+        );
+        let outcome = DefaultImporter::new(Explains(None))
+            .import(completed(vec![src.clone()]))
+            .await
+            .unwrap();
+        assert!(
+            outcome.rejected[0]
+                .1
+                .ends_with(": the matcher gave no reason"),
+            "{:?}",
+            outcome.rejected
+        );
     }
 
     #[tokio::test]
@@ -1766,7 +1902,7 @@ mod tests {
         let keep = other.join("keep.m4b");
         std::fs::write(&keep, b"keep").unwrap();
 
-        let removed = delete_files_and_prune(&[f1.clone(), f2.clone()], &root);
+        let removed = delete_files_and_prune(&[f1.clone(), f2.clone()], &root).unwrap();
 
         assert_eq!(removed.len(), 2);
         assert!(!f1.exists() && !f2.exists(), "the two files are deleted");
@@ -1783,22 +1919,67 @@ mod tests {
     }
 
     #[test]
-    fn delete_files_is_safe_on_missing_and_outside_root() {
+    fn delete_files_is_safe_on_missing_and_refuses_outside_root() {
         let root = unique_dir("del2");
         std::fs::create_dir_all(&root).unwrap();
         // Missing file → no panic, nothing reported removed, root intact.
-        let removed = delete_files_and_prune(&[root.join("nope.m4b")], &root);
+        let removed = delete_files_and_prune(&[root.join("nope.m4b")], &root).unwrap();
         assert!(removed.is_empty());
         assert!(root.exists());
 
-        // A file outside `root` is removed if listed, but no dir outside root is pruned.
+        // A file outside `root` is refused, named, and survives; and because one
+        // refusal refuses the call, the in-root file listed beside it survives too
+        // (SKADI-T-0712).
         let outside = unique_dir("outside");
-        std::fs::create_dir_all(&outside).unwrap();
         let of = outside.join("x.m4b");
         std::fs::write(&of, b"x").unwrap();
-        let removed = delete_files_and_prune(std::slice::from_ref(&of), &root);
-        assert_eq!(removed, vec![of]);
+        let inside = root.join("y.m4b");
+        std::fs::write(&inside, b"y").unwrap();
+        let err = delete_files_and_prune(&[inside.clone(), of.clone()], &root).unwrap_err();
+        assert_eq!(err, OutsideRoot(vec![of.clone()]));
+        assert!(err.to_string().contains("x.m4b"), "{err}");
+        assert!(of.exists(), "the outside file survives");
+        assert!(
+            inside.exists(),
+            "nothing is deleted while a path is refused"
+        );
         assert!(outside.exists(), "a dir outside root is never pruned");
+
+        // A `..` in a path is resolved before the check.
+        let dotted = root
+            .join("..")
+            .join(outside.file_name().unwrap())
+            .join("x.m4b");
+        let err = delete_files_and_prune(std::slice::from_ref(&dotted), &root).unwrap_err();
+        assert_eq!(err.0, vec![dotted]);
+        assert!(of.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_files_does_not_follow_a_symlink_out_of_the_root() {
+        let root = unique_dir("del3");
+        let outside = unique_dir("outside3");
+        let target = outside.join("real.m4b");
+        std::fs::write(&target, b"real").unwrap();
+        let link = root.join("link.m4b");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = delete_files_and_prune(std::slice::from_ref(&link), &root).unwrap_err();
+        assert_eq!(err.0, vec![link.clone()]);
+        assert!(target.exists(), "the file behind the link survives");
+        assert!(
+            std::fs::symlink_metadata(&link).is_ok(),
+            "the link itself is left alone too"
+        );
+    }
+
+    #[test]
+    fn delete_files_refuses_everything_when_the_root_is_gone() {
+        let root = unique_dir("del4").join("missing-root");
+        let f = root.join("a.m4b");
+        let err = delete_files_and_prune(std::slice::from_ref(&f), &root).unwrap_err();
+        assert_eq!(err.0, vec![f]);
     }
 
     #[tokio::test]

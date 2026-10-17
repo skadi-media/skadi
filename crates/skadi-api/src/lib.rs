@@ -22,6 +22,7 @@ pub mod definitions;
 pub mod diagnostics;
 pub mod domains;
 pub mod error;
+pub mod events;
 pub mod fs;
 pub mod health;
 pub mod health_checks;

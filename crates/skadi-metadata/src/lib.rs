@@ -132,7 +132,14 @@ pub struct MetadataRecord {
     /// `None` when the source has none; never invented.
     #[serde(default)]
     pub content_rating: Option<String>,
+    /// The title's original language, ISO 639-1 (`en`, `ko`) (SKADI-T-0673).
+    /// Normalised by [`iso639_1`] whatever code the source sends. `None` when
+    /// the source has none.
+    #[serde(default)]
+    pub original_language: Option<String>,
 }
+
+pub use skadi_core::lang::iso639_1;
 
 /// Provider-neutral metadata for a **TV series** + its seasons + episodes
 /// (SKADI-I-0037 / T-0266). Returned by a provider's TV lookup; the TV domain

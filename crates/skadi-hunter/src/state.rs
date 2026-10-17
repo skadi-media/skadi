@@ -61,6 +61,13 @@ pub struct SearchSpec {
     /// tracker an operator reaches for a hand search.
     #[serde(default)]
     pub tags: Option<Vec<String>>,
+    /// The title's original language, ISO 639-1 (SKADI-T-0673). `decide`
+    /// keeps a release tagged only with this language (a Korean film's
+    /// `KOREAN` release is its own audio) and rejects one tagged only with
+    /// another as a dub. `None` when unknown, and for books: the old ranking
+    /// applies.
+    #[serde(default)]
+    pub original_language: Option<String>,
 }
 
 /// What started a search (SKADI-T-0539).
@@ -398,6 +405,7 @@ mod tests {
 
     fn spec(kind: MediaKind, trigger: SearchTrigger, n: usize) -> SearchSpec {
         SearchSpec {
+            original_language: None,
             trigger,
             kind,
             titles: (0..n).map(|i| format!("Alias {i}")).collect(),
@@ -463,6 +471,7 @@ mod tests {
 
     fn sample() -> AcquireState {
         let request = SearchSpec {
+            original_language: None,
             trigger: Default::default(),
             kind: MediaKind::Movie,
             titles: vec!["The Matrix".into()],

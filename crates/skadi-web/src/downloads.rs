@@ -85,11 +85,30 @@ pub struct RowBadge {
     pub title: String,
 }
 
-/// Tooltip of the "Stalled" badge. The worker records no time when a transfer
-/// stalls (the row's `updated_at` moves on each progress tick), so the
-/// tooltip gives the rule, not a duration.
-pub const STALLED_TITLE: &str =
-    "No peers and no progress for the stall timeout (start time not recorded)";
+/// Tooltip of the "Stalled" badge when the stalled time is unknown (a daemon
+/// older than SKADI-T-0708): the rule, not a duration.
+pub const STALLED_TITLE: &str = "No peers and no progress for the stall timeout";
+
+/// Tooltip of the "Stalled" badge: "Stalled for 2h 10m — …" when the row
+/// carries its stalled time (`secs` since it, SKADI-T-0708), else the rule
+/// alone. Pure.
+pub fn stalled_title(secs: Option<f64>) -> String {
+    match secs.filter(|s| s.is_finite()) {
+        Some(secs) => format!("Stalled for {} — {}", duration_label(secs), STALLED_TITLE),
+        None => STALLED_TITLE.to_string(),
+    }
+}
+
+/// `45s`, `12m`, `2h 10m`, `3d 4h`: an elapsed time for a tooltip. Pure.
+pub fn duration_label(secs: f64) -> String {
+    let secs = secs.max(0.0) as u64;
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3_599 => format!("{}m", secs / 60),
+        3_600..=86_399 => format!("{}h {}m", secs / 3_600, (secs % 3_600) / 60),
+        _ => format!("{}d {}h", secs / 86_400, (secs % 86_400) / 3_600),
+    }
+}
 
 /// The message of an errored row: its error text, else a fixed line, so an
 /// errored row always shows why.
@@ -108,14 +127,21 @@ pub fn error_message(d: &Download) -> Option<String> {
 }
 
 /// The badge of one row: "Stalled" (warn) or "Error" (bad, the message as
-/// tooltip); `None` for a downloading, seeding or paused row.
+/// tooltip); `None` for a downloading, seeding or paused row. The stalled
+/// tooltip gives no duration; [`row_badge_at`] does.
 pub fn row_badge(d: &Download) -> Option<RowBadge> {
+    row_badge_at(d, None)
+}
+
+/// [`row_badge`] with the seconds the row has been stalled, for the tooltip
+/// (SKADI-T-0708).
+pub fn row_badge_at(d: &Download, stalled_for_secs: Option<f64>) -> Option<RowBadge> {
     let state = row_state(d);
     match state {
         RowState::Stalled => Some(RowBadge {
             label: "Stalled",
             level: state.level(),
-            title: STALLED_TITLE.to_string(),
+            title: stalled_title(stalled_for_secs),
         }),
         RowState::Errored => Some(RowBadge {
             label: "Error",
@@ -1120,6 +1146,35 @@ mod tests {
         assert_eq!(
             bulk_result_message(BulkAction::Pause, 8, 2).as_deref(),
             Some("Pause: 2 of 10 failed.")
+        );
+    }
+
+    /// SKADI-T-0708: the Stalled tooltip says for how long when the row's
+    /// stalled time is known.
+    #[test]
+    fn the_stalled_tooltip_says_for_how_long() {
+        assert_eq!(duration_label(45.0), "45s");
+        assert_eq!(duration_label(12.0 * 60.0), "12m");
+        assert_eq!(duration_label(2.0 * 3600.0 + 10.0 * 60.0), "2h 10m");
+        assert_eq!(duration_label(3.0 * 86400.0 + 4.0 * 3600.0), "3d 4h");
+        assert_eq!(
+            stalled_title(Some(7800.0)),
+            format!("Stalled for 2h 10m — {STALLED_TITLE}")
+        );
+        assert_eq!(stalled_title(None), STALLED_TITLE);
+        assert_eq!(stalled_title(Some(f64::NAN)), STALLED_TITLE);
+
+        let stalled = row("s", "stalled");
+        let badge = row_badge_at(&stalled, Some(7800.0)).expect("badge");
+        assert!(
+            badge.title.starts_with("Stalled for 2h 10m"),
+            "{}",
+            badge.title
+        );
+        assert_eq!(row_badge(&stalled).unwrap().title, STALLED_TITLE);
+        assert_eq!(
+            row_badge_at(&row("e", "error"), Some(5.0)).unwrap().label,
+            "Error"
         );
     }
 

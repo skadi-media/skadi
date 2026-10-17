@@ -56,13 +56,16 @@ Feature: C34 health check model, cache, warnings and config sanity
     And the server of indexer "countixr" has received 0 requests
 
   # @serial: a latency budget measured while 60 other scenarios load the same
-  # Postgres measures the load, not the request.
+  # Postgres measures the load, not the request. The budget is one second, not
+  # 100 ms: the fake answers after 600 s, so a second still proves the request
+  # did not wait for it, and a cached read from a Postgres in Docker on a
+  # loaded machine took 104 to 182 ms (SKADI-T-0734).
   @C34 @passing @serial
   Scenario: a provider that hangs does not slow the health checks request
     Given an indexer "hangixr" whose server accepts connections but never answers
     When the client requests GET "/api/v1/health/checks"
     Then the response status is 200
-    And the request took less than 100 ms
+    And the request took less than 1000 ms
     And the health check "indexer:hangixr" is pending
 
   @C34 @passing

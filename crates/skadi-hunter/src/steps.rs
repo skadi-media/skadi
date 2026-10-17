@@ -1082,6 +1082,11 @@ impl pipeline::ProgressSink for LiveProgress {
             )
             .await;
     }
+
+    async fn paused(&self) {
+        // The clock stops; paused time is credited back on resume (SKADI-T-0710).
+        let _ = crate::tracker::tracker().observe_paused(&self.acquirable.0);
+    }
 }
 
 /// `monitor`: poll the downloader **once**, reporting live progress; while the
@@ -1197,6 +1202,14 @@ fn stall_verdict(
     // is not a dead download, and treating it as one permanently blocklisted 46
     // releases on 2026-09-06. Such a transfer is bounded by the lifetime cap
     // below, which still ends a genuine zombie.
+    // A paused transfer is held on purpose, by the operator or by the worker's
+    // active cap (SKADI-T-0710): neither clock runs on it, and a release is
+    // never blocklisted for a pause. It stays in flight, so nothing re-acquires
+    // the item behind the operator's back; the time it spent paused is credited
+    // back on resume, so a long pause does not end as a lifetime cap either.
+    if watch.paused_at.is_some() {
+        return None;
+    }
     if watch.live_since.is_some() {
         let flat_for = now - watch.progress_at;
         if flat_for >= policy.stall_timeout {
@@ -1206,7 +1219,7 @@ fn stall_verdict(
             ));
         }
     }
-    let watched_for = now - watch.since;
+    let watched_for = now - watch.since - chrono::Duration::seconds(watch.paused_secs);
     if watched_for >= policy.max_lifetime {
         return Some(format!(
             "download still at {pct}% after {}h under watch",
@@ -1694,6 +1707,8 @@ mod tests {
             best_progress: 0.0,
             progress_at: since,
             live_since: None,
+            paused_at: None,
+            paused_secs: 0,
         };
         // Five hours in the client's queue: not a stall, and not yet the cap.
         assert_eq!(
@@ -1725,6 +1740,8 @@ mod tests {
             best_progress: 0.0,
             progress_at: went_live,
             live_since: Some(went_live),
+            paused_at: None,
+            paused_secs: 0,
         };
         // Four hours queued plus one hour live: under the 3 h stall timeout.
         assert_eq!(
@@ -1743,6 +1760,79 @@ mod tests {
                 StallPolicy::default()
             )
             .is_some()
+        );
+    }
+
+    /// SKADI-T-0710: a paused transfer never stalls, however long the pause, and
+    /// the lifetime cap does not end it either: a pause is the operator's (or the
+    /// worker cap's) choice, and a release must not be blocklisted for it.
+    #[test]
+    fn a_paused_transfer_never_stalls_and_is_exempt_from_the_lifetime_cap() {
+        let since = chrono::Utc::now();
+        let paused = TransferWatch {
+            since,
+            best_progress: 0.4,
+            progress_at: since,
+            live_since: Some(since),
+            paused_at: Some(since + chrono::Duration::minutes(10)),
+            paused_secs: 0,
+        };
+        for after in [
+            chrono::Duration::hours(5),
+            MONITOR_STALL_TIMEOUT + chrono::Duration::hours(1),
+            MONITOR_MAX_LIFETIME + chrono::Duration::hours(1),
+        ] {
+            assert_eq!(
+                stall_verdict(&paused, since + after, StallPolicy::default()),
+                None,
+                "paused for {}h",
+                after.num_hours()
+            );
+        }
+    }
+
+    /// SKADI-T-0710: on resume the clock starts again from the resume, so a
+    /// transfer that then sits flat for the timeout does stall; and the hours it
+    /// spent paused do not count toward the lifetime cap.
+    #[test]
+    fn the_stall_clock_restarts_on_resume_and_paused_time_is_credited_back() {
+        let since = chrono::Utc::now();
+        let resumed = since + chrono::Duration::hours(6);
+        let watch = TransferWatch {
+            since,
+            best_progress: 0.4,
+            progress_at: resumed,
+            live_since: Some(since),
+            paused_at: None,
+            paused_secs: chrono::Duration::hours(5).num_seconds(),
+        };
+        assert_eq!(
+            stall_verdict(
+                &watch,
+                resumed + chrono::Duration::hours(1),
+                StallPolicy::default()
+            ),
+            None
+        );
+        let why = stall_verdict(
+            &watch,
+            resumed + MONITOR_STALL_TIMEOUT,
+            StallPolicy::default(),
+        )
+        .expect("flat for the timeout after the resume");
+        assert!(why.contains("stalled"), "{why}");
+        // 18 h since the watch began, 5 of them paused: 13 h count, under the cap.
+        let flat_but_young = TransferWatch {
+            progress_at: since + MONITOR_MAX_LIFETIME - chrono::Duration::minutes(1),
+            ..watch
+        };
+        assert_eq!(
+            stall_verdict(
+                &flat_but_young,
+                since + MONITOR_MAX_LIFETIME,
+                StallPolicy::default()
+            ),
+            None
         );
     }
 
@@ -1796,6 +1886,8 @@ mod tests {
             best_progress: 0.42,
             progress_at: since,
             live_since: Some(since),
+            paused_at: None,
+            paused_secs: 0,
         };
         // Flat, but not for long enough: keep retrying.
         assert_eq!(
@@ -1831,6 +1923,8 @@ mod tests {
             best_progress: 0.31,
             progress_at: now - chrono::Duration::minutes(1),
             live_since: Some(since),
+            paused_at: None,
+            paused_secs: 0,
         };
         let why = stall_verdict(&watch, now, StallPolicy::default()).expect("expired");
         assert!(why.contains("31%"), "{why}");

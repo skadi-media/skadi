@@ -14,9 +14,10 @@ private fun seriesPosKey(b: Book): Double =
     b.series?.position?.trim()?.toDoubleOrNull() ?: Double.MAX_VALUE
 
 /**
- * Split books into **series groups** (sorted by name; books within by position
- * then title) and **standalone** books (no series, input order preserved).
- * Pure, so it's unit-testable.
+ * Split books into **series groups** (in title order of name, so *The Expanse*
+ * files under E as its rail letter says; books within by position then title)
+ * and **standalone** books (no series, input order preserved). Pure, so it's
+ * unit-testable.
  */
 fun groupBooksBySeries(books: List<Book>): Pair<List<SeriesGroup>, List<Book>> {
     val groups = LinkedHashMap<String, MutableList<Book>>()
@@ -37,11 +38,11 @@ fun groupBooksBySeries(books: List<Book>): Pair<List<SeriesGroup>, List<Book>> {
                 seriesId = id,
                 name = names[id] ?: id,
                 books = bs.sortedWith(
-                    compareBy({ seriesPosKey(it) }, { it.title.lowercase() }),
+                    compareBy({ seriesPosKey(it) }, { TitleSorting.key(it.title) }),
                 ),
             )
         }
-        .sortedBy { it.name.lowercase() }
+        .sortedBy { TitleSorting.key(it.name) }
     return sortedGroups to standalone
 }
 

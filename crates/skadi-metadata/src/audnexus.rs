@@ -273,6 +273,7 @@ impl BookResource {
         };
         MetadataRecord {
             content_rating: None,
+            original_language: None,
             genres: Vec::new(),
             external_ids,
             title: self.title,

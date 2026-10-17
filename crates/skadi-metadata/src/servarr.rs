@@ -127,6 +127,10 @@ struct MovieResource {
     imdb_id: Option<String>,
     title: String,
     original_title: Option<String>,
+    /// ISO 639-1 on the wire, e.g. `"en"` (read from the live API, 2026-10-17;
+    /// SKADI-T-0673).
+    #[serde(default)]
+    original_language: Option<String>,
     overview: Option<String>,
     runtime: Option<u32>,
     year: Option<u16>,
@@ -238,6 +242,7 @@ impl MovieResource {
             external_ids: self.external_ids(),
             title: self.title,
             original_title: self.original_title,
+            original_language: self.original_language.as_deref().and_then(crate::iso639_1),
             overview: self.overview,
             runtime_minutes: self.runtime,
             release_date,
@@ -286,6 +291,7 @@ mod tests {
             "Title": "The Matrix",
             "Overview": "A hacker learns the truth.",
             "OriginalTitle": "The Matrix",
+            "OriginalLanguage": "en",
             "Runtime": 136,
             "Popularity": 203.5,
             "Year": 1999,
@@ -323,6 +329,7 @@ mod tests {
         let rec = p.lookup(&ExternalId::Tmdb(TmdbId(603))).await.unwrap();
 
         assert_eq!(rec.title, "The Matrix");
+        assert_eq!(rec.original_language.as_deref(), Some("en"), "SKADI-T-0673");
         assert_eq!(rec.genres, vec!["Action".to_string()]);
         assert_eq!(rec.content_rating.as_deref(), Some("R"));
         assert_eq!(rec.external_ids.tmdb, Some(TmdbId(603)));

@@ -99,6 +99,10 @@ fn apply_record(movie: &mut Movie, record: &MetadataRecord, tmdb: TmdbId) {
     if record.content_rating.is_some() {
         movie.content_rating = record.content_rating.clone();
     }
+    // Same rule: a lookup without a language keeps the stored one (SKADI-T-0673).
+    if record.original_language.is_some() {
+        movie.original_language = record.original_language.clone();
+    }
     // Only overwrite when the record carries an id, for the same reason as the
     // images below: a lookup that omits it must not wipe what we already know.
     // A film genuinely leaving a collection is rare enough to wait for the next

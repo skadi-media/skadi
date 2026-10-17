@@ -927,7 +927,14 @@ fn added_label(created_at: Option<&str>, now_ms: f64) -> String {
 /// The "Stalled" / "Error" badge of a download row (SKADI-T-0687), from
 /// [`crate::downloads::row_badge`]; nothing for a healthy row.
 fn row_badge_view(d: &api::Download) -> Option<AnyView> {
-    crate::downloads::row_badge(d).map(|b| {
+    // Seconds since the row went stalled, for the tooltip (SKADI-T-0708).
+    let stalled_for = d
+        .stalled_at
+        .as_deref()
+        .map(js_sys::Date::parse)
+        .filter(|t| !t.is_nan())
+        .map(|t| (js_sys::Date::now() - t) / 1000.0);
+    crate::downloads::row_badge_at(d, stalled_for).map(|b| {
         let cls = format!("dl-badge {}", b.level);
         view! {
             <span class=cls title=b.title><Pill color=tone(b.level)>{b.label}</Pill></span>
@@ -1024,9 +1031,19 @@ fn DownloadsSection() -> impl IntoView {
             }
             titles.set(map);
         });
-        // ~2 s while the tab is visible, nothing while it is hidden (SKADI-T-0693).
-        spawn_local(crate::live_poll::poll_while_visible(
+        // Server push while the tab is visible (SKADI-T-0711): the daemon's one
+        // poller sends the list when it changes. If the stream cannot open or
+        // drops, the ~2 s poll (SKADI-T-0693) runs until it reconnects.
+        spawn_local(crate::live_poll::stream_while_visible(
             move || alive.try_get_untracked().unwrap_or(false),
+            "downloads",
+            move |topic, data| {
+                if topic == "downloads"
+                    && let Some(d) = load.settle(serde_json::from_str::<Vec<api::Download>>(data))
+                {
+                    let _ = jobs.try_set(d);
+                }
+            },
             move || async move {
                 if let Some(d) = load.settle(api::list_downloads().await) {
                     let _ = jobs.try_set(d);
@@ -1449,8 +1466,8 @@ fn DownloadsSection() -> impl IntoView {
         };
         view! {
             // Fixed columns: a long release name is cut with "…", and under
-            // 1060px the table scrolls in its own box.
-            <Table class:dl-table=true label="Active transfers" fixed=true min_width="1060px"
+            // 1210px the table scrolls in its own box.
+            <Table class:dl-table=true label="Active transfers" fixed=true min_width="1210px"
                 widths=DL_WIDTHS.iter().map(|w| (*w).to_string()).collect()>
                 <thead>
                     <tr>
@@ -1514,7 +1531,8 @@ fn DownloadsSection() -> impl IntoView {
                 }
             }
             import_busy.set(true);
-            let result = api::run_import(&api::ManualImportRequest::for_download(&facts)).await;
+            let result =
+                api::run_import(&api::ManualImportRequest::for_download_row(&id, &facts)).await;
             let (ok, text) = match result {
                 Ok(outcome) => dlm::import_result(&outcome),
                 Err(e) => (false, e.0),
@@ -1865,8 +1883,13 @@ fn import_panel_view(
 
 /// The column widths of the active transfers table: select, name, size,
 /// progress, down, up, peers, ETA, added, actions.
+///
+/// The actions column fits a queued row's six buttons (three queue moves,
+/// pause, remove, delete). At 6.5rem it fitted three: the queue moves spilled
+/// over the ETA and Added cells, which took the clicks, so a mouse could not
+/// press them (found by the web-e2e Downloads spec, SKADI-T-0713).
 const DL_WIDTHS: [&str; 10] = [
-    "2.75rem", "auto", "6rem", "8.5rem", "7rem", "7rem", "4.5rem", "5.5rem", "4.5rem", "6.5rem",
+    "2.75rem", "auto", "6rem", "8.5rem", "7rem", "7rem", "4.5rem", "5.5rem", "4.5rem", "15.5rem",
 ];
 
 /// A Downloads sort as Aurora's `SortState`, for its `SortHeader` cells.

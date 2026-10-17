@@ -931,6 +931,34 @@ mod discover_tests {
         assert_ne!(name_key("Prince"), name_key("Prince - Remastered"));
     }
 
+    /// The shared `name_key` vector (SKADI-T-0648 F4): asserted verbatim by
+    /// skadi-web (`audiobooks::author_key`) and the Android `core`
+    /// (`NameKeyTest`), so the three copies are tested to agree, not said to.
+    /// Filter first, lowercase second: "İ" (U+0130) is dropped, where
+    /// lowercasing first would leave an "i" behind.
+    #[test]
+    fn name_key_shared_vector() {
+        for (name, key) in [
+            ("A.G. Riddle", "agriddle"),
+            ("A. G. Riddle", "agriddle"),
+            ("a g riddle", "agriddle"),
+            ("Brandon  Sanderson", "brandonsanderson"),
+            ("Ursula K. Le Guin", "ursulakleguin"),
+            ("George R. R. Martin", "georgerrmartin"),
+            ("Ann Leckie", "annleckie"),
+            ("Anne Leckie", "anneleckie"),
+            // Non-ASCII: dropped, not transliterated.
+            ("İsmail Kadare", "smailkadare"),
+            ("Émile Zola", "milezola"),
+            ("Zoë Heller", "zoheller"),
+            ("Йозеф К", ""),
+            ("", ""),
+            ("  ", ""),
+        ] {
+            assert_eq!(name_key(name), key, "{name}");
+        }
+    }
+
     #[test]
     fn rank_discoveries_orders_upcoming_then_recent_and_drops_owned() {
         let today = NaiveDate::from_ymd_opt(2026, 6, 24).unwrap();

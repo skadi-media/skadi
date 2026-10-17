@@ -272,7 +272,20 @@ fun HomeScreen(
                                 line3 = sh.episode.title,
                                 fraction = null,
                                 onClick = { openShow = sh },
-                                onLongClick = null,
+                                // Only a half-watched episode has a place to
+                                // forget. A "Next:" entry is a suggestion from a
+                                // finished one, undismissable like Up next.
+                                onLongClick = if (sh.resuming) {
+                                    {
+                                        confirmForget = ForgetTarget(
+                                            title = sh.series.title,
+                                            note = "forgets your place in ${sh.episode.code}. " +
+                                                "The episode stays; it starts from the beginning next time.",
+                                        ) { progress.forget(progress.episodeKey(sh.series.id, sh.episode.id)) }
+                                    }
+                                } else {
+                                    null
+                                },
                             )
                         }
                     }

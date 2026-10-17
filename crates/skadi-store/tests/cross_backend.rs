@@ -11,7 +11,14 @@
 //! docker compose up -d postgres
 //! export SKADI_TEST_DATABASE_URL=postgres://skadi:skadi@127.0.0.1:5433/skadi
 //! ```
+//!
+//! The URL names an admin database; the harness never runs against it. It
+//! creates one throwaway database per run and drops it at the end
+//! (SKADI-T-0714): in a workspace run the domain crates' tests share the
+//! same Postgres and apply their own migrations, so the schema this harness
+//! reverts and re-applies is not the one it expects.
 
+use diesel::{Connection, PgConnection, RunQueryDsl};
 use skadi_store::{ConfigRepo, ConfigSource, DomainState, DomainStateRepo, Store};
 
 fn unique_sqlite_url() -> String {
@@ -19,14 +26,113 @@ fn unique_sqlite_url() -> String {
     format!("sqlite://{}", path.display())
 }
 
-/// `(label, url)` for each backend under test.
-fn backends() -> Vec<(&'static str, String)> {
-    let mut backends = vec![("sqlite", unique_sqlite_url())];
-    match std::env::var("SKADI_TEST_DATABASE_URL") {
-        Ok(url) if !url.is_empty() => backends.push(("postgres", url)),
-        _ => eprintln!("SKADI_TEST_DATABASE_URL unset — skipping Postgres backend"),
+/// The backends under test, and the throwaway Postgres database that lives
+/// as long as this value.
+struct Backends {
+    list: Vec<(&'static str, String)>,
+    _scratch: Option<ScratchPostgres>,
+}
+
+fn backends() -> Backends {
+    let mut list = vec![("sqlite", unique_sqlite_url())];
+    let scratch = match std::env::var("SKADI_TEST_DATABASE_URL") {
+        Ok(url) if !url.is_empty() => {
+            let scratch = ScratchPostgres::create(&url);
+            list.push(("postgres", scratch.url.clone()));
+            Some(scratch)
+        }
+        _ => {
+            eprintln!("SKADI_TEST_DATABASE_URL unset — skipping Postgres backend");
+            None
+        }
+    };
+    Backends {
+        list,
+        _scratch: scratch,
     }
-    backends
+}
+
+/// A Postgres database created from the admin URL for one run, dropped on
+/// `Drop`. The same pattern as `TestDb` in `skadi-testsupport`, which this
+/// crate cannot depend on without a cycle.
+struct ScratchPostgres {
+    admin_url: String,
+    db_name: String,
+    url: String,
+}
+
+impl ScratchPostgres {
+    fn create(admin_url: &str) -> Self {
+        let db_name = format!("skadi_xb_{}", uuid::Uuid::new_v4().simple());
+        let mut conn =
+            PgConnection::establish(admin_url).expect("connect to the admin postgres database");
+        // Other test binaries create their databases at the same time, and
+        // concurrent CREATE DATABASE statements contend on template1 with
+        // "source database … is being accessed by other users". Retry those.
+        for attempt in 0u64..10 {
+            match diesel::sql_query(format!("CREATE DATABASE {db_name}")).execute(&mut conn) {
+                Ok(_) => break,
+                Err(e)
+                    if e.to_string().contains("being accessed by other users") && attempt < 9 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+                }
+                Err(e) => panic!("CREATE DATABASE {db_name}: {e} (does the role have CREATEDB?)"),
+            }
+        }
+        Self {
+            admin_url: admin_url.to_string(),
+            url: with_database(admin_url, &db_name),
+            db_name,
+        }
+    }
+}
+
+impl Drop for ScratchPostgres {
+    fn drop(&mut self) {
+        // Best effort, and never a panic in Drop. The store's pool may still
+        // hold a connection while it winds down, so refuse new connections,
+        // terminate the open ones, then drop, with a short retry.
+        let Ok(mut conn) = PgConnection::establish(&self.admin_url) else {
+            return;
+        };
+        let db_name = &self.db_name;
+        let _ = diesel::sql_query(format!(
+            "UPDATE pg_database SET datallowconn = false WHERE datname = '{db_name}'"
+        ))
+        .execute(&mut conn);
+        for attempt in 0u64..20 {
+            let _ = diesel::sql_query(format!(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                 WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
+            ))
+            .execute(&mut conn);
+            match diesel::sql_query(format!("DROP DATABASE IF EXISTS {db_name}")).execute(&mut conn)
+            {
+                Ok(_) => return,
+                Err(e) if e.to_string().contains("being accessed by other users") => {
+                    std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1)));
+                }
+                Err(_) => return,
+            }
+        }
+    }
+}
+
+/// `postgres://…/<db>[?query]` with the database part replaced.
+fn with_database(url: &str, db_name: &str) -> String {
+    let (base, query) = match url.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (url, None),
+    };
+    let rebuilt = match base.rsplit_once('/') {
+        Some((prefix, _db)) => format!("{prefix}/{db_name}"),
+        None => format!("{base}/{db_name}"),
+    };
+    match query {
+        Some(q) => format!("{rebuilt}?{q}"),
+        None => rebuilt,
+    }
 }
 
 /// Migration round-trip (up → down → up) leaving a clean, empty schema.
@@ -151,8 +257,9 @@ async fn assert_config_contract(store: &Store, label: &str) {
 
 #[tokio::test]
 async fn backends_behave_identically() {
-    for (label, url) in backends() {
-        let store = Store::connect(&url).expect("connect");
+    let backends = backends();
+    for (label, url) in &backends.list {
+        let store = Store::connect(url).expect("connect");
         // up/down/up leaves an empty schema, which the repo contract then assumes.
         migrate_clean(&store, label).await;
         assert_domain_state_contract(&store, label).await;

@@ -112,29 +112,10 @@ fun AlphabetRail(
     }
 }
 
-/**
- * The letter a title sorts under, for [AlphabetRail].
- *
- * Leading articles are dropped, so *The Matrix* files under **M** — the same
- * thing every library catalogue does, and what someone scanning for it expects.
- * Anything not starting with a letter files under `#`, so numbers and symbols
- * are one bucket rather than scattered.
- */
-fun sortLetter(title: String): Char {
-    val t = title.trim().lowercase()
-    val stripped = listOf("the ", "a ", "an ").firstOrNull { t.startsWith(it) }
-        ?.let { t.removePrefix(it) } ?: t
-    val c = stripped.firstOrNull()?.uppercaseChar() ?: '#'
-    return if (c in 'A'..'Z') c else '#'
-}
-
-/** Sort key matching [sortLetter] — same article handling, so the rail's letters
- *  line up with the order actually rendered. */
-fun sortKey(title: String): String {
-    val t = title.trim().lowercase()
-    return listOf("the ", "a ", "an ").firstOrNull { t.startsWith(it) }
-        ?.let { t.removePrefix(it) } ?: t
-}
+// The letters a title surface feeds [AlphabetRail] come from
+// `com.skadi.core.TitleSorting.railed`, which sorts and letters in one call
+// from one key (SKADI-T-0648): *The Matrix* files under M, and the rail cannot
+// disagree with the list. The pair used to live here as `sortKey`/`sortLetter`.
 
 /**
  * One tile in the movie grid: a single film, or a collapsed franchise
@@ -169,6 +150,9 @@ sealed interface MovieTile {
  * Grouping is by collection **id**, never by title similarity: "101 Dalmatians"
  * and "102 Dalmatians" are a real collection, "10 Cloverfield Lane" is not one
  * with them, and no prefix rule separates those two cases correctly.
+ *
+ * The tiles come back in no particular order; the grid orders and letters
+ * them with `TitleSorting.railed`.
  */
 fun collapseCollections(movies: List<com.skadi.core.Movie>): List<MovieTile> {
     val (grouped, loose) = movies.partition { it.collection != null }
@@ -188,5 +172,5 @@ fun collapseCollections(movies: List<com.skadi.core.Movie>): List<MovieTile> {
             )
         }
     }
-    return tiles.sortedBy { sortKey(it.sortTitle) }
+    return tiles
 }

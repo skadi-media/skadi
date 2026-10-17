@@ -11,9 +11,9 @@
 //! `limit`/`offset` params), its sort must move to the API.
 //!
 //! **One comparison.** Every wall sorts through [`compare_items`]. The title
-//! and author keys it uses are [`title_sort_key`] and
-//! [`crate::audiobooks::name_sort_key`]; SKADI-T-0648 (one ordering rule per
-//! concept) changes those two and nothing else.
+//! and author keys it uses are [`crate::sorting::title_sort_key`] and
+//! [`crate::audiobooks::name_sort_key`] — one rule per concept (SKADI-T-0648),
+//! defined once and used here.
 
 use std::cmp::Ordering;
 
@@ -21,6 +21,7 @@ use aurora_leptos::components::{Button, Select, TextInput};
 use leptos::prelude::*;
 
 use crate::api;
+use crate::sorting::title_sort_key;
 use crate::ui::{FilterChip, mirror};
 
 // --- Sort model (pure) ---
@@ -260,21 +261,6 @@ impl LibraryItem for api::Book {
     fn item_status(&self) -> &'static str {
         crate::audiobooks::audiobook_lib_status(self)
     }
-}
-
-const TITLE_ARTICLES: &[&str] = &["the ", "a ", "an "];
-
-/// Sort key for a title: trimmed, lowercase, one leading article ("the ",
-/// "a ", "an ") dropped, so *The Hobbit* files under H. This is the rule the
-/// Android walls use (`sortKey`, `clients/skadi-android/app/.../Browse.kt`);
-/// the web had none before SKADI-T-0695. Articles are a title rule only: a
-/// person's name keeps them ([`crate::audiobooks::name_sort_key`]).
-pub fn title_sort_key(title: &str) -> String {
-    let t = title.trim().to_lowercase();
-    TITLE_ARTICLES
-        .iter()
-        .find_map(|a| t.strip_prefix(a))
-        .map_or_else(|| t.clone(), str::to_string)
 }
 
 /// Sort key for a server timestamp. The server writes RFC 3339 in UTC with

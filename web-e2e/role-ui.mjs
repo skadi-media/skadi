@@ -65,6 +65,16 @@ async function sweep(browser, label, token) {
       denied.push(`${r.request().method()} ${r.url().replace(BASE, "")}`);
     }
   });
+  // Since SKADI-T-0642 the client gates every request on the role surface,
+  // so an offered call the role cannot make no longer reaches the network as
+  // a 403: it is stopped in the browser and logged with this prefix. It is
+  // the same finding, so it counts the same (SKADI-T-0639).
+  page.on("console", m => {
+    const t = m.text();
+    if (t.includes("skadi: not sent for this role:")) {
+      denied.push(`${t.slice(t.indexOf("not sent")).replace("not sent for this role: ", "")} (stopped in the browser)`);
+    }
+  });
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await page.evaluate(t => localStorage.setItem("skadi.token", t), token);
 

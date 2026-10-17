@@ -42,33 +42,39 @@ re-matching, no spaces:
 A single-file audiobook (one `.m4b`) is renamed to the title; a multi-file
 audiobook (a folder of MP3s) keeps each source file's name.
 
-## Indexers: AudiobookBay via Jackett / Prowlarr (Torznab)
+## Indexers: AudiobookBay, built in
 
-Skadi has **no native AudiobookBay scraper**. Instead, run AudiobookBay (ABB)
-through a Torznab proxy — [Jackett](https://github.com/Jackett/Jackett) or
-[Prowlarr](https://prowlarr.com) — and point Skadi at the proxy's Torznab feed.
-Skadi searches audiobooks as Torznab **category 3030** (Audio / Audiobook).
+AudiobookBay (ABB) is in Skadi's bundled tracker library. The built-in
+Cardigann engine searches it directly: no Jackett, Prowlarr or other Torznab
+proxy is needed. Skadi searches audiobooks as Torznab **category 3030**
+(Audio / Audiobook), and ABB serves that category.
 
-1. In Jackett/Prowlarr, add the **AudiobookBay** indexer (Jackett ships an ABB
-   definition; in Prowlarr add it from the indexer catalog).
-2. Copy that indexer's **Torznab feed URL** and **API key**.
-3. Register it in Skadi as a `torznab` indexer:
+1. Add the tracker. In the web UI, open **Settings → Indexers**, click
+   **+ Add tracker (native)**, pick **AudioBook Bay** from the catalog and give
+   it a name. Or from the CLI:
 
    ```bash
    skadi settings add indexers '{
-     "kind": "torznab",
-     "name": "AudiobookBay (Jackett)",
-     "url": "http://127.0.0.1:9117/api/v2.0/indexers/audiobookbay/results/torznab/",
-     "api_key": "<jackett-or-prowlarr-api-key>"
+     "kind": "cardigann",
+     "name": "AudioBook Bay",
+     "definition_id": "audiobookbay"
    }'
    ```
 
-   (Prowlarr exposes a single aggregate Torznab endpoint
-   `http://127.0.0.1:9696/<n>/api` plus its API key; either works.)
-4. Test it: `skadi settings test indexers <id>` (or the **Test** button in the
+2. Test it: `skadi settings test indexers <id>` (or the **Test** button in the
    UI). Skadi only sends audiobook searches (category 3030) to indexers that
    advertise audiobook support, so a movies-only indexer is never queried for
    books and vice-versa.
+
+Notes on ABB:
+
+- It is a public tracker. It does not report seeders, so Skadi records a
+  placeholder of 1 for each release.
+- It needs no CloudFlare solver. In production every ABB fetch was served
+  directly (SKADI-T-0552, 2026-09-10), so FlareSolverr is not involved.
+- In the deploy stack the daemon's tracker searches leave through gluetun's
+  HTTP proxy, so ABB sees the VPN exit address, not your home address. See the
+  deploy README for the kill-switch wiring.
 
 The download client is the same one movies and TV use — the built-in worker,
 registered once in the downloaders settings.

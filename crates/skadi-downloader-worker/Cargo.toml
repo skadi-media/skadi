@@ -55,3 +55,7 @@ skadi-core = { path = "../skadi-core" }
 [[test]]
 name = "bdd"
 harness = false
+
+# librqbit's DHT, patched (SKADI-T-0645): see vendor/librqbit-dht/PATCHED.md.
+[patch.crates-io]
+librqbit-dht = { path = "../../vendor/librqbit-dht" }

@@ -1456,8 +1456,8 @@ fn DownloadsSection() -> impl IntoView {
         };
         view! {
             // Fixed columns: a long release name is cut with "…", and under
-            // 1060px the table scrolls in its own box.
-            <Table class:dl-table=true label="Active transfers" fixed=true min_width="1060px"
+            // 1210px the table scrolls in its own box.
+            <Table class:dl-table=true label="Active transfers" fixed=true min_width="1210px"
                 widths=DL_WIDTHS.iter().map(|w| (*w).to_string()).collect()>
                 <thead>
                     <tr>
@@ -1873,8 +1873,13 @@ fn import_panel_view(
 
 /// The column widths of the active transfers table: select, name, size,
 /// progress, down, up, peers, ETA, added, actions.
+///
+/// The actions column fits a queued row's six buttons (three queue moves,
+/// pause, remove, delete). At 6.5rem it fitted three: the queue moves spilled
+/// over the ETA and Added cells, which took the clicks, so a mouse could not
+/// press them (found by the web-e2e Downloads spec, SKADI-T-0713).
 const DL_WIDTHS: [&str; 10] = [
-    "2.75rem", "auto", "6rem", "8.5rem", "7rem", "7rem", "4.5rem", "5.5rem", "4.5rem", "6.5rem",
+    "2.75rem", "auto", "6rem", "8.5rem", "7rem", "7rem", "4.5rem", "5.5rem", "4.5rem", "15.5rem",
 ];
 
 /// A Downloads sort as Aurora's `SortState`, for its `SortHeader` cells.

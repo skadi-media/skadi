@@ -13,10 +13,11 @@
 //! as a *syntactically* invalid range (ignore, serve 200) versus an
 //! *unsatisfiable* one (416).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures::TryStreamExt;
 
 use skadi_core::AppError;
 
@@ -110,12 +111,73 @@ pub async fn serve_file_range(
     let meta = tokio::fs::metadata(path)
         .await
         .map_err(|e| ApiError(AppError::NotFound(format!("{what} file missing: {e}"))))?;
-    let len = meta.len();
-    let content_type = content_type_for(path);
     // Weak validator for If-Range resume correctness: a quality upgrade
     // rewriting this path between a client's pause and resume must invalidate
     // the range, not append mismatched bytes to a half-downloaded file.
     let last_modified: Option<String> = meta.modified().ok().map(httpdate_from_systemtime);
+    let segment = Segment {
+        path: path.to_path_buf(),
+        offset: 0,
+        len: meta.len(),
+    };
+    serve_segments_range(
+        std::slice::from_ref(&segment),
+        content_type_for(path),
+        last_modified,
+        headers,
+        what,
+    )
+    .await
+}
+
+/// One run of bytes of one file, in a body stitched from several
+/// (SKADI-T-0738: the parts of a multi-file audiobook).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Segment {
+    pub path: PathBuf,
+    /// Where the run starts in the file.
+    pub offset: u64,
+    /// How many bytes of the file it covers.
+    pub len: u64,
+}
+
+/// The pieces of `segments` that fall inside the inclusive body range
+/// `[start, end]`, each cut to the overlap. Empty when the range misses.
+#[must_use]
+pub fn slice_segments(segments: &[Segment], start: u64, end: u64) -> Vec<Segment> {
+    let mut out = Vec::new();
+    let mut at = 0u64; // body offset of the current segment's first byte
+    for s in segments {
+        let s_end = at + s.len; // exclusive
+        if s.len > 0 && s_end > start && at <= end {
+            let from = start.max(at) - at;
+            let to = end.min(s_end - 1) - at; // inclusive, within the segment
+            out.push(Segment {
+                path: s.path.clone(),
+                offset: s.offset + from,
+                len: to - from + 1,
+            });
+        }
+        at = s_end;
+        if at > end {
+            break;
+        }
+    }
+    out
+}
+
+/// Serve `segments` back to back as one body with single-range support.
+/// `last_modified` is the `If-Range` validator for the whole body; the caller
+/// picks it (the newest part, for a joined book). `what` names the thing in
+/// error messages ("audio", "video").
+pub async fn serve_segments_range(
+    segments: &[Segment],
+    content_type: &'static str,
+    last_modified: Option<String>,
+    headers: &HeaderMap,
+    what: &str,
+) -> Result<Response, ApiError> {
+    let len: u64 = segments.iter().map(|s| s.len).sum();
 
     // Honor If-Range: if the client's validator does not match, ignore its
     // Range and serve the whole file (RFC 7233 §3.2).
@@ -146,15 +208,6 @@ pub async fn serve_file_range(
         }
     };
 
-    let mut f = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| ApiError(AppError::NotFound(format!("open {what} file: {e}"))))?;
-    if start > 0 {
-        use tokio::io::AsyncSeekExt;
-        f.seek(std::io::SeekFrom::Start(start))
-            .await
-            .map_err(|e| ApiError(AppError::Internal(format!("seek {what} file: {e}"))))?;
-    }
     // Bytes actually available in [start, end] — 0 for an empty file, so we
     // never declare `Content-Length: 1` over a 0-byte body and hang the client.
     let window = if len == 0 {
@@ -162,8 +215,31 @@ pub async fn serve_file_range(
     } else {
         (end + 1).saturating_sub(start).min(len - start)
     };
-    let reader = tokio::io::AsyncReadExt::take(f, window);
-    let stream = tokio_util::io::ReaderStream::new(reader);
+    let pieces = if window == 0 {
+        Vec::new()
+    } else {
+        slice_segments(segments, start, end)
+    };
+    // Each piece is opened when the stream reaches it, so a 700-part book
+    // holds one file at a time. A part that vanishes mid-body ends the body
+    // short, which the client's Content-Length check catches.
+    let what_owned = what.to_string();
+    let stream = futures::stream::iter(pieces.into_iter().map(Ok::<_, std::io::Error>))
+        .and_then(move |piece| {
+            let what = what_owned.clone();
+            async move {
+                let mut f = tokio::fs::File::open(&piece.path)
+                    .await
+                    .map_err(|e| std::io::Error::new(e.kind(), format!("open {what} file: {e}")))?;
+                if piece.offset > 0 {
+                    use tokio::io::AsyncSeekExt;
+                    f.seek(std::io::SeekFrom::Start(piece.offset)).await?;
+                }
+                let reader = tokio::io::AsyncReadExt::take(f, piece.len);
+                Ok(tokio_util::io::ReaderStream::new(reader))
+            }
+        })
+        .try_flatten();
     let body = axum::body::Body::from_stream(stream);
 
     let mut resp = Response::builder()
@@ -235,6 +311,35 @@ mod tests {
         assert_eq!(parse_byte_range(None, 1000), None);
         // Multi-range is unsupported, not invalid: ignore and serve whole.
         assert_eq!(parse_byte_range(Some("bytes=0-9,20-29"), 1000), None);
+    }
+
+    #[test]
+    fn slicing_cuts_each_segment_to_the_overlap() {
+        let seg = |n: &str, offset: u64, len: u64| Segment {
+            path: PathBuf::from(n),
+            offset,
+            len,
+        };
+        // Body: a[0..10) b[10..15) c[15..25); b starts 100 bytes into its file.
+        let segs = vec![seg("a", 0, 10), seg("b", 100, 5), seg("c", 7, 10)];
+        // Whole body.
+        assert_eq!(slice_segments(&segs, 0, 24), segs);
+        // Inside one segment.
+        assert_eq!(slice_segments(&segs, 2, 4), vec![seg("a", 2, 3)]);
+        // Across a boundary: the last 2 of a, all of b, the first 3 of c.
+        assert_eq!(
+            slice_segments(&segs, 8, 17),
+            vec![seg("a", 8, 2), seg("b", 100, 5), seg("c", 7, 3)]
+        );
+        // The last byte alone, and a range past the end.
+        assert_eq!(slice_segments(&segs, 24, 24), vec![seg("c", 16, 1)]);
+        assert_eq!(slice_segments(&segs, 25, 30), vec![]);
+        // An empty segment never contributes a piece.
+        let with_empty = vec![seg("a", 0, 2), seg("e", 0, 0), seg("b", 0, 2)];
+        assert_eq!(
+            slice_segments(&with_empty, 0, 3),
+            vec![seg("a", 0, 2), seg("b", 0, 2)]
+        );
     }
 
     #[test]

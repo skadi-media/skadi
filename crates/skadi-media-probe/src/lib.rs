@@ -9,6 +9,7 @@
 
 pub mod chapters;
 mod mkv_colour;
+pub mod mp3;
 
 pub mod ffprobe;
 pub mod markers;

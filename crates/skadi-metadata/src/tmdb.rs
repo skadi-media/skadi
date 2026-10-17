@@ -2,9 +2,9 @@
 //!
 //! v3 JSON API via `skadi-http`. TMDB payloads are deserialized into private
 //! response structs and mapped onto the provider-neutral [`MetadataRecord`] /
-//! [`MetadataMatch`] — no TMDB shapes leak past this module. v0 looks up by
-//! TMDB id (`/movie/{id}` with `append_to_response=external_ids`); other id
-//! kinds are a follow-up.
+//! [`MetadataMatch`] — no TMDB shapes leak past this module. Looks up by TMDB
+//! id (`/movie/{id}` with `append_to_response=external_ids`), or by IMDb id
+//! through `/find` first.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -104,6 +104,33 @@ impl TmdbProvider {
             guard.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
             guard.insert(key.to_string(), (Instant::now(), record.clone()));
         }
+    }
+
+    /// The TMDB id of the movie with this IMDb id, through TMDB's
+    /// `/find/{imdb_id}?external_source=imdb_id` (SKADI-T-0733).
+    ///
+    /// `NotFound` when TMDB knows no movie by it: a series or an episode id, or
+    /// a title TMDB lacks.
+    async fn find_movie_by_imdb(&self, imdb: &ImdbId) -> Result<TmdbId> {
+        let url = self.url(&format!("/find/{}", imdb.0));
+        let api_key = self.api_key.clone();
+        let resp = self
+            .http
+            .send_idempotent(|c| {
+                c.get(&url).query(&[
+                    ("api_key", api_key.as_str()),
+                    ("external_source", "imdb_id"),
+                ])
+            })
+            .await?;
+        let body: FindResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Network(format!("decoding TMDB find: {e}")))?;
+        body.movie_results
+            .first()
+            .map(|m| TmdbId(m.id))
+            .ok_or_else(|| AppError::NotFound(format!("TMDB has no movie with IMDb id {}", imdb.0)))
     }
 
     // --- TV (SKADI-I-0037 / T-0266) -----------------------------------------
@@ -246,10 +273,15 @@ impl MetadataProvider for TmdbProvider {
     }
 
     async fn lookup(&self, id: &ExternalId) -> Result<MetadataRecord> {
-        let ExternalId::Tmdb(tmdb_id) = id else {
-            return Err(AppError::Validation(
-                "TmdbProvider can only look up by a TMDB id (other id kinds: follow-up)".into(),
-            ));
+        let tmdb_id = match id {
+            ExternalId::Tmdb(t) => t.clone(),
+            // An IMDb list hands the movies add hook `tt…` ids (SKADI-T-0733).
+            ExternalId::Imdb(imdb) => self.find_movie_by_imdb(imdb).await?,
+            other => {
+                return Err(AppError::Validation(format!(
+                    "TmdbProvider cannot look up by {other:?} (tmdb/imdb only)"
+                )));
+            }
         };
         let url = self.url(&format!("/movie/{}", tmdb_id.0));
         // Serve a fresh cached record (SKADI-T-0510) before spending a request.
@@ -281,6 +313,17 @@ fn year_of(release_date: &Option<String>) -> Option<u16> {
         .as_deref()
         .filter(|s| s.len() >= 4)
         .and_then(|s| s[..4].parse().ok())
+}
+
+#[derive(Deserialize)]
+struct FindResponse {
+    #[serde(default)]
+    movie_results: Vec<FindMovie>,
+}
+
+#[derive(Deserialize)]
+struct FindMovie {
+    id: u64,
 }
 
 #[derive(Deserialize)]
@@ -738,13 +781,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lookup_by_non_tmdb_id_is_rejected() {
+    async fn lookup_by_an_unsupported_id_is_rejected() {
         let p = provider("http://unused".into());
         let err = p
-            .lookup(&ExternalId::Imdb(ImdbId("tt0133093".into())))
+            .lookup(&ExternalId::Tvdb(skadi_core::TvdbId(81189)))
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn lookup_by_imdb_id_finds_the_tmdb_movie_first() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/find/tt0133093"))
+            .and(query_param("external_source", "imdb_id"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "movie_results": [{"id": 603, "title": "The Matrix"}],
+                "tv_results": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/movie/603"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 603,
+                "title": "The Matrix",
+                "release_date": "1999-03-31",
+                "external_ids": { "imdb_id": "tt0133093" }
+            })))
+            .mount(&server)
+            .await;
+
+        let p = provider(server.uri());
+        let rec = p
+            .lookup(&ExternalId::Imdb(ImdbId("tt0133093".into())))
+            .await
+            .unwrap();
+        assert_eq!(rec.external_ids.tmdb, Some(TmdbId(603)));
+        assert_eq!(rec.title, "The Matrix");
+    }
+
+    #[tokio::test]
+    async fn an_imdb_id_tmdb_has_no_movie_for_is_not_found() {
+        // A series id, say: TMDB lists it under `tv_results`, not movies.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/find/tt0944947"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "movie_results": [],
+                "tv_results": [{"id": 1399}]
+            })))
+            .mount(&server)
+            .await;
+        let err = provider(server.uri())
+            .lookup(&ExternalId::Imdb(ImdbId("tt0944947".into())))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+        assert!(err.to_string().contains("tt0944947"), "{err}");
     }
 
     #[tokio::test]

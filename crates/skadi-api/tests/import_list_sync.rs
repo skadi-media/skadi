@@ -312,3 +312,45 @@ async fn excluding_the_same_item_twice_is_not_an_error() {
     assert!(!store.is_excluded("series", "tmdb", "7").await.unwrap());
     assert!(!store.is_excluded("movies", "imdb", "7").await.unwrap());
 }
+
+/// A TV domain: its name and its library subfolder are both `television`.
+struct TvStub;
+
+#[async_trait]
+impl LibraryProvider for TvStub {
+    fn domain(&self) -> &str {
+        "television"
+    }
+    fn kind(&self) -> MediaKind {
+        MediaKind::Series
+    }
+    async fn items(
+        &self,
+        _m: Option<bool>,
+    ) -> skadi_core::Result<Vec<skadi_api::library::LibraryItemDto>> {
+        Ok(Vec::new())
+    }
+    async fn add_from_list(
+        &self,
+        _id_kind: &str,
+        _external_id: &str,
+        _opts: &ImportListAddOptions,
+    ) -> skadi_core::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_list_for_series_reaches_the_television_domain() {
+    // The list editor writes `series` for a Sonarr list (SKADI-T-0733).
+    let (_db, store) = db().await;
+    let mut list = ImportList::new("Shows", "stub", "series");
+    list.settings = serde_json::json!({});
+    let providers: Vec<Arc<dyn ImportListProvider>> = vec![Arc::new(StubProvider(vec![item("1")]))];
+    let domains: Vec<Arc<dyn LibraryProvider>> =
+        vec![Arc::new(StubDomain::default()), Arc::new(TvStub)];
+    let report = sync_list(&list, &providers, &domains, &store)
+        .await
+        .unwrap();
+    assert_eq!(report.added, 1);
+}

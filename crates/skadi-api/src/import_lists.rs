@@ -75,9 +75,14 @@ pub async fn sync_list(
             // `item_tags` uses) and "movies" (the registered domain name) are
             // both the obvious thing to type. Rejecting one of them would be a
             // configuration trap with a silent-looking symptom.
+            //
+            // The kind's own name counts too: the list editor writes `series`
+            // for a Sonarr list (SKADI-T-0733), and TV's subfolder and domain
+            // are both `television`.
             let want = list.target_domain.to_ascii_lowercase();
             d.kind().library_subfolder().eq_ignore_ascii_case(&want)
                 || d.domain().eq_ignore_ascii_case(&want)
+                || format!("{:?}", d.kind()).eq_ignore_ascii_case(&want)
         })
         .ok_or_else(|| {
             skadi_core::AppError::Validation(format!(

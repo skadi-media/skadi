@@ -2531,13 +2531,26 @@ async fn library_import_commit(
 /// ticket's "occupied_folders defaults to empty": there was nothing to default.
 pub struct AudiobooksLibrary {
     store: Store,
+    /// Needed only by `add_from_list` (SKADI-T-0733), as in movies: absent
+    /// means the add hook says it is not configured.
+    provider: Option<Arc<dyn MetadataProvider>>,
 }
 
 impl AudiobooksLibrary {
     /// Build over the daemon's store.
     #[must_use]
     pub fn new(store: Store) -> Self {
-        Self { store }
+        Self {
+            store,
+            provider: None,
+        }
+    }
+
+    /// Attach the metadata provider that `add_from_list` needs (SKADI-T-0733).
+    #[must_use]
+    pub fn with_provider(mut self, provider: Arc<dyn MetadataProvider>) -> Self {
+        self.provider = Some(provider);
+        self
     }
 }
 
@@ -2591,6 +2604,71 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
 
     fn kind(&self) -> skadi_core::MediaKind {
         skadi_core::MediaKind::Audiobook
+    }
+
+    /// Add a book by ASIN on behalf of an import list (SKADI-T-0733).
+    ///
+    /// Goes through `add_book`, the function `POST /books` calls, so a
+    /// list-added book is built like a hand-added one. The book is added
+    /// **monitored** whatever the list's monitored setting: Dylan decided
+    /// (note n-4 on SKADI-T-0733) that a book on a list is a book wanted, unlike
+    /// an edition found by author discovery, which arrives unmonitored
+    /// (SKADI-T-0562). No search starts here; the wanted sweep picks it up.
+    async fn add_from_list(
+        &self,
+        id_kind: &str,
+        external_id: &str,
+        opts: &skadi_api::library::ImportListAddOptions,
+    ) -> skadi_core::Result<bool> {
+        if !id_kind.eq_ignore_ascii_case("asin") {
+            return Err(AppError::Validation(format!(
+                "audiobooks can be added by asin, not `{id_kind}`"
+            )));
+        }
+        let asin = external_id.trim();
+        if asin.is_empty() || !asin.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Err(AppError::Validation(format!(
+                "`{external_id}` is not an ASIN"
+            )));
+        }
+        let asin = AsinId(asin.to_string());
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            AppError::Internal("audiobooks library has no metadata provider configured".into())
+        })?;
+        let repo: &dyn AudiobooksRepo = &self.store;
+        // Already present is the ordinary case on every sync after the first.
+        if repo.get_book_by_asin(&asin).await?.is_some() {
+            return Ok(false);
+        }
+        // The profile as `POST /books` resolves it: an explicit id must be a
+        // registered profile; none means the built-in audiobook ladder.
+        let profile: ProfileId = match &opts.profile_id {
+            Some(p) => {
+                let id = Uuid::parse_str(p)
+                    .map(ProfileId::from)
+                    .map_err(|_| AppError::Validation(format!("`{p}` is not a profile id")))?;
+                let known = self
+                    .store
+                    .list_settings("profiles")
+                    .await?
+                    .iter()
+                    .any(|r| Uuid::parse_str(&r.id).ok() == Some(id.into_uuid()));
+                if !known {
+                    return Err(AppError::Validation(format!(
+                        "profile {p} is not a registered quality profile"
+                    )));
+                }
+                id
+            }
+            None => crate::audiobook_builtin_profile_id(),
+        };
+        // The root is derived (SKADI-T-0302); `opts.root_folder` is ignored, as
+        // in movies.
+        let root_folder =
+            RootFolder::for_domain(library_root(&self.store).await, MediaKind::Audiobook);
+        // `add_book` builds the book with `Book::new`, which is monitored.
+        add_book(repo, provider.as_ref(), asin, profile, root_folder).await?;
+        Ok(true)
     }
 
     async fn items(

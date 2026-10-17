@@ -12,6 +12,8 @@ description = "Metadata provider abstraction for Skadi (MetadataProvider trait +
 futures = { workspace = true }
 skadi-core = { workspace = true }
 skadi-http = { workspace = true }
+# The FlareSolverr client, for IMDb lists (SKADI-T-0733).
+skadi-indexers = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 chrono = { workspace = true }

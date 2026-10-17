@@ -61,6 +61,9 @@ pub trait MoviesRepo: Send + Sync {
     async fn count_movies(&self, filter: MovieFilter) -> Result<i64>;
     async fn get_movie(&self, id: MovieId) -> Result<Option<Movie>>;
     async fn get_movie_by_tmdb(&self, tmdb: TmdbId) -> Result<Option<Movie>>;
+    /// The movie with this IMDb id, so an IMDb list skips a movie it already
+    /// has without a metadata round trip (SKADI-T-0733).
+    async fn get_movie_by_imdb(&self, imdb: &str) -> Result<Option<Movie>>;
     async fn upsert_movie(&self, movie: &Movie) -> Result<()>;
     async fn delete_movie(&self, id: MovieId) -> Result<()>;
 
@@ -409,6 +412,28 @@ impl MoviesRepo for Store {
             .with_conn(move |conn| {
                 let row: Option<MovieRow> = movies::table
                     .find(key)
+                    .select(MovieRow::as_select())
+                    .first(conn)
+                    .optional()
+                    .map_err(db_err)?;
+                row.map(Movie::try_from).transpose()
+            })
+            .await?;
+        match movie {
+            None => Ok(None),
+            Some(mut m) => {
+                m.editions = self.list_editions(m.id).await?;
+                Ok(Some(m))
+            }
+        }
+    }
+
+    async fn get_movie_by_imdb(&self, imdb: &str) -> Result<Option<Movie>> {
+        let imdb = imdb.to_string();
+        let movie = self
+            .with_conn(move |conn| {
+                let row: Option<MovieRow> = movies::table
+                    .filter(movies::imdb_id.eq(imdb))
                     .select(MovieRow::as_select())
                     .first(conn)
                     .optional()

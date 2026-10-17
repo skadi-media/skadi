@@ -16,6 +16,7 @@ pub mod arr_list;
 pub mod audible_catalog;
 pub mod audnexus;
 pub mod contributors;
+pub mod imdb_list;
 pub mod import_list;
 pub mod servarr;
 pub mod skyhook;

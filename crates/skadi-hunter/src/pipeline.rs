@@ -121,6 +121,37 @@ pub fn set_circuit_config_full(threshold: u32, cooldown_secs: i64, rate_pct: u32
     CIRCUIT_RATE_PCT.store(rate_pct, Relaxed);
 }
 
+/// One snapshot of the circuit-breaker tuning. [`search_circuit_open`] takes
+/// it from the process-global statics; [`circuit_open`] takes it as a value, so
+/// a test owns its configuration instead of writing the statics that every
+/// other test in the binary reads (SKADI-T-0707).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CircuitConfig {
+    pub threshold: u32,
+    pub cooldown_secs: i64,
+    pub rate_pct: u32,
+}
+
+impl CircuitConfig {
+    /// The compiled-in defaults, before the config plane's first refresh.
+    #[cfg(test)]
+    pub(crate) const DEFAULT: Self = Self {
+        threshold: DEFAULT_CIRCUIT_THRESHOLD,
+        cooldown_secs: DEFAULT_CIRCUIT_COOLDOWN_SECS,
+        rate_pct: DEFAULT_CIRCUIT_RATE_PCT,
+    };
+
+    /// The live values the config plane last applied.
+    fn live() -> Self {
+        use std::sync::atomic::Ordering::Relaxed;
+        Self {
+            threshold: CIRCUIT_THRESHOLD.load(Relaxed),
+            cooldown_secs: CIRCUIT_COOLDOWN_SECS.load(Relaxed),
+            rate_pct: CIRCUIT_RATE_PCT.load(Relaxed),
+        }
+    }
+}
+
 /// How [`decide`] trades quality against the chance a download actually
 /// completes (SKADI-T-0598). Without inbound peer connections (no VPN port
 /// forwarding) a torrent's seeders are only useful if one of them accepts
@@ -194,12 +225,21 @@ pub fn seeder_band(seeders: u32) -> u8 {
 /// the live config-plane values. Pure w.r.t. `health`/`now` (injected for testability);
 /// shared with the RSS fast-pass (`worker::rss_sweep`).
 pub(crate) fn search_circuit_open(health: Option<&IndexerHealth>, now: DateTime<Utc>) -> bool {
-    use std::sync::atomic::Ordering::Relaxed;
-    let threshold = CIRCUIT_THRESHOLD.load(Relaxed);
+    circuit_open(CircuitConfig::live(), health, now)
+}
+
+/// [`search_circuit_open`] with the tuning passed in: pure in `cfg`, `health`
+/// and `now`.
+pub(crate) fn circuit_open(
+    cfg: CircuitConfig,
+    health: Option<&IndexerHealth>,
+    now: DateTime<Utc>,
+) -> bool {
+    let threshold = cfg.threshold;
     if threshold == 0 {
         return false; // breaker disabled
     }
-    let cooldown = CIRCUIT_COOLDOWN_SECS.load(Relaxed);
+    let cooldown = cfg.cooldown_secs;
     let Some(h) = health else { return false };
 
     // Either arm can open the circuit; the cooldown and the half-open re-probe
@@ -211,7 +251,7 @@ pub(crate) fn search_circuit_open(health: Option<&IndexerHealth>, now: DateTime<
     // with successes interleaved often enough that `consecutive_failures` never
     // reached 3. Those cost a call every sweep, and since SKADI-T-0488 capped
     // concurrent solves, a solver slot too.
-    let rate_pct = CIRCUIT_RATE_PCT.load(Relaxed);
+    let rate_pct = cfg.rate_pct;
     let rate_open = rate_pct > 0
         && h.recent_failure_rate()
             .is_some_and(|r| r * 100.0 >= rate_pct as f32);
@@ -6368,19 +6408,14 @@ mod circuit_rate_arm_tests {
         (0..21).map(|i| i % 3 != 2).collect()
     }
 
-    /// Restore the defaults so these tests don't leak into the process-global
-    /// tuning other tests read.
-    fn reset() {
-        set_circuit_config_full(
-            DEFAULT_CIRCUIT_THRESHOLD,
-            DEFAULT_CIRCUIT_COOLDOWN_SECS,
-            DEFAULT_CIRCUIT_RATE_PCT,
-        );
-    }
+    // These tests go through `circuit_open` with their own `CircuitConfig`,
+    // never through the statics: libtest runs the tests of this binary in
+    // parallel, and a `set_circuit_config_full` here raced the reads of the
+    // sibling tests (SKADI-T-0707).
+    const CFG: CircuitConfig = CircuitConfig::DEFAULT;
 
     #[test]
     fn the_rate_arm_opens_what_the_streak_arm_cannot_see() {
-        reset();
         let now = Utc::now();
         // The production shape (SKADI-T-0568): ~55 % failure with successes
         // interleaved, so the streak never reaches the threshold of 3.
@@ -6394,7 +6429,7 @@ mod circuit_rate_arm_tests {
             h.recent_failure_rate().unwrap() * 100.0 < f32::from(60u8),
             "50 % is under the 60 % default — it should NOT open"
         );
-        assert!(!search_circuit_open(Some(&h), now));
+        assert!(!circuit_open(CFG, Some(&h), now));
 
         // Now worse than the threshold: fail, fail, succeed — 67 % failing with a
         // longest streak of 2, deliberately under the streak threshold of 3 so
@@ -6406,60 +6441,51 @@ mod circuit_rate_arm_tests {
             h.consecutive_failures
         );
         assert!(h.recent_failure_rate().unwrap() * 100.0 >= f32::from(60u8));
-        assert!(search_circuit_open(Some(&h), now), "the rate arm opens it");
-        reset();
+        assert!(circuit_open(CFG, Some(&h), now), "the rate arm opens it");
     }
 
     #[test]
     fn a_healthy_indexer_is_never_opened_by_the_rate_arm() {
-        reset();
         let now = Utc::now();
         let mut v = vec![false; 19];
         v.push(true);
         let h = health(&v, Some(now));
-        assert!(!search_circuit_open(Some(&h), now), "5 % must not rest it");
-        reset();
+        assert!(!circuit_open(CFG, Some(&h), now), "5 % must not rest it");
     }
 
     #[test]
     fn the_streak_arm_still_works() {
-        reset();
         let now = Utc::now();
         // A straight losing streak, too short for the rate window to report.
         let h = health(&[true, true, true], Some(now));
         assert_eq!(h.recent_failure_rate(), None, "below the sample floor");
         assert!(
-            search_circuit_open(Some(&h), now),
+            circuit_open(CFG, Some(&h), now),
             "the original arm must be untouched"
         );
-        reset();
     }
 
     #[test]
     fn the_cooldown_and_half_open_probe_are_shared() {
-        reset();
         let now = Utc::now();
-        let old = now - chrono::Duration::seconds(DEFAULT_CIRCUIT_COOLDOWN_SECS + 1);
+        let old = now - chrono::Duration::seconds(CFG.cooldown_secs + 1);
         let h = health(&mostly_failing(), Some(old));
         // Whichever arm tripped, a recovered indexer rejoins the same way.
         assert!(
-            !search_circuit_open(Some(&h), now),
+            !circuit_open(CFG, Some(&h), now),
             "past the cooldown the circuit is half-open for one probe"
         );
-        reset();
     }
 
     #[test]
     fn setting_the_rate_to_zero_disables_that_arm() {
-        reset();
         let now = Utc::now();
         let h = health(&mostly_failing(), Some(now));
-        assert!(search_circuit_open(Some(&h), now));
-        set_circuit_config_full(DEFAULT_CIRCUIT_THRESHOLD, DEFAULT_CIRCUIT_COOLDOWN_SECS, 0);
+        assert!(circuit_open(CFG, Some(&h), now));
+        let rate_off = CircuitConfig { rate_pct: 0, ..CFG };
         assert!(
-            !search_circuit_open(Some(&h), now),
+            !circuit_open(rate_off, Some(&h), now),
             "0 must mean off, not 'open on any failure'"
         );
-        reset();
     }
 }

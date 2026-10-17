@@ -1694,6 +1694,12 @@ struct ManualImportRequest {
     acquirable_ref: String,
     /// Optional category tag carried on the synthetic handle.
     category: Option<String>,
+    /// The download row this import is for (SKADI-T-0709). When given, the
+    /// row's `import_state` records how the import went: `imported` on
+    /// success, `failed` with the reason otherwise, so the Downloads page
+    /// stops offering a retry after a reload. Ignored by the preview.
+    #[serde(default)]
+    download_id: Option<String>,
 }
 
 /// `POST /downloads/import` response — the import outcome counts + details.
@@ -1773,8 +1779,26 @@ async fn manual_import(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ManualImportRequest>,
 ) -> std::result::Result<impl IntoResponse, ApiError> {
-    let (importer, completed) = resolve_manual_import(&state, &body).await?;
-    let outcome = importer.import(completed).await?;
+    let result = run_manual_import(&state, &body).await;
+    // Record the outcome on the download row when the request names one
+    // (SKADI-T-0709). Best-effort: a missing row is a no-op in the store, and
+    // a write error must not turn a finished import into an error response.
+    if let Some(id) = body.download_id.as_deref() {
+        let (import_state, error) = match &result {
+            Ok(outcome) => import_state_of(outcome),
+            Err(ApiError(e)) => (skadi_store::ImportState::Failed, Some(e.to_string())),
+        };
+        if let Some(store) = state.store.as_ref() {
+            use skadi_store::DownloadJobRepo;
+            if let Err(e) = store
+                .set_download_import(id, import_state, error.as_deref())
+                .await
+            {
+                tracing::warn!(download = %id, error = %e, "recording the manual import outcome failed");
+            }
+        }
+    }
+    let outcome = result?;
 
     let path_str = |p: std::path::PathBuf| p.to_string_lossy().into_owned();
     Ok(Json(ManualImportResponse {
@@ -1795,6 +1819,47 @@ async fn manual_import(
             .map(|(p, r)| (path_str(p), r))
             .collect(),
     }))
+}
+
+/// The import itself: resolve the importer and run it.
+async fn run_manual_import(
+    state: &Arc<AppState>,
+    body: &ManualImportRequest,
+) -> std::result::Result<skadi_importer::ImportOutcome, ApiError> {
+    let (importer, completed) = resolve_manual_import(state, body).await?;
+    Ok(importer.import(completed).await?)
+}
+
+/// What a manual import's outcome means for the download row (SKADI-T-0709):
+/// imported when a file was placed, replaced, or already in place; failed with
+/// the first refusal otherwise.
+fn import_state_of(
+    outcome: &skadi_importer::ImportOutcome,
+) -> (skadi_store::ImportState, Option<String>) {
+    let satisfied = outcome.imported.len() + outcome.replaced.len() + outcome.already_present.len();
+    let first_refusal = outcome
+        .rejected
+        .iter()
+        .chain(outcome.failed.iter())
+        .map(|(_, reason)| reason.as_str())
+        .next();
+    import_verdict(satisfied, first_refusal)
+}
+
+/// The rule behind [`import_state_of`], on counts.
+fn import_verdict(
+    satisfied: usize,
+    first_refusal: Option<&str>,
+) -> (skadi_store::ImportState, Option<String>) {
+    if satisfied > 0 {
+        (skadi_store::ImportState::Imported, None)
+    } else {
+        let reason = first_refusal.map_or_else(
+            || "nothing imported".to_string(),
+            |r| format!("nothing imported: {r}"),
+        );
+        (skadi_store::ImportState::Failed, Some(reason))
+    }
 }
 
 /// `POST /downloads/import/preview` response: a dry-run plan (no files touched).
@@ -1994,5 +2059,33 @@ mod import_path_tests {
         assert_eq!(import_kind("tv"), "series");
         assert_eq!(import_kind("movie"), "movie");
         assert_eq!(import_kind("audiobook"), "audiobook");
+    }
+}
+
+#[cfg(test)]
+mod manual_import_state_tests {
+    use super::import_verdict;
+    use skadi_store::ImportState;
+
+    /// SKADI-T-0709: one placed, replaced or already-present file makes the
+    /// row `imported`; none makes it `failed`, with the first refusal.
+    #[test]
+    fn a_manual_import_outcome_maps_to_the_rows_import_state() {
+        assert_eq!(import_verdict(1, None), (ImportState::Imported, None));
+        assert_eq!(
+            import_verdict(2, Some("one file was a sample")),
+            (ImportState::Imported, None)
+        );
+        assert_eq!(
+            import_verdict(0, Some("no episode matched")),
+            (
+                ImportState::Failed,
+                Some("nothing imported: no episode matched".to_string())
+            )
+        );
+        assert_eq!(
+            import_verdict(0, None),
+            (ImportState::Failed, Some("nothing imported".to_string()))
+        );
     }
 }

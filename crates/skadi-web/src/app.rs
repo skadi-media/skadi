@@ -1521,7 +1521,8 @@ fn DownloadsSection() -> impl IntoView {
                 }
             }
             import_busy.set(true);
-            let result = api::run_import(&api::ManualImportRequest::for_download(&facts)).await;
+            let result =
+                api::run_import(&api::ManualImportRequest::for_download_row(&id, &facts)).await;
             let (ok, text) = match result {
                 Ok(outcome) => dlm::import_result(&outcome),
                 Err(e) => (false, e.0),

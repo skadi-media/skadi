@@ -2248,16 +2248,30 @@ pub struct ManualImportRequest {
     pub acquirable_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// The download row the import is for (SKADI-T-0709): the daemon records
+    /// the outcome on it, so the offer does not come back after a reload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_id: Option<String>,
 }
 
 impl ManualImportRequest {
-    /// The request that imports `facts` (the row's own path, kind and target).
+    /// The request that previews an import of `facts` (the row's own path,
+    /// kind and target).
     pub fn for_download(facts: &DownloadImport) -> Self {
         Self {
             path: facts.path.clone(),
             kind: facts.kind.clone(),
             acquirable_ref: facts.acquirable_ref.clone(),
             category: None,
+            download_id: None,
+        }
+    }
+
+    /// The request that runs the import for row `id` and records it there.
+    pub fn for_download_row(id: &str, facts: &DownloadImport) -> Self {
+        Self {
+            download_id: Some(id.to_string()),
+            ..Self::for_download(facts)
         }
     }
 }

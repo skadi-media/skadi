@@ -29,8 +29,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The web crate is built for wasm; the lint below needs the target.
+      - name: Add the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Format check
         run: cargo fmt --check
+
+      # `cargo fmt --check` stops at the workspace; the two excluded crates
+      # need naming (SKADI-T-0640).
+      - name: Format check (web and worker, outside the workspace)
+        run: >-
+          cargo fmt --check --manifest-path crates/skadi-web/Cargo.toml &&
+          cargo fmt --check --manifest-path crates/skadi-downloader-worker/Cargo.toml
 
       # --all-targets so test and bench code is linted too (SKADI-T-0484).
       # Without it the lint gate covered library code only, which is how three
@@ -46,6 +57,13 @@ jobs:
         run: >-
           cargo clippy --manifest-path crates/skadi-downloader-worker/Cargo.toml
           --all-targets -- -D warnings
+
+      # The web UI is excluded from the workspace for the same reason and was
+      # linted by nothing (SKADI-T-0640). It is a wasm crate: lint it as one.
+      - name: Clippy (web, outside the workspace)
+        run: >-
+          cargo clippy --manifest-path crates/skadi-web/Cargo.toml
+          --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Cargo check
         run: cargo check --workspace

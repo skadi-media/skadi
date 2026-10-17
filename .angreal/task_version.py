@@ -60,23 +60,41 @@ def write_version(new_version):
                         f.write("\n")
                     print(f"  Updated {os.path.relpath(path, cwd)}")
 
-    # Update bindings Cargo.toml files (standalone workspaces, version not inherited)
+    # Standalone Cargo.toml files (version not inherited): bindings, and the
+    # crates excluded from the workspace (SKADI-T-0640). The sweep used to miss
+    # the excluded ones and report "in sync" while they lagged a release.
+    for cargo_path in _standalone_manifests():
+        with open(cargo_path, "r") as f:
+            content = f.read()
+        updated = re.sub(
+            r'(\[package\]\s*\n(?:.*\n)*?version\s*=\s*")[^"]+(")',
+            rf'\g<1>{new_version}\2',
+            content,
+        )
+        if updated != content:
+            with open(cargo_path, "w") as f:
+                f.write(updated)
+            print(f"  Updated {os.path.relpath(cargo_path, cwd)}")
+
+
+# Crates outside the workspace carry a literal version (they cannot use
+# `version.workspace = true`), so every version sweep names them (SKADI-T-0640).
+EXCLUDED_CRATE_MANIFESTS = [
+    os.path.join(cwd, "crates", "skadi-web", "Cargo.toml"),
+    os.path.join(cwd, "crates", "skadi-downloader-worker", "Cargo.toml"),
+]
+
+
+def _standalone_manifests():
+    """Every Cargo.toml whose version is not inherited from the workspace."""
+    paths = [m for m in EXCLUDED_CRATE_MANIFESTS if os.path.isfile(m)]
     bindings_dir = os.path.join(cwd, "bindings")
     if os.path.isdir(bindings_dir):
-        for binding in os.listdir(bindings_dir):
+        for binding in sorted(os.listdir(bindings_dir)):
             cargo_path = os.path.join(bindings_dir, binding, "Cargo.toml")
             if os.path.isfile(cargo_path):
-                with open(cargo_path, "r") as f:
-                    content = f.read()
-                updated = re.sub(
-                    r'(\[package\]\s*\n(?:.*\n)*?version\s*=\s*")[^"]+(")',
-                    rf'\g<1>{new_version}\2',
-                    content,
-                )
-                if updated != content:
-                    with open(cargo_path, "w") as f:
-                        f.write(updated)
-                    print(f"  Updated {os.path.relpath(cargo_path, cwd)}")
+                paths.append(cargo_path)
+    return paths
 
 
 def bump(version, part):
@@ -114,18 +132,14 @@ def find_all_versions():
                 if pkg.get("private") and "version" in pkg:
                     versions[rel] = pkg["version"]
 
-    # Check bindings Cargo.toml files
-    bindings_dir = os.path.join(cwd, "bindings")
-    if os.path.isdir(bindings_dir):
-        for binding in os.listdir(bindings_dir):
-            cargo_path = os.path.join(bindings_dir, binding, "Cargo.toml")
-            if os.path.isfile(cargo_path):
-                with open(cargo_path, "r") as f:
-                    content = f.read()
-                match = re.search(r'\[package\]\s*\n(?:.*\n)*?version\s*=\s*"([^"]+)"', content)
-                if match:
-                    rel = os.path.relpath(cargo_path, cwd)
-                    versions[rel] = match.group(1)
+    # Standalone Cargo.toml files: bindings and the excluded crates.
+    for cargo_path in _standalone_manifests():
+        with open(cargo_path, "r") as f:
+            content = f.read()
+        match = re.search(r'\[package\]\s*\n(?:.*\n)*?version\s*=\s*"([^"]+)"', content)
+        if match:
+            rel = os.path.relpath(cargo_path, cwd)
+            versions[rel] = match.group(1)
 
     return versions
 

@@ -87,8 +87,8 @@ fn gate(method: &str, url: &str) -> Result<(), ApiError> {
     } else {
         // The UI offered something this role cannot do. Say so on the console
         // with a fixed prefix: it is the request that would have been a 403,
-        // and the per-role sweep (`web-e2e/role-ui.mjs`, SKADI-T-0639) counts
-        // these lines as it counts 403s.
+        // and the per-role sweep (`web-e2e/tests/roles.spec.ts`, SKADI-T-0639)
+        // counts these lines as it counts 403s.
         leptos::logging::warn!("{GATE_PREFIX} {method} {}", crate::surface::api_path(url));
         Err(ApiError::not_available())
     }
@@ -1182,6 +1182,13 @@ impl AcquirablePath {
 
     fn url(&self, action: &str) -> String {
         format!("{API_BASE}{}/{action}", self.0)
+    }
+
+    /// Whether to offer `role` the control that sends `method …/action`
+    /// (SKADI-T-0639): [`crate::surface::offered`] for this acquirable.
+    #[must_use]
+    pub fn offered(&self, role: Option<&str>, method: &str, action: &str) -> bool {
+        crate::surface::offered(role, method, &format!("{}/{action}", self.0))
     }
 }
 

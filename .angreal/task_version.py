@@ -177,6 +177,14 @@ def verify_versions():
 def bump_version(part):
     current = read_version()
     new = bump(current, part)
+    # The per-role sweep is a release gate (SKADI-T-0639, Dylan 2026-10-17): a
+    # release whose UI offers a role what the API refuses is not cut. The
+    # bump is the one step of every release, so it runs the sweep first and
+    # stops on a failure, before any manifest changes.
+    print("Running the per-role sweep before the bump (angreal test roles) ...", flush=True)
+    if subprocess.run(["angreal", "test", "roles"], cwd=cwd).returncode != 0:
+        print("Version not bumped: the per-role sweep failed (SKADI-T-0639).", flush=True)
+        raise SystemExit(1)
     print(f"Bumping version: {current} -> {new}")
     write_version(new)
     print(f"Updated workspace version to {new}")

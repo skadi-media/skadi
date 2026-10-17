@@ -155,6 +155,53 @@ def e2e_web():
 
 @test()
 @angreal.command(
+    name="roles",
+    about="run the per-role UI sweep; a failure blocks a release (SKADI-T-0639)",
+    tool=angreal.ToolDescription(
+        """
+        For each role that is not the admin (member, contributor, kid), sign
+        in a throwaway member on the web e2e harness, open every page the role
+        is offered, press every control, and fail on a 401 or 403, on a
+        request the client gate stopped, on a write the server's gate refuses,
+        and on a link to a page the role may not use.
+
+        ## When to use
+        - After changing what a role may do: `household::path_allowed`,
+          `crates/skadi-web/src/surface.rs`, or any role gate in the web UI.
+        - `angreal version bump` runs it first and stops on a failure: a
+          release is not cut while it fails.
+
+        ## Notes
+        - It is `web-e2e/tests/roles.spec.ts`, also run by `angreal test e2e-web`.
+        - Builds the UI and the harness (debug), as `e2e-web` does. Never
+          reuses a running server (CI=1), so it tests this tree.
+        - Writes never reach the harness daemon: the browser answers them and
+          the harness's `POST /e2e/gate` says what the server would decide.
+        """,
+        risk_level="safe",
+    ),
+)
+def role_sweep():
+    import shutil
+    if shutil.which("npx") is None:
+        _notify("Node/npx not found. Install Node.js to run the role sweep.")
+        raise SystemExit(1)
+    e2e_dir = os.path.join(cwd, "web-e2e")
+    if not os.path.isdir(os.path.join(e2e_dir, "node_modules")):
+        if subprocess.run(["npm", "ci"], cwd=e2e_dir).returncode != 0:
+            raise SystemExit(1)
+    subprocess.run(["npx", "playwright", "install", "chromium"], cwd=e2e_dir)
+    env = dict(os.environ, CI="1")
+    result = subprocess.run(
+        ["npx", "playwright", "test", "tests/roles.spec.ts"], cwd=e2e_dir, env=env
+    )
+    if result.returncode != 0:
+        _notify("role sweep FAILED: the UI offers a role what the API refuses (SKADI-T-0639)")
+    raise SystemExit(result.returncode)
+
+
+@test()
+@angreal.command(
     name="web",
     about="run the web UI wasm tests (headless Chrome via wasm-pack)",
     tool=angreal.ToolDescription(

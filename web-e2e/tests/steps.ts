@@ -104,6 +104,16 @@ export async function givenSignedInAs(
   page: Page,
   role: "member" | "contributor" | "kid",
 ): Promise<() => Promise<void>> {
+  return (await signInAs(request, page, role)).restore;
+}
+
+/** `givenSignedInAs`, and the admin token it set, for a spec that needs to
+ * call the API as the admin while the member is signed in (SKADI-T-0639). */
+export async function signInAs(
+  request: APIRequestContext,
+  page: Page,
+  role: "member" | "contributor" | "kid",
+): Promise<{ restore: () => Promise<void>; admin: string }> {
   const admin = `e2e-admin-${Date.now()}`;
   const auth = { Authorization: `Bearer ${admin}` };
   const set = await request.put(`${API}/config/api_token`, { data: { value: admin } });
@@ -132,7 +142,7 @@ export async function givenSignedInAs(
     await restore();
     throw e;
   }
-  return restore;
+  return { restore, admin };
 }
 
 // ----------------------------------------------------------------- When ----

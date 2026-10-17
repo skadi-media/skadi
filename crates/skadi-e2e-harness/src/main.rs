@@ -340,8 +340,8 @@ async fn main() {
 /// Harness-only seeding (SKADI-T-0713). The harness's downloader is a mock
 /// that writes no download rows, so the Downloads page would never have
 /// anything on it. `POST /e2e/downloads` writes rows in the named states
-/// straight to the store the page reads. Nothing like this exists in the
-/// daemon.
+/// straight to the store the page reads, and `POST /e2e/gate` answers the
+/// per-role sweep (SKADI-T-0639). Nothing like this exists in the daemon.
 mod seed {
     use axum::{Json, Router, extract::State, routing::post};
     use skadi_store::{DownloadJobRepo, NewDownloadJob, Store};
@@ -371,7 +371,27 @@ mod seed {
     pub fn routes(store: Store) -> Router {
         Router::new()
             .route("/e2e/downloads", post(seed))
+            .route("/e2e/gate", post(gate))
             .with_state(store)
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GateQuery {
+        role: skadi_api::household::Role,
+        method: String,
+        /// The nested API path: no `/api/v1`, no query.
+        path: String,
+    }
+
+    /// What the server's gate decides for `role` calling `method path`
+    /// (SKADI-T-0639). The per-role sweep answers every write in the browser,
+    /// so pressing Delete deletes nothing, and asks this whether the daemon
+    /// would have refused it. It runs `household::path_allowed` itself, the
+    /// one authority, not a copy.
+    async fn gate(Json(q): Json<GateQuery>) -> Json<serde_json::Value> {
+        let allowed = axum::http::Method::from_bytes(q.method.as_bytes())
+            .is_ok_and(|m| skadi_api::household::path_allowed(q.role, &m, &q.path));
+        Json(serde_json::json!({ "allowed": allowed }))
     }
 
     /// Rows not left queued are enqueued and claimed first, so the claim takes

@@ -144,6 +144,11 @@ pub fn WantedPage() -> impl IntoView {
     let list = ListLoad::new();
     let loading = RwSignal::new(true);
     let note = RwSignal::new(None::<Result<String, String>>);
+    // Search is a contributor's; unmonitoring is the operator's. Each control
+    // is drawn only for a role that may make its call (SKADI-T-0639), read in
+    // the reactive closures below so they follow `/me`.
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let role = move || role_ctx.and_then(|r| r.get());
 
     let load = move || {
         loading.set(true);
@@ -323,7 +328,8 @@ pub fn WantedPage() -> impl IntoView {
                 </div>
             </div>
             {move || {
-                let n = series_with_specials(&all.get()).len();
+                let may_bulk = crate::surface::offered(role().as_deref(), "POST", "/series/x/seasons/0/monitor");
+                let n = if may_bulk { series_with_specials(&all.get()).len() } else { 0 };
                 let has_note = bulk_note.get().is_some();
                 (n > 0 || has_note).then(|| view! {
                     <div class="wanted-bulk">
@@ -353,6 +359,7 @@ pub fn WantedPage() -> impl IntoView {
             <div class="activity-list wanted-list">
                 {move || {
                     let items = filtered();
+                    let role = role();
                     if items.is_empty() && list.is_loaded() && !loading.get() {
                         return view! { <Empty message="Nothing wanted matches these filters."/> }.into_any();
                     }
@@ -363,7 +370,15 @@ pub fn WantedPage() -> impl IntoView {
                         let href = detail_href(&item.kind, &item.id);
                         let ordered = ordered_editions(&item);
                         let total = ordered.len();
-                        let has_specials = item.kind == "series" && ordered.iter().any(is_special);
+                        let item_path = match item.kind.as_str() {
+                            "series" => format!("/series/{}", item.id),
+                            "movie" => format!("/movies/{}", item.id),
+                            _ => format!("/books/{}", item.id),
+                        };
+                        let may_unmonitor = crate::surface::offered(role.as_deref(), "PATCH", &item_path);
+                        let may_specials = crate::surface::offered(
+                            role.as_deref(), "POST", &format!("/series/{}/seasons/0/monitor", item.id));
+                        let has_specials = may_specials && item.kind == "series" && ordered.iter().any(is_special);
                         let expanded_all = show_all.get().as_deref() == Some(item.id.as_str());
                         let shown: Vec<WantedEdition> = if expanded_all {
                             ordered.clone()
@@ -397,6 +412,7 @@ pub fn WantedPage() -> impl IntoView {
                         let panel_kind = item_kind.clone();
                         let panel_item = item_id.clone();
                         let panel_eds = item.editions.clone();
+                        let panel_role = role.clone();
                         let panel = move || {
                             let (iid, eid) = expanded.get()?;
                             if iid != panel_item {
@@ -406,7 +422,13 @@ pub fn WantedPage() -> impl IntoView {
                             let at = acquirable_path(&panel_kind, &panel_item, &eid);
                             let at_search = at.clone();
                             let label = edition_label(&panel_kind, &e);
-                            let is_tv = panel_kind == "series";
+                            let may_search_now = at.offered(panel_role.as_deref(), "POST", "acquire");
+                            let may_unmonitor_episode = panel_kind == "series"
+                                && crate::surface::offered(
+                                    panel_role.as_deref(),
+                                    "POST",
+                                    &format!("/series/{panel_item}/episodes/{eid}/monitor"),
+                                );
                             let sid = panel_item.clone();
                             let eid_un = eid.clone();
                             Some(view! {
@@ -415,9 +437,11 @@ pub fn WantedPage() -> impl IntoView {
                                         <strong>{label}</strong>
                                         <Pill color=tone(status_class(&e.status_kind))>{e.status_kind.clone()}</Pill>
                                         <span class="spacer"></span>
-                                        <Button variant="default" size="xs"
-                                            on_click=Callback::new(move |()| search_now(at_search.clone()))>"Search now"</Button>
-                                        {is_tv.then(|| {
+                                        {may_search_now.then(|| view! {
+                                            <Button variant="default" size="xs"
+                                                on_click=Callback::new(move |()| search_now(at_search.clone()))>"Search now"</Button>
+                                        })}
+                                        {may_unmonitor_episode.then(|| {
                                             let sid = sid.clone();
                                             let eid_un = eid_un.clone();
                                             view! {
@@ -454,10 +478,12 @@ pub fn WantedPage() -> impl IntoView {
                                             "Unmonitor specials"
                                         </Button>
                                     })}
-                                    <Button variant="subtle" size="xs"
-                                        on_click=Callback::new(move |()| unmonitor_item(un_kind.clone(), un_id.clone()))>
-                                        "Unmonitor"
-                                    </Button>
+                                    {may_unmonitor.then(|| view! {
+                                        <Button variant="subtle" size="xs"
+                                            on_click=Callback::new(move |()| unmonitor_item(un_kind.clone(), un_id.clone()))>
+                                            "Unmonitor"
+                                        </Button>
+                                    })}
                                 </div>
                                 {panel}
                             </div>

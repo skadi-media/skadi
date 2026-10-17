@@ -327,3 +327,31 @@ jobs:
       contents: read
       packages: write
     secrets: inherit
+
+  release:
+    name: Release (binaries)
+    # The same gate as `images` (SKADI-T-0636). release.yml used to fire on the
+    # tag by itself, so a tag at a commit with a failing test published
+    # tarballs and no images: a release with binaries and no matching
+    # containers. Now a tag publishes binaries only after this run is green.
+    needs:
+      [
+        check,
+        test-unit,
+        test-integration,
+        test-store-dual-backend,
+        test-bdd,
+        test-functional,
+        compose-config,
+        build,
+      ]
+    # Tags only, and never on pull_request: a fork PR must not cut a release.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/release.yml
+    # `contents: write` for this job alone. A called workflow cannot exceed its
+    # caller's token, and widening the whole file would hand write access to
+    # every test job.
+    permissions:
+      contents: write
+    secrets: inherit

@@ -20,8 +20,8 @@ use std::time::Duration;
 use chrono::Utc;
 use librqbit::api::{Api, TorrentIdOrHash};
 use librqbit::{
-    AddTorrent, AddTorrentOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStats,
-    TorrentStatsState,
+    AddTorrent, AddTorrentOptions, DhtSessionConfig, ListenerOptions, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStats, TorrentStatsState,
 };
 use skadi_store::{
     ConfigRepo, ConfigSource, DownloadCategory, DownloadCategoryRepo, DownloadJob, DownloadJobRepo,
@@ -334,9 +334,6 @@ pub fn database_url_from_env() -> anyhow::Result<String> {
 /// only IO-wait on the shared Docker VM (measured 8-wide, SKADI-T-0391).
 const CONCURRENT_INIT_LIMIT: usize = 4;
 
-/// Size of librqbit's deferred disk-write queue (MiB) — see `build_api`.
-const DEFER_WRITES_MIB: usize = 16;
-
 /// Next librqbit torrent id this worker hands out as `preferred_id` on every add.
 ///
 /// librqbit 8.1's JSON persistence allocates ids as `max(persisted) + 1`, read
@@ -470,16 +467,17 @@ pub async fn build_api(cfg: &Config) -> anyhow::Result<Arc<Api>> {
     std::fs::create_dir_all(&cfg.download_dir)?;
     std::fs::create_dir_all(&cfg.state_dir)?;
     let opts_disable_dht = env_flag("SKADI_WORKER_DISABLE_DHT");
-    // A VPN-forwarded port wins over the configured range (SKADI-T-0587): the
-    // range is only reachable when something forwards it, and behind a VPN
+    // A VPN-forwarded port wins over the configured one (SKADI-T-0587): the
+    // port is only reachable when something forwards it, and behind a VPN
     // without forwarding no peer ever connects *in* — a one-seeder audiobook
-    // seeded from behind another NAT stalls at 0% forever.
-    let listen_range = match forwarded_port_from_env() {
+    // seeded from behind another NAT stalls at 0% forever. librqbit 9 listens on
+    // one address, not a range, so the configured range gives its first port.
+    let listen_port = match forwarded_port_from_env() {
         Some(port) => {
             tracing::info!(port, "listening on the VPN-forwarded port");
-            port..port.saturating_add(1)
+            port
         }
-        None => cfg.port_range.clone(),
+        None => cfg.port_range.start,
     };
     let opts = SessionOptions {
         persistence: Some(SessionPersistenceConfig::Json {
@@ -487,21 +485,25 @@ pub async fn build_api(cfg: &Config) -> anyhow::Result<Arc<Api>> {
         }),
         fastresume: true,
         concurrent_init_limit: Some(CONCURRENT_INIT_LIMIT),
-        listen_port_range: Some(listen_range),
-        enable_upnp_port_forwarding: false,
+        // IPv4 only, as under librqbit 8: the worker runs in gluetun's network,
+        // which tunnels IPv4 (SKADI-T-0645).
+        listen: Some(ListenerOptions {
+            listen_addr: (std::net::Ipv4Addr::UNSPECIFIED, listen_port).into(),
+            ipv4_only: true,
+            enable_upnp_port_forwarding: false,
+            ..Default::default()
+        }),
+        ipv4_only: true,
         // Announce every torrent to these as well as its own (SKADI-T-0597).
         trackers: extra_tracker_urls(&cfg.extra_trackers),
-        // Route piece writes through librqbit's single `disk_writer` task
-        // (bounded in-memory queue, ~16 MiB) instead of one `block_in_place` per
-        // received piece per peer. On a stalled mount the latter turns every
-        // peer into a parked blocking thread (SKADI-T-0392); with the writer,
-        // writes back-pressure into the queue and only ONE thread blocks.
-        defer_writes_up_to: Some(DEFER_WRITES_MIB),
+        // librqbit 9 removed the deferred disk-write queue that bounded writes on
+        // a stalled mount (SKADI-T-0392); its writes now run through a blocking
+        // pool behind a semaphore, and `MAX_BLOCKING_THREADS` still caps the pool.
         // Lab isolation knob (SKADI-T-0393): the lab has no VPN and no real
         // trackers, but librqbit would still announce every synthetic torrent to
         // the public DHT. `SKADI_WORKER_DISABLE_DHT=1` keeps it quiet (and lets
         // SKADI-T-0392 A/B the DHT's memory footprint). Unset in prod.
-        disable_dht: opts_disable_dht,
+        dht: (!opts_disable_dht).then(DhtSessionConfig::default),
         // Global up/down bandwidth caps (SKADI-T-0211); `None` ⇒ unlimited.
         ratelimits: librqbit::limits::LimitsConfig {
             upload_bps: cfg.up_limit_bps.and_then(std::num::NonZeroU32::new),
@@ -1904,7 +1906,7 @@ fn progress_from_stats(stats: &TorrentStats, info_hash: &str) -> DownloadProgres
 #[must_use]
 pub fn state_str(s: TorrentStatsState) -> &'static str {
     match s {
-        TorrentStatsState::Initializing => "initializing",
+        TorrentStatsState::Initializing { .. } => "initializing",
         TorrentStatsState::Live => "live",
         TorrentStatsState::Paused => "paused",
         TorrentStatsState::Error => "error",
@@ -2479,7 +2481,11 @@ mod tests {
             live: None,
         };
         assert_eq!(
-            progress_from_stats(&stats(TorrentStatsState::Initializing), "abc").client_state,
+            progress_from_stats(
+                &stats(TorrentStatsState::Initializing { paused: false }),
+                "abc"
+            )
+            .client_state,
             Some("initializing".to_string())
         );
         assert_eq!(
@@ -2493,7 +2499,10 @@ mod tests {
     }
     #[test]
     fn state_str_covers_all_variants() {
-        assert_eq!(state_str(TorrentStatsState::Initializing), "initializing");
+        assert_eq!(
+            state_str(TorrentStatsState::Initializing { paused: false }),
+            "initializing"
+        );
         assert_eq!(state_str(TorrentStatsState::Live), "live");
         assert_eq!(state_str(TorrentStatsState::Paused), "paused");
         assert_eq!(state_str(TorrentStatsState::Error), "error");

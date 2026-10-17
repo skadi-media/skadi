@@ -20,7 +20,11 @@ publish = false
 [dependencies]
 skadi-store = { path = "../skadi-store" }
 skadi-config = { path = "../skadi-config" }
-librqbit = "8.1.1"
+# librqbit 9 from skadi's fork (SKADI-T-0645), pinned: upstream main plus
+# two memory fixes not yet released upstream, the bounded DHT get_peers queue
+# (ikatson/rqbit#706) and the bounded peers map (ikatson/rqbit#667). Move back
+# to a crates.io release once one carries both.
+librqbit = { git = "https://github.com/dylanbstorey/rqbit", rev = "faf553d47029b9c13d4006d9420da04e82c4465b" }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 anyhow = "1"
@@ -56,6 +60,3 @@ skadi-core = { path = "../skadi-core" }
 name = "bdd"
 harness = false
 
-# librqbit's DHT, patched (SKADI-T-0645): see vendor/librqbit-dht/PATCHED.md.
-[patch.crates-io]
-librqbit-dht = { path = "../../vendor/librqbit-dht" }

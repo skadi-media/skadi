@@ -1304,26 +1304,41 @@ fn work_row<F: Fn() + Copy + Send + Sync + 'static>(w: api::Work, reload: F) -> 
     } else if w.watched {
         view! { <Pill color=token::ICE>"Watching"</Pill> }.into_any()
     } else {
+        // Each control only for a known role that may make its call
+        // (SKADI-T-0639): Watch is `PUT /watchers/book/{asin}` (the admin's), Add
+        // is `POST /books` (contributor and up). Both were drawn for every role.
+        let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+        let may = move |method: &str, path: &str| {
+            crate::surface::offered(role.and_then(|r| r.get()).as_deref(), method, path)
+        };
         let asin_w = w.asin.clone();
-        let on_watch = move |()| {
-            let asin = asin_w.clone();
-            spawn_local(async move {
-                let _ = api::set_watcher("book", &asin).await;
-                reload();
-            });
-        };
         let asin_a = w.asin.clone();
-        let on_add = move |()| {
-            let asin = asin_a.clone();
-            spawn_local(async move {
-                let _ = api::add_book(&asin, None, true).await;
-                reload();
-            });
-        };
         view! {
             <div class="work-actions">
-                <Button variant="default" size="xs" on_click=Callback::new(on_watch)>"Watch"</Button>
-                <Button size="xs" on_click=Callback::new(on_add)>"Add"</Button>
+                {move || may("PUT", "/watchers/book/asin").then(|| {
+                    let asin = asin_w.clone();
+                    let on_watch = move |()| {
+                        let asin = asin.clone();
+                        spawn_local(async move {
+                            let _ = api::set_watcher("book", &asin).await;
+                            reload();
+                        });
+                    };
+                    view! {
+                        <Button variant="default" size="xs" on_click=Callback::new(on_watch)>"Watch"</Button>
+                    }
+                })}
+                {move || may("POST", "/books").then(|| {
+                    let asin = asin_a.clone();
+                    let on_add = move |()| {
+                        let asin = asin.clone();
+                        spawn_local(async move {
+                            let _ = api::add_book(&asin, None, true).await;
+                            reload();
+                        });
+                    };
+                    view! { <Button size="xs" on_click=Callback::new(on_add)>"Add"</Button> }
+                })}
             </div>
         }
         .into_any()

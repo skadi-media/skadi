@@ -101,6 +101,15 @@ pub fn allowed(role: Role, method: &str, path: &str) -> bool {
     }
 }
 
+/// Whether to **offer** a control whose action is `method path` (SKADI-T-0639):
+/// only to a role that is known and may make the call. An unresolved role is
+/// offered nothing, the rule that stopped the kid's 403s: gate on a known-good
+/// role, never on the absence of a bad one.
+#[must_use]
+pub fn offered(role: Option<&str>, method: &str, path: &str) -> bool {
+    role.is_some_and(|r| allowed(Role::parse(r), method, path))
+}
+
 /// The nested API path of a request URL: `/api/v1/movies/1?x=y` → `/movies/1`.
 #[must_use]
 pub fn api_path(url: &str) -> &str {
@@ -159,6 +168,16 @@ mod tests {
         assert_eq!(api_path("/api/v1/movies/1?x=2"), "/movies/1");
         assert_eq!(api_path("/api/v1/history?acquirable=a#f"), "/history");
         assert_eq!(api_path("/elsewhere"), "/elsewhere");
+    }
+
+    #[test]
+    fn a_control_is_offered_only_to_a_known_role_that_may_use_it() {
+        assert!(!offered(None, "PUT", "/watchers/book/b1"));
+        assert!(offered(Some("admin"), "PUT", "/watchers/book/b1"));
+        assert!(!offered(Some("contributor"), "PUT", "/watchers/book/b1"));
+        assert!(offered(Some("contributor"), "POST", "/books"));
+        assert!(!offered(Some("member"), "POST", "/books"));
+        assert!(!offered(Some("kid"), "POST", "/books"));
     }
 
     #[test]

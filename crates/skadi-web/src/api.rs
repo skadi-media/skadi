@@ -85,9 +85,17 @@ fn gate(method: &str, url: &str) -> Result<(), ApiError> {
     if crate::surface::may_send(role.as_deref(), method, url) {
         Ok(())
     } else {
+        // The UI offered something this role cannot do. Say so on the console
+        // with a fixed prefix: it is the request that would have been a 403,
+        // and the per-role sweep (`web-e2e/role-ui.mjs`, SKADI-T-0639) counts
+        // these lines as it counts 403s.
+        leptos::logging::warn!("{GATE_PREFIX} {method} {}", crate::surface::api_path(url));
         Err(ApiError::not_available())
     }
 }
+
+/// The console prefix of a request the gate did not send (SKADI-T-0639).
+pub const GATE_PREFIX: &str = "skadi: not sent for this role:";
 
 /// Set once any API response comes back `401` (SKADI-T-0474).
 ///

@@ -38,6 +38,9 @@ data class MovieCollection(
 data class Movie(
     val id: String,
     val title: String,
+    /** The server's sort keys (SKADI-T-0737); absent from an older server. */
+    val sort_title: String? = null,
+    val sort_collection: String? = null,
     val external_ids: ExternalIds? = null,
     val year: Int? = null,
     val overview: String? = null,
@@ -141,6 +144,8 @@ data class ExternalIds(
 data class Series(
     val id: String,
     val title: String,
+    /** The server's sort key (SKADI-T-0737); absent from an older server. */
+    val sort_title: String? = null,
     val external_ids: ExternalIds? = null,
     val year: Int? = null,
     val overview: String? = null,

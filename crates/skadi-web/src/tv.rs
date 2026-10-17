@@ -444,6 +444,8 @@ pub fn SeriesDetailPage() -> impl IntoView {
                                 </Button>
                                 <Button variant="default" size="xs" bad=true disabled=busy
                                     on_click=Callback::new(on_delete)>"Delete"</Button>
+                                <crate::import_lists::ExcludeFromListsButton exclusion=crate::import_lists::exclusion_for(
+                                    "series", "tvdb", s.external_ids.tvdb.map(|t| t.to_string()), &s.title)/>
                             </div>
                             {rating.map(|r| view! { <span class="rating-chip">{r}</span> })}
                         {genres.map(|g| view! { <p class="genres muted">{g}</p> })}

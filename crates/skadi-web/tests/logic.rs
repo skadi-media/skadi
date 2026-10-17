@@ -21,8 +21,8 @@ use skadi_web::api::{WantedEdition, WantedItem};
 use skadi_web::audiobook_import::confidence_class;
 use skadi_web::audiobooks::{
     SeriesTile, book_byline, book_status, clean_overview, extract_asin, file_resettable,
-    group_books_by_series, has_series_position, looks_like_asin, merge_owned_missing,
-    name_sort_key, series_label, split_related_tiles,
+    group_books_by_author, group_books_by_series, has_series_position, looks_like_asin,
+    merge_owned_missing, series_label, split_related_tiles,
 };
 use skadi_web::dashboard::{book_counts, health_strip_parts, movie_counts, severity_class};
 use skadi_web::movies::{
@@ -273,6 +273,8 @@ fn movie_counts_rolls_up_editions() {
         id: "m".into(),
         added_at: None,
         title: "t".into(),
+        sort_title: None,
+        external_ids: Default::default(),
         year: None,
         overview: None,
         poster_url: None,
@@ -317,6 +319,9 @@ fn book_with(statuses: &[serde_json::Value]) -> Book {
         added_at: None,
         external_ids: Default::default(),
         title: "t".into(),
+        sort_title: None,
+        sort_authors: Vec::new(),
+        sort_series: None,
         subtitle: None,
         author_id: None,
         authors: vec![],
@@ -482,6 +487,7 @@ fn merge_owned_missing_orders_by_position_and_dedups() {
     let work = |asin: &str, pos: &str, owned: bool| Work {
         asin: asin.into(),
         title: format!("Book {pos}"),
+        sort_title: None,
         authors: vec!["Matt Dinniman".into()],
         series_name: Some("Dungeon Crawler Carl".into()),
         series_position: Some(pos.into()),
@@ -789,6 +795,7 @@ fn series_lib_status_ignores_missing_specials() {
         added_at: None,
         external_ids: Default::default(),
         title: "t".into(),
+        sort_title: None,
         year: None,
         overview: None,
         status: None,
@@ -1712,6 +1719,7 @@ fn wanted_item(kind: &str, title: &str, editions: &[(&str, &str)]) -> WantedItem
         kind: kind.into(),
         id: format!("{kind}-{title}"),
         title: title.into(),
+        sort_title: None,
         year: Some(2020),
         monitored: true,
         editions: editions
@@ -1774,8 +1782,14 @@ fn wanted_filters_by_kind_status_and_title_and_sorts() {
     assert_eq!(
         all.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
         vec!["Alpha Film", "Middle Book", "Zeta Show"],
-        "sorted by title, case-insensitively"
+        "with no server key, sorted by the raw title, case-insensitively"
     );
+    // The server's key wins (SKADI-T-0737): "The Abyss" files under A.
+    let mut keyed = items.clone();
+    keyed.push(wanted_item("movie", "The Abyss", &[("k", "missing")]));
+    keyed.last_mut().unwrap().sort_title = Some("abyss".into());
+    let keyed = filter_items(&keyed, "all", "all", "");
+    assert_eq!(keyed[0].title, "The Abyss");
     // A status filter trims editions and drops items with none left.
     let failed = filter_items(&items, "all", "failed", "");
     assert_eq!(failed.len(), 2);
@@ -2356,6 +2370,7 @@ fn a_series_lists_its_numbered_members_then_the_related_ones() {
     let work = |asin: &str, title: &str, pos: Option<&str>| Work {
         asin: asin.into(),
         title: title.into(),
+        sort_title: None,
         authors: vec!["George R. R. Martin".into()],
         series_name: Some(asoiaf.into()),
         series_position: pos.map(str::to_string),
@@ -2392,28 +2407,34 @@ fn a_series_lists_its_numbered_members_then_the_related_ones() {
     );
 }
 
-/// Surname order (SKADI-T-0648 F1). The same vector is in the Android
-/// `NameSortingTest`, so the two clients order alike.
+/// Author clusters order by the server's surname-first key (SKADI-T-0737);
+/// a book from an older server, with no key, orders by the raw name.
 #[wasm_bindgen_test]
-fn authors_order_by_surname() {
-    for (name, key) in [
-        ("Stephen King", "king stephen"),
-        ("A. G. Riddle", "riddle a. g."),
-        ("Ursula K. Le Guin", "le guin ursula k."),
-        ("A. E. van Vogt", "van vogt a. e."),
-        ("Fritz Leiber Jr.", "leiber fritz"),
-        ("Fritz Leiber, Jr.", "leiber fritz"),
-        ("George R. Martin III", "martin george r."),
-        ("Hammett, Dashiell", "hammett dashiell"),
-        ("Van Morrison", "morrison van"),
-        ("bell hooks", "hooks bell"),
-        ("Plato", "plato"),
-        ("Full Cast", "full cast"),
-        ("  Alan   Lee ", "lee alan"),
-        ("An Na", "na an"),
-    ] {
-        assert_eq!(name_sort_key(name), key, "{name}");
-    }
+fn author_clusters_order_by_the_server_key() {
+    let book = |id: &str, author: &str, key: Option<&str>| skadi_web::api::Book {
+        id: id.into(),
+        title: format!("Book {id}"),
+        authors: vec![author.into()],
+        sort_authors: key.map(|k| vec![k.to_string()]).unwrap_or_default(),
+        ..Default::default()
+    };
+    let groups = group_books_by_author(vec![
+        book("1", "Stephen King", Some("king stephen")),
+        book("2", "Ursula K. Le Guin", Some("le guin ursula k.")),
+        book("3", "Isaac Asimov", Some("asimov isaac")),
+        // No key: "zadie smith" orders under Z, by the raw name.
+        book("4", "Zadie Smith", None),
+    ]);
+    let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Isaac Asimov",
+            "Stephen King",
+            "Ursula K. Le Guin",
+            "Zadie Smith"
+        ]
+    );
 }
 
 /// SKADI-T-0657: a minutes timer counts listening time; a pause neither uses it
@@ -2935,10 +2956,14 @@ fn library_walls_sort_by_each_key() {
     sort_items(&mut s, sort(SortKey::Year, false));
     assert_eq!(s[0].id, "s2");
 
+    // The keys a current server emits (SKADI-T-0737).
     let books: Vec<Book> = serde_json::from_value(json!([
-        {"id": "b1", "title": "It", "authors": ["Stephen King"], "monitored": true},
-        {"id": "b2", "title": "The Dispossessed", "authors": ["Ursula K. Le Guin"], "monitored": true},
-        {"id": "b3", "title": "Foundation", "authors": ["Isaac Asimov"], "monitored": true}
+        {"id": "b1", "title": "It", "sort_title": "it", "authors": ["Stephen King"],
+         "sort_authors": ["king stephen"], "monitored": true},
+        {"id": "b2", "title": "The Dispossessed", "sort_title": "dispossessed",
+         "authors": ["Ursula K. Le Guin"], "sort_authors": ["le guin ursula k."], "monitored": true},
+        {"id": "b3", "title": "Foundation", "sort_title": "foundation", "authors": ["Isaac Asimov"],
+         "sort_authors": ["asimov isaac"], "monitored": true}
     ]))
     .unwrap();
     let mut b = books.clone();
@@ -3158,4 +3183,130 @@ fn nav_active_matches_the_area_of_the_path() {
     assert!(!nav_active("/movies", "/moviesx"));
     assert!(!nav_active("/tv", "/movies"));
     assert!(!nav_active("/indexers", "/downloaders"));
+}
+
+// --- import lists (SKADI-T-0733) ---
+
+mod import_lists {
+    use serde_json::json;
+    use skadi_web::api::{ImportList, ImportListSyncReport};
+    use skadi_web::import_lists::{
+        KINDS, default_id_kind, field_value, form_error, interval_label, kind_label, kind_spec,
+        last_sync_label, settings_for, sync_summary,
+    };
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn every_provider_names_a_domain_and_its_fields() {
+        for k in KINDS {
+            assert!(matches!(k.domain, "movie" | "series"), "{}", k.slug);
+            assert!(!k.fields.is_empty(), "{}", k.slug);
+        }
+        assert_eq!(kind_spec("sonarr").unwrap().domain, "series");
+        assert_eq!(kind_label("trakt_list"), "trakt_list");
+    }
+
+    #[wasm_bindgen_test]
+    fn settings_keep_only_what_the_provider_reads() {
+        let v = |k: &str| match k {
+            "list_id" => " 645 ".to_string(),
+            "api_key" => "stale".to_string(),
+            _ => String::new(),
+        };
+        assert_eq!(
+            settings_for("tmdb_collection", v),
+            json!({ "list_id": "645" })
+        );
+        let arr = |k: &str| match k {
+            "base_url" => "http://192.0.2.10:7878".to_string(),
+            "api_key" => "k".to_string(),
+            _ => String::new(),
+        };
+        assert_eq!(
+            settings_for("radarr", arr),
+            json!({ "base_url": "http://192.0.2.10:7878", "api_key": "k" })
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_numeric_setting_reads_as_digits() {
+        assert_eq!(field_value(&json!({ "list_id": 8 }), "list_id"), "8");
+        assert_eq!(field_value(&json!({ "list_id": "8" }), "list_id"), "8");
+        assert_eq!(field_value(&json!({}), "list_id"), "");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_form_names_what_is_missing() {
+        let none = |_: &str| String::new();
+        assert_eq!(
+            form_error(" ", "tmdb_list", none).as_deref(),
+            Some("Give the list a name.")
+        );
+        assert_eq!(
+            form_error("Bond", "nope", none).as_deref(),
+            Some("Choose a provider.")
+        );
+        assert_eq!(
+            form_error("Bond", "tmdb_list", none).as_deref(),
+            Some("TMDB id is required.")
+        );
+        assert_eq!(
+            form_error("Old", "sonarr", |k| if k == "base_url" {
+                "x".into()
+            } else {
+                String::new()
+            })
+            .as_deref(),
+            Some("API key is required.")
+        );
+        assert_eq!(form_error("Bond", "tmdb_list", |_| "8".into()), None);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_sync_reads_as_one_line() {
+        let r = ImportListSyncReport {
+            offered: 12,
+            added: 3,
+            existing: 8,
+            excluded: 1,
+            failed: vec![],
+        };
+        assert_eq!(
+            sync_summary("Bond", &r),
+            "Bond: 12 offered, 3 added, 8 already in the library, 1 excluded."
+        );
+        let r = ImportListSyncReport {
+            failed: vec![("603".into(), "not found".into())],
+            ..r
+        };
+        assert!(sync_summary("Bond", &r).ends_with(", 1 failed (first: 603: not found)."));
+    }
+
+    #[wasm_bindgen_test]
+    fn rows_say_when_they_last_synced() {
+        let l = ImportList::default();
+        assert_eq!(last_sync_label(&l, 0.0), "Never synced");
+        assert_eq!(interval_label(720), "Every 12 hours");
+        assert_eq!(interval_label(90), "Every 90 min");
+        assert_eq!(default_id_kind("series"), "tvdb");
+        assert_eq!(default_id_kind("audiobook"), "asin");
+    }
+}
+
+/// The library's "Exclude from lists" posts the item's own id (SKADI-T-0733).
+#[wasm_bindgen_test]
+fn an_item_excludes_by_its_list_id() {
+    use skadi_web::import_lists::exclusion_for;
+    let e = exclusion_for("movie", "tmdb", Some("603".into()), "The Matrix").unwrap();
+    assert_eq!(
+        (
+            e.target_domain.as_str(),
+            e.id_kind.as_str(),
+            e.external_id.as_str()
+        ),
+        ("movie", "tmdb", "603")
+    );
+    assert_eq!(e.title.as_deref(), Some("The Matrix"));
+    assert!(exclusion_for("series", "tvdb", None, "Andor").is_none());
+    assert!(exclusion_for("series", "tvdb", Some(" ".into()), "Andor").is_none());
 }

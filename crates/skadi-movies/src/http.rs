@@ -244,7 +244,33 @@ async fn list_movies(
             .collect();
         movies.retain(|m| matching.contains(&m.id.0.to_string()));
     }
+    // Each record carries its sort key, so clients order by the server's rule
+    // instead of holding a copy of it (SKADI-T-0737).
+    let movies: Vec<ListedMovie> = movies.into_iter().map(ListedMovie::from).collect();
     Ok(([("x-total-count", total.to_string())], Json(movies)))
+}
+
+/// A movie as `GET /movies` lists it: the record plus its title sort key and,
+/// for a film in a franchise, the franchise name's key, which a client that
+/// folds a franchise into one tile orders it by (SKADI-T-0737).
+#[derive(Serialize)]
+struct ListedMovie {
+    #[serde(flatten)]
+    movie: Movie,
+    sort_title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort_collection: Option<String>,
+}
+
+impl From<Movie> for ListedMovie {
+    fn from(movie: Movie) -> Self {
+        use skadi_core::sorting::title_sort_key;
+        Self {
+            sort_title: title_sort_key(&movie.title),
+            sort_collection: movie.collection.as_ref().map(|c| title_sort_key(&c.name)),
+            movie,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -2291,4 +2317,31 @@ async fn subtitle_response(path: PathBuf, n: usize, webvtt: bool) -> Result<Resp
     let (ct, text) =
         found.ok_or_else(|| ApiError(AppError::NotFound(format!("no subtitle {n}"))))?;
     Ok(([(axum::http::header::CONTENT_TYPE, ct)], text).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::movie::MovieCollection;
+    use skadi_core::{ExternalIds, ProfileId, RootFolder};
+
+    #[test]
+    fn a_listed_movie_carries_its_title_and_franchise_keys() {
+        let mut m = Movie::new(
+            ExternalIds::default(),
+            "The Matrix Reloaded",
+            ProfileId::new(),
+            RootFolder::new("/movies"),
+        );
+        let alone = serde_json::to_value(ListedMovie::from(m.clone())).unwrap();
+        assert_eq!(alone["sort_title"], "matrix reloaded");
+        assert!(alone.get("sort_collection").is_none());
+        m.collection = Some(MovieCollection {
+            tmdb_id: 2344,
+            name: "The Matrix Collection".into(),
+        });
+        let v = serde_json::to_value(ListedMovie::from(m)).unwrap();
+        assert_eq!(v["title"], "The Matrix Reloaded");
+        assert_eq!(v["sort_collection"], "matrix collection");
+    }
 }

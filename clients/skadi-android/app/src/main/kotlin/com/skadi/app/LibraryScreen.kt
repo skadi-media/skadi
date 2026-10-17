@@ -66,6 +66,7 @@ import com.skadi.core.nameKey
 import com.skadi.core.OfflineStore
 import com.skadi.core.SkadiApi
 import com.skadi.core.groupBooksBySeries
+import com.skadi.core.sortKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -334,8 +335,8 @@ fun LibraryScreen(
         if (mode == "authors") {
             // Grouped by author record when a book is linked, else by name
             // key (SKADI-T-0655), in surname order (`groupBooksByAuthor`
-            // sorts by NameSorting.key, and the rail below letters with
-            // NameSorting.letter, so the two cannot disagree: SKADI-T-0648 F2).
+            // sorts by each row's server key, and the rail below letters from
+            // the same key, so the two cannot disagree: SKADI-T-0648 F2).
             val authors = remember(allBooks, q) {
                 groupBooksByAuthor(allBooks).filter { q.isEmpty() || it.name.lowercase().contains(q) }
             }
@@ -366,7 +367,7 @@ fun LibraryScreen(
                     }
                 }
                 AlphabetRail(
-                    letters = remember(authors) { authors.map { NameSorting.letter(it.name) } },
+                    letters = remember(authors) { authors.map { NameSorting.letterOfKey(it.sortKey) } },
                     onJump = { i -> scope.launch { listState.scrollToItem(i) } },
                 )
             }
@@ -400,9 +401,9 @@ if (mode == "series") {
         val (groups, standalone) = remember(visibleBooks) { groupBooksBySeries(visibleBooks) }
         val entries = remember(groups, standalone, visibleShelfOnly, expanded.toList()) {
             buildList<Pair<Char, Any>> {
-                visibleShelfOnly.forEach { add(TitleSorting.letter(it.title) to it) }
+                visibleShelfOnly.forEach { add(TitleSorting.letterOfKey(it.sortKey) to it) }
                 for (g in groups) {
-                    val l = TitleSorting.letter(g.name)
+                    val l = TitleSorting.letterOfKey(g.sortKey)
                     add(l to g)
                     if (g.seriesId in expanded) {
                         // Numbered books, then the unpositioned ones under their own
@@ -417,7 +418,7 @@ if (mode == "series") {
                 }
                 if (standalone.isNotEmpty()) {
                     add('#' to "Standalone")
-                    standalone.forEach { add(TitleSorting.letter(it.title) to ("book" to it)) }
+                    standalone.forEach { add(TitleSorting.letterOfKey(it.sortKey) to ("book" to it)) }
                 }
             }
         }
@@ -490,7 +491,7 @@ if (mode == "series") {
                 (visibleBooks.map { b ->
                     val fid = b.importedFileId
                     BookTileData(
-                        key = b.id, title = b.title,
+                        key = b.id, title = b.title, sortKey = b.sortKey,
                         author = b.authors.firstOrNull().orEmpty(),
                         cover = b.coverUrl?.takeIf { it.isNotEmpty() },
                         onDevice = fid != null && shelf.any { it.fileId == fid },
@@ -499,7 +500,7 @@ if (mode == "series") {
                     )
                 } + visibleShelfOnly.map { b ->
                     BookTileData(
-                        key = "shelf-" + b.fileId, title = b.title,
+                        key = "shelf-" + b.fileId, title = b.title, sortKey = b.sortKey,
                         author = b.authors.firstOrNull().orEmpty(),
                         cover = store.coverFile(b.fileId).takeIf { it.isFile },
                         onDevice = true, progress = null,
@@ -510,7 +511,7 @@ if (mode == "series") {
             }
             // One helper sorts and letters, so the wall and its rail cannot
             // disagree (SKADI-T-0648).
-            BookWall(remember(tiles) { TitleSorting.railed(tiles) { it.title } })
+            BookWall(remember(tiles) { TitleSorting.railed(tiles) { it.sortKey } })
         }
 }
     }
@@ -660,6 +661,8 @@ private fun BookRow(
 private class BookTileData(
     val key: String,
     val title: String,
+    /** The server's title key (SKADI-T-0737), which the wall orders by. */
+    val sortKey: String,
     val author: String,
     val cover: Any?,
     val onDevice: Boolean,

@@ -202,6 +202,7 @@ fn Shell() -> impl IntoView {
                     <Route path=path!("/config") view=ConfigPage/>
                     <Route path=path!("/household") view=crate::household::HouseholdPage/>
                     <Route path=path!("/naming") view=crate::naming::NamingPage/>
+                    <Route path=path!("/importlists") view=crate::import_lists::ImportListsPage/>
                     <Route path=path!("/system") view=crate::system::SystemPage/>
                     <Route path=path!("/preferences") view=crate::preferences::PreferencesPage/>
                 </Routes>

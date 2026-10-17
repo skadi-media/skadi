@@ -48,6 +48,12 @@ data class BookFile(
 data class Book(
     val id: String,
     val title: String,
+    /** The server's sort keys (SKADI-T-0737): the title's, each credit's
+     *  (index for index with [authors]) and the series name's. Absent from an
+     *  older server. */
+    @SerialName("sort_title") val sortTitle: String? = null,
+    @SerialName("sort_authors") val sortAuthors: List<String> = emptyList(),
+    @SerialName("sort_series") val sortSeries: String? = null,
     /** The book's own Audible ASIN — used for re-add / library actions. */
     val asin: String? = null,
     /** Where the ASIN actually lives on the wire (`external_ids.asin`). */
@@ -162,6 +168,8 @@ data class SeriesRollup(
 data class Work(
     val asin: String,
     val title: String,
+    /** The server's sort key (SKADI-T-0737); absent from an older server. */
+    @SerialName("sort_title") val sortTitle: String? = null,
     val authors: List<String> = emptyList(),
     @SerialName("series_name") val seriesName: String? = null,
     @SerialName("series_position") val seriesPosition: String? = null,

@@ -906,13 +906,17 @@ impl DownloadJobRepo for Store {
         let id = id.to_string();
         self.with_conn(move |conn| {
             // Only an active job can be paused (guarded so we never resurrect a
-            // terminal/removed row).
+            // terminal/removed row). A stalled row is active: it is the one an
+            // operator most wants to hold (SKADI-T-0735). Pausing ends the
+            // stall, so its time goes too.
             diesel::update(downloads::table.find(&id).filter(downloads::status.eq_any([
                 DownloadJobStatus::Queued.as_str(),
                 DownloadJobStatus::Downloading.as_str(),
+                DownloadJobStatus::Stalled.as_str(),
             ])))
             .set((
                 downloads::status.eq(DownloadJobStatus::Paused.as_str()),
+                downloads::stalled_at.eq(None::<Timestamp>),
                 downloads::down_speed_bps.eq(None::<i64>),
                 downloads::up_speed_bps.eq(None::<i64>),
                 downloads::eta_seconds.eq(None::<i64>),
@@ -1353,6 +1357,25 @@ mod tests {
         assert_eq!(
             capped.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
             ids[..3].to_vec()
+        );
+    }
+
+    /// SKADI-T-0735: a stalled row pauses (its stalled time cleared) and
+    /// resumes to queued, like any active row.
+    #[tokio::test]
+    async fn a_stalled_row_pauses_and_resumes_to_queued() {
+        let store = temp_store().await;
+        let job = store.enqueue(&req("st3", "magnet:?x")).await.unwrap();
+        store.claim_next("w").await.unwrap().unwrap();
+        store.set_download_stalled(&job.id, true).await.unwrap();
+        store.request_pause(&job.id).await.unwrap();
+        let paused = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(paused.status, DownloadJobStatus::Paused);
+        assert_eq!(paused.stalled_at, None, "a pause ends the stall");
+        store.resume(&job.id).await.unwrap();
+        assert_eq!(
+            store.get_download(&job.id).await.unwrap().unwrap().status,
+            DownloadJobStatus::Queued
         );
     }
 

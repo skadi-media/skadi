@@ -195,10 +195,12 @@ async fn movie_crud_lifecycle() {
     let (s, _) = call(routes(), "POST", "/movies", Some(req)).await;
     assert_eq!(s, StatusCode::CONFLICT);
 
-    // List has one.
+    // List has one, with its sort key (SKADI-T-0737).
     let (s, body) = call(routes(), "GET", "/movies", None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["title"], "The Matrix");
+    assert_eq!(body[0]["sort_title"], "matrix");
 
     // Get.
     let (s, got) = call(routes(), "GET", &format!("/movies/{id}"), None).await;

@@ -55,6 +55,19 @@ impl ApiError {
     }
 }
 
+impl ApiError {
+    /// The message a client is shown: for a validation error the inner reason,
+    /// without `AppError`'s "Validation error: " prefix.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match &self.0 {
+            AppError::Validation(m) => m.clone(),
+            AppError::ValidationField { message, .. } => message.clone(),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error) = self.parts();
@@ -65,11 +78,7 @@ impl IntoResponse for ApiError {
             // doubled it up — a client rendering `{error}: {message}` showed
             // "validation: Validation error: …" (SKADI-T-0525). Use the inner
             // reason directly.
-            message: match &self.0 {
-                AppError::Validation(m) => m.clone(),
-                AppError::ValidationField { message, .. } => message.clone(),
-                other => other.to_string(),
-            },
+            message: self.message(),
             // Sonarr's per-field `propertyName`, so a settings form can put the
             // message next to the offending input instead of at the top.
             field: self.0.field_name().map(str::to_string),

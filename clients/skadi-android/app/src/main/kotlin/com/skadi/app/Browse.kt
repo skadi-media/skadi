@@ -22,6 +22,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.skadi.core.collectionSortKey
+import com.skadi.core.sortKey
 
 /**
  * A–Z jump rail (SKADI-T-0579).
@@ -126,17 +128,19 @@ fun AlphabetRail(
  * genuinely different content and a different tap action.
  */
 sealed interface MovieTile {
-    val sortTitle: String
+    /** The server's key for the tile (SKADI-T-0737): the film's title key, or
+     *  the franchise name's. */
+    val sortKey: String
 
     data class Single(val movie: com.skadi.core.Movie) : MovieTile {
-        override val sortTitle get() = movie.title
+        override val sortKey get() = movie.sortKey
     }
 
     data class Collection(
         val name: String,
         val films: List<com.skadi.core.Movie>,
     ) : MovieTile {
-        override val sortTitle get() = name
+        override val sortKey get() = films.first().collectionSortKey
     }
 }
 

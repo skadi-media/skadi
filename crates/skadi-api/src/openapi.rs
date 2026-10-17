@@ -1178,7 +1178,8 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
     // is describable since SKADI-T-0548 put `schemars` in skadi-core alongside
     // the `Serialize` derives that were already there.
     ("GET", "/calendar", "CalendarEntryDto"),
-    ("GET", "/books", "Book"),
+    // The list adds sort keys to each book (SKADI-T-0737).
+    ("GET", "/books", "ListedBook"),
     ("GET", "/books/{id}", "Book"),
     ("GET", "/books/{id}/files/{fid}/chapters", "ChapterDto"),
     ("GET", "/watchers", "WatcherDto"),

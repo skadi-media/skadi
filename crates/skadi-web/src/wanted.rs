@@ -84,7 +84,10 @@ pub fn filter_items(items: &[WantedItem], kind: &str, status: &str, q: &str) -> 
             })
         })
         .collect();
-    crate::sorting::sort_by_title(&mut out, |i| &i.title);
+    // By the server's key (SKADI-T-0737), else the raw title.
+    crate::sorting::sort_by_key(&mut out, |i| {
+        crate::sorting::key_or_raw(i.sort_title.as_deref(), &i.title)
+    });
     out
 }
 

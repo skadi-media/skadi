@@ -114,7 +114,7 @@ test("the library sorts and selects in bulk", async ({ page, request }) => {
 test("at phone width no page scrolls sideways", async ({ page, request }) => {
   await steps.givenDomainEnabled(request, "movies");
   await page.setViewportSize({ width: 375, height: 800 });
-  for (const p of ["/movies", "/activity", "/downloaders", "/indexers"]) {
+  for (const p of ["/movies", "/activity", "/downloaders", "/indexers", "/importlists"]) {
     // Not `whenOpens`: it waits for the sidebar, which is a drawer here.
     await page.goto(p);
     await expect(page.locator(".cl-appshell")).toBeVisible();
@@ -155,4 +155,78 @@ test("an indexer card says when it was last tested", async ({ page, request }) =
   await steps.whenOpens(page, "/indexers");
   const card = page.locator(".provider-card", { hasText: name });
   await expect(card).toContainText(/Last tested .*: failed/);
+});
+
+test("an import list is created, synced, edited and deleted; an item is excluded (SKADI-T-0733)", async ({ page }) => {
+  const name = uniq("Bond");
+  await steps.whenOpens(page, "/importlists");
+  await expect(page.getByRole("heading", { name: "Import lists" })).toBeVisible();
+
+  // The form says what is missing before it sends anything.
+  await page.getByRole("button", { name: "Add list" }).click();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Give the list a name.")).toBeVisible();
+  await page.getByLabel("Name").fill(name);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("TMDB id is required.")).toBeVisible();
+  await page.getByLabel("TMDB id").fill("645");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(`Saved ${name}.`)).toBeVisible();
+  const row = page.locator(".import-list-row", { hasText: name });
+  await expect(row).toContainText("Never synced");
+
+  // The harness registers no TMDB provider, so a sync fails and says why, on
+  // the row as well as at the top.
+  await row.getByRole("button", { name: "Sync now" }).click();
+  await expect(row).toContainText("no import-list provider for kind");
+  await expect(row).not.toContainText("Validation error");
+
+  // An edit opens with the stored settings, and a Sonarr list asks for its server.
+  await row.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("TMDB id")).toHaveValue("645");
+  await page.getByLabel("Provider").selectOption("sonarr");
+  await expect(page.getByLabel("Server URL")).toBeVisible();
+  await expect(page.getByLabel("API key")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // An excluded item is listed with its id.
+  const title = uniq("The Matrix");
+  await page.getByLabel("Id", { exact: true }).fill("603");
+  await page.getByLabel("Title (optional)").fill(title);
+  await page.getByRole("button", { name: "Exclude" }).click();
+  const excl = page.locator(".import-exclusion", { hasText: title });
+  await expect(excl).toContainText("tmdb:603");
+  await excl.getByRole("button", { name: "Remove" }).click();
+  await expect(excl).toHaveCount(0);
+
+  // Delete asks first.
+  await row.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByText(`Deleted ${name}.`)).toBeVisible();
+  await expect(row).toHaveCount(0);
+});
+
+test("a movie page excludes the movie from import lists; a member is not offered it (SKADI-T-0733)", async ({ page, request }) => {
+  await steps.givenDomainEnabled(request, "movies");
+  await steps.givenMovieAdded(request, 603, LIBRARY);
+  await steps.whenOpens(page, "/movies");
+  await steps.whenOpensFirstTile(page, "The Matrix");
+  await page.getByRole("button", { name: "Exclude from lists" }).click();
+  await expect(page.getByRole("button", { name: "Excluded from lists" })).toBeDisabled();
+  const all = (await (await request.get(`${steps.API}/importlists/exclusions`)).json()) as {
+    id: string; id_kind: string; external_id: string; title?: string;
+  }[];
+  const mine = all.filter((e) => e.id_kind === "tmdb" && e.external_id === "603");
+  expect(mine.length, "the exclusion names the movie's TMDB id").toBeGreaterThan(0);
+  expect(mine[0].title).toBe("The Matrix");
+  for (const e of mine) await request.delete(`${steps.API}/importlists/exclusions/${e.id}`);
+
+  const restore = await steps.givenSignedInAs(request, page, "member");
+  try {
+    await steps.whenOpens(page, "/movies");
+    await steps.whenOpensFirstTile(page, "The Matrix");
+    await expect(page.getByRole("button", { name: "Exclude from lists" })).toHaveCount(0);
+  } finally {
+    await restore();
+  }
 });

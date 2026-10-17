@@ -428,7 +428,8 @@ struct WantedSummary {
 #[derive(Serialize)]
 struct WantedResponse {
     summary: WantedSummary,
-    items: Vec<LibraryItemDto>,
+    /// Each item carries its `sort_title` (SKADI-T-0737).
+    items: Vec<skadi_core::sorting::Titled<LibraryItemDto>>,
 }
 
 /// `GET /wanted?kind=&q=&limit=&offset=` — the acquisition backlog: monitored items
@@ -503,6 +504,9 @@ async fn wanted(
     if let Some(q) = params.q.as_ref().map(|q| q.to_lowercase()) {
         items.retain(|i| i.title.to_lowercase().contains(&q));
     }
+    // Title order, before paging, so a page is a slice of the order the
+    // clients show (SKADI-T-0737).
+    items.sort_by_cached_key(|i| skadi_core::sorting::title_sort_key(&i.title));
 
     // Summary over the whole wanted set, before pagination.
     let mut summary = WantedSummary {
@@ -518,7 +522,15 @@ async fn wanted(
 
     let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(usize::MAX);
-    let page: Vec<LibraryItemDto> = items.into_iter().skip(offset).take(limit).collect();
+    let page: Vec<_> = items
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|i| {
+            let title = i.title.clone();
+            skadi_core::sorting::Titled::new(i, &title)
+        })
+        .collect();
 
     // The total is `summary.items`, computed over the whole wanted set before
     // paging — the header just surfaces it where a paged client looks

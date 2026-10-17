@@ -48,6 +48,7 @@ import com.skadi.core.SkadiApi
 import com.skadi.core.TitleSorting
 import com.skadi.core.VideoProgress
 import com.skadi.core.WatchRecord
+import com.skadi.core.sortKey
 import kotlinx.coroutines.launch
 
 /**
@@ -129,10 +130,10 @@ fun TvScreen(
             return@Column
         }
 
-        // Sorted and railed like the movie grid (SKADI-T-0579): the server's
-        // own order is not article-aware. One call sorts and letters, so the
-        // rail cannot disagree with the list (SKADI-T-0648).
-        val railed = remember(visible) { TitleSorting.railed(visible) { it.title } }
+        // Sorted and railed like the movie grid (SKADI-T-0579) by the server's
+        // key (SKADI-T-0737). One call sorts and letters, so the rail cannot
+        // disagree with the list (SKADI-T-0648).
+        val railed = remember(visible) { TitleSorting.railed(visible) { it.sortKey } }
         val sorted = railed.items
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()

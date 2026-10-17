@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import com.skadi.core.OfflineVideoStore
 import com.skadi.core.SkadiApi
 import com.skadi.core.VideoProgress
 import com.skadi.core.WatchRecord
@@ -271,10 +272,13 @@ private fun Paired(baseUrl: String, token: String) {
     // player goes when the file ends. Movies resolve to nothing.
     val api = remember(baseUrl, token) { SkadiApi(baseUrl, token) }
     var nextUp by remember { mutableStateOf<NextUp?>(null) }
+    // Downloaded films and episodes (SKADI-T-0637): every Play goes through
+    // here, so whichever screen asked, a copy on the phone plays from the phone.
+    val videoStore = remember { OfflineVideoStore(context.filesDir) }
     LaunchedEffect(playingVideo?.third) {
         nextUp = null
         val key = playingVideo?.third ?: return@LaunchedEffect
-        nextUp = resolveNext(api, key)
+        nextUp = resolveNext(api, key, videoStore) { hasNetwork(context) }
     }
 
     // Full-screen overlays, innermost first. Each owns its own BackHandler so
@@ -283,14 +287,17 @@ private fun Paired(baseUrl: String, token: String) {
     // (SKADI-T-0577).
     playingVideo?.let { (url, title, progressKey) ->
         BackHandler { playingVideo = null }
+        val offline = remember(progressKey) { videoStore.meta(progressKey) }
         // Keyed by url: the player is `remember`ed inside, so advancing to the
         // next episode must be a fresh instance, not the old player with a
         // new title over it.
         androidx.compose.runtime.key(url) {
             VideoPlayerScreen(
-                url = url,
+                url = offline?.let { localVideoUri(videoStore, it.key) } ?: url,
                 title = title,
                 progressKey = progressKey,
+                offline = offline,
+                offlineStore = videoStore,
                 onBack = { playingVideo = null },
                 nextLabel = nextUp?.label,
                 onNext = nextUp?.let { n ->
@@ -458,16 +465,41 @@ private class NextUp(val target: Triple<String, String, String>, val label: Stri
  * a movie, the last episode, or a series that cannot be fetched. Same rule as
  * Home's Up next: broadcast order, specials skipped, only what is on disk.
  */
-private suspend fun resolveNext(api: SkadiApi, key: String): NextUp? {
+private suspend fun resolveNext(
+    api: SkadiApi,
+    key: String,
+    store: OfflineVideoStore,
+    online: () -> Boolean,
+): NextUp? {
     val parts = key.split(':')
     if (parts.size != 3 || parts[0] != "episode") return null
     val (sid, eid) = parts[1] to parts[2]
+    // With no server to ask, the next episode is the next one on the phone
+    // (SKADI-T-0637): same order, only what is downloaded.
+    val onPhone = {
+        val here = store.meta(key)
+        val downloaded = store.list()
+        here?.let { h ->
+            com.skadi.core.nextDownloadedEpisode(downloaded, sid, h.season ?: 0, h.number ?: 0)
+        }?.let { n ->
+            NextUp(
+                target = Triple(api.episodeVideoUrl(sid, n.itemId), n.playerTitle, n.key),
+                label = n.subtitle?.substringBefore(" · ") ?: "",
+                record = n.watchRecord(),
+            )
+        }
+    }
     val series = LibraryCache.seriesDetail[sid]
         ?: runCatching { api.series(sid) }.getOrNull()?.also { LibraryCache.seriesDetail[sid] = it }
-        ?: return null
+        ?: return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { onPhone() }
     val current = series.episodes.firstOrNull { it.id == eid } ?: return null
     val next = nextEpisode(series.episodes, current.season, current.number) ?: return null
     val nextKey = "episode:$sid:${next.id}"
+    // The show came from the cache but the phone is offline, and the next
+    // episode is not on it: offer the next one that is.
+    if (!online() && !store.isDownloaded(nextKey)) {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { onPhone() }
+    }
     return NextUp(
         target = Triple(api.episodeVideoUrl(sid, next.id), "${series.title} · ${next.code}", nextKey),
         label = next.code,
@@ -478,4 +510,11 @@ private suspend fun resolveNext(api: SkadiApi, key: String): NextUp? {
             posterUrl = series.poster_url, season = next.season, number = next.number,
         ),
     )
+}
+
+/** Is there any network at all? Not whether the server answers: just whether to try. */
+private fun hasNetwork(context: android.content.Context): Boolean {
+    val cm = context.getSystemService(android.net.ConnectivityManager::class.java) ?: return true
+    val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+    return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }

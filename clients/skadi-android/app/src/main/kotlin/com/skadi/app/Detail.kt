@@ -227,6 +227,8 @@ fun MovieDetailScreen(
                 enabled = true,
                 onClick = { onPlay(eid) },
             )
+            // Offline copy (SKADI-T-0637), under Play like a book's Download.
+            VideoDownloadAction(com.skadi.core.VideoDownloadRequest.movie(movie, eid))
         } else {
             PrimaryAction(label = "Not on disk", icon = Icons.Filled.PlayArrow, enabled = false, onClick = {})
         }
@@ -378,6 +380,7 @@ fun EpisodeDetailScreen(
                 enabled = true,
                 onClick = onPlay,
             )
+            VideoDownloadAction(com.skadi.core.VideoDownloadRequest.episode(series, episode))
         } else {
             PrimaryAction("Not on disk", Icons.Filled.PlayArrow, enabled = false) {}
         }

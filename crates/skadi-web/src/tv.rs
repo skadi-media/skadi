@@ -317,11 +317,18 @@ pub fn SeriesDetailPage() -> impl IntoView {
     on_cleanup(move || alive.set(false));
 
     let nav = use_navigate();
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
 
     let body = move || {
         let Some(s) = series.get() else {
             return view! { <p class="muted">"Loading…"</p> }.into_any();
         };
+        // Each control only for a role that may make its call, read in the
+        // reactive body (SKADI-T-0639), as on the movie page.
+        let role = role_ctx.and_then(|r| r.get());
+        let item = format!("/series/{}", s.id);
+        let may_monitor = crate::surface::offered(role.as_deref(), "PATCH", &item);
+        let may_delete = crate::surface::offered(role.as_deref(), "DELETE", &item);
         let sid = s.id.clone();
         let year = s.year.map(|y| format!(" ({y})")).unwrap_or_default();
         let monitored = s.monitored;
@@ -387,6 +394,7 @@ pub fn SeriesDetailPage() -> impl IntoView {
             .map(|sea| {
                 season_block(
                     &s,
+                    role.as_deref(),
                     sea,
                     Callback::new(move |()| load()),
                     open_seasons,
@@ -438,12 +446,16 @@ pub fn SeriesDetailPage() -> impl IntoView {
                                 </span>
                             </p>
                             <div class="card-actions">
-                                <Button variant="default" size="xs" disabled=busy
-                                    on_click=Callback::new(toggle_monitor)>
-                                    {if monitored { "Unmonitor series" } else { "Monitor series" }}
-                                </Button>
-                                <Button variant="default" size="xs" bad=true disabled=busy
-                                    on_click=Callback::new(on_delete)>"Delete"</Button>
+                                {may_monitor.then(|| view! {
+                                    <Button variant="default" size="xs" disabled=busy
+                                        on_click=Callback::new(toggle_monitor)>
+                                        {if monitored { "Unmonitor series" } else { "Monitor series" }}
+                                    </Button>
+                                })}
+                                {may_delete.then(|| view! {
+                                    <Button variant="default" size="xs" bad=true disabled=busy
+                                        on_click=Callback::new(on_delete)>"Delete"</Button>
+                                })}
                                 <crate::import_lists::ExcludeFromListsButton exclusion=crate::import_lists::exclusion_for(
                                     "series", "tvdb", s.external_ids.tvdb.map(|t| t.to_string()), &s.title)/>
                             </div>
@@ -479,6 +491,7 @@ pub fn is_collected(status: &serde_json::Value) -> bool {
 /// are visible at a glance.
 fn season_block(
     s: &api::Series,
+    role: Option<&str>,
     sea: api::Season,
     reload: Callback<()>,
     open_seasons: RwSignal<std::collections::HashSet<u16>>,
@@ -493,6 +506,11 @@ fn season_block(
         format!("Season {num}")
     };
     let monitored = sea.monitored;
+    let may_monitor = crate::surface::offered(
+        role,
+        "POST",
+        &format!("/series/{sid}/seasons/{num}/monitor"),
+    );
     let toggle_sid = sid.clone();
     let toggle = move |()| {
         let id = toggle_sid.clone();
@@ -514,7 +532,7 @@ fn season_block(
     let complete = total > 0 && collected == total;
     let rows = eps
         .into_iter()
-        .map(|e| episode_row(&sid, &series_title, e, reload, open_episodes))
+        .map(|e| episode_row(&sid, &series_title, role, e, reload, open_episodes))
         .collect_view();
 
     // Collapsed by default — long shows stay scannable; open the seasons you want.
@@ -545,9 +563,11 @@ fn season_block(
                     <strong>{label}</strong>
                 </Button>
                 <span class=count_cls>{format!("{collected}/{total} collected")}</span>
-                <Button variant="subtle" size="xs" class:season-mon=true on_click=Callback::new(toggle)>
-                    {if monitored { "Monitored" } else { "Unmonitored" }}
-                </Button>
+                {may_monitor.then(|| view! {
+                    <Button variant="subtle" size="xs" class:season-mon=true on_click=Callback::new(toggle)>
+                        {if monitored { "Monitored" } else { "Unmonitored" }}
+                    </Button>
+                })}
             </div>
             <div class="season-eps" class:collapsed=collapsed>
                 {rows}
@@ -563,6 +583,7 @@ fn episode_row(
     // Only for naming a saved file (SKADI-T-0635). "S01E02 - Pilot.mkv"
     // landing in someone's Downloads beside three other shows is not a name.
     series_title: &str,
+    role: Option<&str>,
     e: api::Episode,
     reload: Callback<()>,
     open_episodes: RwSignal<std::collections::HashSet<String>>,
@@ -607,6 +628,14 @@ fn episode_row(
     // history: TV has no per-episode detail page, so everything about an episode
     // lives inline under its row.
     let at = api::AcquirablePath::tv_episode(series_id, &e.id);
+    // Each control only for a role that may make its call (SKADI-T-0639).
+    let may_monitor = crate::surface::offered(
+        role,
+        "POST",
+        &format!("/series/{series_id}/episodes/{}/monitor", e.id),
+    );
+    let may_acquire = at.offered(role, "POST", "acquire");
+    let may_reset = at.offered(role, "POST", "reset");
     let eid_panel = e.id.clone();
     let sid_act = series_id.to_string();
     let eid_act = e.id.clone();
@@ -683,18 +712,24 @@ fn episode_row(
                     <Button variant="subtle" size="xs" href=href attr:download=name
                         title="Save this episode to your computer" aria_label=save_label.clone()>"⇩"</Button>
                 })}
-                <Button variant="subtle" size="xs" title="Toggle monitoring" aria_label=mon_label
-                    on_click=Callback::new(toggle)>
-                    {if monitored { "●" } else { "○" }}
-                </Button>
-                <Button variant="subtle" size="xs" title="Search and acquire" aria_label=acquire_label
-                    on_click=Callback::new(on_acquire)>
-                    "⤓"
-                </Button>
-                <Button variant="subtle" size="xs" title="Reset to Missing" aria_label=reset_label
-                    on_click=Callback::new(on_reset)>
-                    "↺"
-                </Button>
+                {may_monitor.then(|| view! {
+                    <Button variant="subtle" size="xs" title="Toggle monitoring" aria_label=mon_label
+                        on_click=Callback::new(toggle)>
+                        {if monitored { "●" } else { "○" }}
+                    </Button>
+                })}
+                {may_acquire.then(|| view! {
+                    <Button variant="subtle" size="xs" title="Search and acquire" aria_label=acquire_label
+                        on_click=Callback::new(on_acquire)>
+                        "⤓"
+                    </Button>
+                })}
+                {may_reset.then(|| view! {
+                    <Button variant="subtle" size="xs" title="Reset to Missing" aria_label=reset_label
+                        on_click=Callback::new(on_reset)>
+                        "↺"
+                    </Button>
+                })}
             </div>
             {move || note.get().map(|r| match r {
                 Ok(m) => view! { <p class="muted ep-note">{m}</p> }.into_any(),

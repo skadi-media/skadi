@@ -372,11 +372,20 @@ pub fn MovieDetailPage() -> impl IntoView {
     let reload = Callback::new(move |_: ()| load());
 
     let nav = use_navigate();
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
 
     let body = move || {
         let Some(m) = movie.get() else {
             return view! { <Loading/> }.into_any();
         };
+        // Each control is drawn only for a role that may make its call
+        // (SKADI-T-0639): Monitor and Delete were offered to every role. The
+        // role is read here, in the reactive body, so the controls appear
+        // when `/me` answers, and an unresolved role is offered nothing.
+        let role = role_ctx.and_then(|r| r.get());
+        let item = format!("/movies/{}", m.id);
+        let may_monitor = crate::surface::offered(role.as_deref(), "PATCH", &item);
+        let may_delete = crate::surface::offered(role.as_deref(), "DELETE", &item);
         let year = m.year.map(|y| format!(" ({y})")).unwrap_or_default();
         let monitored = m.monitored;
         let overview = m.overview.clone().filter(|o| !o.is_empty());
@@ -464,6 +473,9 @@ pub fn MovieDetailPage() -> impl IntoView {
                 let rst_mid = movie_id.clone();
                 let rst_eid = edition_id.clone();
                 let resettable = edition_resettable(&label);
+                let at = api::AcquirablePath::movie_edition(&movie_id, &edition_id);
+                let may_acquire = at.offered(role.as_deref(), "POST", "acquire");
+                let may_reset = at.offered(role.as_deref(), "POST", "reset");
                 let on_reset = Callback::new(move |()| {
                     let movie_id = rst_mid.clone();
                     let edition_id = rst_eid.clone();
@@ -524,7 +536,8 @@ pub fn MovieDetailPage() -> impl IntoView {
                                 <Button variant="default" size="xs" href=href attr:download=name
                                     title="Save this file to your computer">"⇩ Save"</Button>
                             })}
-                            <EditionActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
+                            <EditionActions resettable=resettable may_acquire=may_acquire may_reset=may_reset
+                                on_acquire=on_acquire on_reset=on_reset/>
                             {acq_view}
                         </div>
                         <ReleasesPanel
@@ -553,12 +566,16 @@ pub fn MovieDetailPage() -> impl IntoView {
                     <div class="detail-info">
                         <h2>{m.title.clone()}<span class="muted">{year}</span></h2>
                         <div class="card-actions">
-                            <Button variant="default" size="xs" disabled=busy
-                                on_click=Callback::new(toggle_monitor)>
-                                {if monitored { "Unmonitor" } else { "Monitor" }}
-                            </Button>
-                            <Button variant="default" size="xs" bad=true disabled=busy
-                                on_click=Callback::new(on_delete)>"Delete"</Button>
+                            {may_monitor.then(|| view! {
+                                <Button variant="default" size="xs" disabled=busy
+                                    on_click=Callback::new(toggle_monitor)>
+                                    {if monitored { "Unmonitor" } else { "Monitor" }}
+                                </Button>
+                            })}
+                            {may_delete.then(|| view! {
+                                <Button variant="default" size="xs" bad=true disabled=busy
+                                    on_click=Callback::new(on_delete)>"Delete"</Button>
+                            })}
                             <crate::import_lists::ExcludeFromListsButton exclusion=crate::import_lists::exclusion_for(
                                 "movie", "tmdb", m.external_ids.tmdb.map(|t| t.to_string()), &m.title)/>
                         </div>
@@ -591,16 +608,24 @@ pub fn edition_resettable(label: &str) -> bool {
 
 /// Presentational per-edition action bar (SKADI-T-0117/T-0119): **Acquire** +
 /// **Reset** (disabled unless [`edition_resettable`]). Actions delegated via
-/// callbacks so it's unit-mountable with no state.
+/// callbacks so it's unit-mountable with no state. `may_acquire` and
+/// `may_reset` say whether the role may make each call; a button the role
+/// cannot use is not drawn (SKADI-T-0639).
 #[component]
 pub fn EditionActions(
     resettable: bool,
+    may_acquire: bool,
+    may_reset: bool,
     on_acquire: Callback<()>,
     on_reset: Callback<()>,
 ) -> impl IntoView {
     view! {
-        <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
-        <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
+        {may_acquire.then(|| view! {
+            <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
+        })}
+        {may_reset.then(|| view! {
+            <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
+        })}
     }
 }
 
@@ -909,6 +934,17 @@ pub fn ReleasesPanel(
     let link = crate::persist::persisted(k("link"), String::new());
     let manual_open = crate::persist::persisted(k("manual_open"), false);
 
+    // Interactive search, grab and the pasted link are the operator's tools
+    // ("no picking a specific release by hand", `household::Role`): the panel
+    // is drawn only for a role that may run the search. It is shared by every
+    // detail page and Wanted, so the gate is here, once (SKADI-T-0639). Read
+    // reactively, so it shows when `/me` answers.
+    let role = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
+    let may_search = {
+        let at = at.clone();
+        move || at.offered(role.and_then(|r| r.get()).as_deref(), "GET", "releases")
+    };
+
     // Owned, shared (Copy) into every action closure.
     let ids = StoredValue::new((at, acquirable));
 
@@ -990,7 +1026,7 @@ pub fn ReleasesPanel(
     };
 
     view! {
-        <div class="releases">
+        <div class="releases" class:hidden=move || !may_search()>
             <div class="releases-head">
                 <Button variant="default" size="xs" loading=searching on_click=on_search>
                     {move || if searching.get() { "Searching…" } else { "Search releases" }}

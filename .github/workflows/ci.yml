@@ -318,6 +318,46 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+  role-sweep:
+    name: Per-role UI sweep
+    # The UI must never offer a role what the API refuses (SKADI-T-0639). A
+    # release gate (Dylan, 2026-10-17): `images` and `release` need it, and
+    # locally `angreal version bump` runs it first. The sweep is
+    # web-e2e/tests/roles.spec.ts against the mock-provider harness.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.93
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^ARG TRUNK_VERSION=//p' Dockerfile)"
+          test -n "$version"
+          url="https://github.com/trunk-rs/trunk/releases/download/v${version}/trunk-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "$url" | tar -xz -C /usr/local/bin trunk
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the browser
+        working-directory: web-e2e
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run the sweep
+        working-directory: web-e2e
+        run: npx playwright test tests/roles.spec.ts
+
   images:
     name: Images (GHCR)
     # A real `needs:` on the whole suite, which is only possible because
@@ -334,6 +374,7 @@ jobs:
         test-functional,
         compose-config,
         build,
+        role-sweep,
       ]
     # Never on pull_request: a fork PR cannot be allowed to publish, and an
     # in-repo PR publishing `sha-` tags for unmerged work clutters the registry.
@@ -362,6 +403,7 @@ jobs:
         test-functional,
         compose-config,
         build,
+        role-sweep,
       ]
     # Tags only, and never on pull_request: a fork PR must not cut a release.
     if: >-

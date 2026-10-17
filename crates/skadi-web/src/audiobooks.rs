@@ -1501,11 +1501,18 @@ pub fn BookDetailPage() -> impl IntoView {
 
     let reload = Callback::new(move |_: ()| load());
     let nav = use_navigate();
+    let role_ctx = use_context::<crate::subnav::RoleCtx>().map(|r| r.0);
 
     let body = move || {
         let Some(b) = book.get() else {
             return view! { <Loading/> }.into_any();
         };
+        // Each control only for a role that may make its call, read in the
+        // reactive body (SKADI-T-0639), as on the movie page.
+        let role = role_ctx.and_then(|r| r.get());
+        let item = format!("/books/{}", b.id);
+        let may_monitor = crate::surface::offered(role.as_deref(), "PATCH", &item);
+        let may_delete = crate::surface::offered(role.as_deref(), "DELETE", &item);
         let year = b.year.map(|y| format!(" ({y})")).unwrap_or_default();
         let monitored = b.monitored;
         let overview = b.overview.clone().filter(|o| !o.is_empty());
@@ -1577,6 +1584,9 @@ pub fn BookDetailPage() -> impl IntoView {
                 let rst_bid = book_id.clone();
                 let rst_fid = file_id.clone();
                 let resettable = file_resettable(&label);
+                let at = api::AcquirablePath::book_file(&book_id, &file_id);
+                let may_acquire = at.offered(role.as_deref(), "POST", "acquire");
+                let may_reset = at.offered(role.as_deref(), "POST", "reset");
                 let on_reset = Callback::new(move |()| {
                     let book_id = rst_bid.clone();
                     let file_id = rst_fid.clone();
@@ -1696,7 +1706,8 @@ pub fn BookDetailPage() -> impl IntoView {
                                 }
                             })}
                             {save_view}
-                            <BookFileActions resettable=resettable on_acquire=on_acquire on_reset=on_reset/>
+                            <BookFileActions resettable=resettable may_acquire=may_acquire may_reset=may_reset
+                                on_acquire=on_acquire on_reset=on_reset/>
                             {acq_view}
                         </div>
                         {location_view}
@@ -1726,12 +1737,16 @@ pub fn BookDetailPage() -> impl IntoView {
                         {(!byline.is_empty()).then(|| view! { <p class="muted">{byline}</p> })}
                         {series.map(|s| view! { <p><Pill color=token::TEAL>{s}</Pill></p> })}
                         <div class="card-actions">
-                            <Button variant="default" size="xs" disabled=busy
-                                on_click=Callback::new(toggle_monitor)>
-                                {if monitored { "Unmonitor" } else { "Monitor" }}
-                            </Button>
-                            <Button variant="default" size="xs" bad=true disabled=busy
-                                on_click=Callback::new(on_delete)>"Delete"</Button>
+                            {may_monitor.then(|| view! {
+                                <Button variant="default" size="xs" disabled=busy
+                                    on_click=Callback::new(toggle_monitor)>
+                                    {if monitored { "Unmonitor" } else { "Monitor" }}
+                                </Button>
+                            })}
+                            {may_delete.then(|| view! {
+                                <Button variant="default" size="xs" bad=true disabled=busy
+                                    on_click=Callback::new(on_delete)>"Delete"</Button>
+                            })}
                         </div>
                         {overview.map(|o| clean_overview(&o)
                             .into_iter()
@@ -1764,15 +1779,23 @@ pub fn file_resettable(label: &str) -> bool {
 /// Presentational per-file action bar: **Acquire** + **Reset** (disabled unless
 /// [`file_resettable`]). Actions delegated via callbacks so it's unit-mountable
 /// with no state. Mirrors [`crate::movies::EditionActions`].
+///
+/// As there, a button the role may not use is not drawn (SKADI-T-0639).
 #[component]
 pub fn BookFileActions(
     resettable: bool,
+    may_acquire: bool,
+    may_reset: bool,
     on_acquire: Callback<()>,
     on_reset: Callback<()>,
 ) -> impl IntoView {
     view! {
-        <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
-        <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
+        {may_acquire.then(|| view! {
+            <Button variant="default" size="xs" on_click=on_acquire>"Acquire"</Button>
+        })}
+        {may_reset.then(|| view! {
+            <Button variant="subtle" size="xs" disabled=!resettable on_click=on_reset>"Reset"</Button>
+        })}
     }
 }
 

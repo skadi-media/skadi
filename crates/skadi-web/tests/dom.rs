@@ -164,6 +164,8 @@ fn reset_disabled_for(resettable: bool) -> bool {
         view! {
             <EditionActions
                 resettable=resettable
+                may_acquire=true
+                may_reset=true
                 on_acquire=Callback::new(|_| {})
                 on_reset=Callback::new(|_| {})
             />
@@ -181,6 +183,27 @@ fn edition_actions_reset_enabled_state() {
     assert!(!reset_disabled_for(true), "Reset enabled when resettable");
 }
 
+/// A role that may not acquire or reset is offered neither button
+/// (SKADI-T-0639): the API would refuse both.
+#[wasm_bindgen_test]
+fn edition_actions_draw_only_what_the_role_may_do() {
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! {
+            <EditionActions
+                resettable=true
+                may_acquire=true
+                may_reset=false
+                on_acquire=Callback::new(|_| {})
+                on_reset=Callback::new(|_| {})
+            />
+        }
+    });
+    let text = host.text_content().unwrap_or_default();
+    assert!(text.contains("Acquire"), "{text}");
+    assert!(!text.contains("Reset"), "{text}");
+}
+
 // --- Audiobooks (SKADI-T-0133) ---
 
 /// The book-file Reset button is disabled unless the file is in a resettable
@@ -191,6 +214,8 @@ fn book_reset_disabled_for(resettable: bool) -> bool {
         view! {
             <BookFileActions
                 resettable=resettable
+                may_acquire=true
+                may_reset=true
                 on_acquire=Callback::new(|_| {})
                 on_reset=Callback::new(|_| {})
             />
@@ -209,12 +234,14 @@ fn book_file_actions_reset_enabled_state() {
         !book_reset_disabled_for(true),
         "Reset enabled when resettable"
     );
-    // Acquire is always present.
+    // Acquire is present for a role that may acquire.
     let host = host();
     let _handle = mount_to(host.clone(), || {
         view! {
             <BookFileActions
                 resettable=false
+                may_acquire=true
+                may_reset=true
                 on_acquire=Callback::new(|_| {})
                 on_reset=Callback::new(|_| {})
             />

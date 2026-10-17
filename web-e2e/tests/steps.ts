@@ -30,12 +30,36 @@ export async function givenTorznabIndexer(request: APIRequestContext, name: stri
   return (await r.json()).id as string;
 }
 
-/** Given the movie <title> (tmdb <id>) is added without an automatic search */
+/** Given the harness's health checks have run once (SKADI-T-0722).
+ *
+ * The checks run on a schedule and the page reads their cache (SKADI-T-0679),
+ * so a fresh daemon shows every check as "not checked yet" until the first
+ * run. A spec that reads a check's status runs them first. */
+export async function givenHealthChecksRun(request: APIRequestContext) {
+  const r = await request.post(`${API}/health/checks/run`);
+  expect(r.ok(), `run health checks: ${r.status()}`).toBeTruthy();
+}
+
+/** Given the movie <title> (tmdb <id>) is added, fresh, without an automatic search.
+ *
+ * The specs share one harness daemon, so an earlier spec may have added the
+ * same film (the second add was a 409, SKADI-T-0722) or grabbed and imported
+ * it. Any copy is deleted with its files first, and the library root is set to
+ * `rootFolder`, so this step does not depend on which spec ran before it. */
 export async function givenMovieAdded(
   request: APIRequestContext,
   tmdbId: number,
   rootFolder: string,
 ) {
+  const root = await request.put(`${API}/config/library.root`, { data: { value: rootFolder } });
+  expect(root.ok(), `set library.root: ${root.status()}`).toBeTruthy();
+  const listed = await request.get(`${API}/movies`);
+  for (const m of (await listed.json()) as { id: string; external_ids?: { tmdb?: number } }[]) {
+    if (m.external_ids?.tmdb === tmdbId) {
+      const del = await request.delete(`${API}/movies/${m.id}?delete_files=true`);
+      expect(del.ok(), `delete the earlier copy: ${del.status()}`).toBeTruthy();
+    }
+  }
   const profile = await request.post(`${API}/settings/profiles`, {
     data: { name: "e2e", cutoff: "Bluray-1080p" },
   });
@@ -127,9 +151,34 @@ export async function whenPicksTheme(page: Page, label: string) {
 
 /** Then the sidebar shows a link <name> */
 export async function thenSidebarLink(page: Page, name: string, visible = true) {
-  const link = page.locator(".nav").getByRole("link", { name, exact: true });
+  const link = sidebarLink(page, name);
   if (visible) await expect(link).toBeVisible();
   else await expect(link).toHaveCount(0);
+}
+
+/** The sidebar link <name>. A library link carries its item count ("Movies 3"),
+ * so the accessible name is the label and an optional number (SKADI-T-0722). */
+export function sidebarLink(page: Page, name: string) {
+  const label = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.locator(".nav").getByRole("link", { name: new RegExp(`^${label}\\s*\\d*$`) });
+}
+
+/** When the person opens the first library tile: its detail page, which
+ * replaced the drawer. */
+export async function whenOpensFirstTile(page: Page, title: string) {
+  await expect(page.locator(".poster-tile").first()).toBeVisible();
+  await page.locator(".poster-tile").first().click();
+  await expect(page.getByRole("heading", { name: title }).first()).toBeVisible();
+}
+
+/** When the person searches releases on a detail page and grabs the first
+ * result whose title contains <release>. */
+export async function whenGrabsFirstRelease(page: Page, release: string) {
+  await page.getByRole("button", { name: /Search releases/ }).click();
+  const row = page.locator(".releases-table tbody tr").first();
+  await expect(row.locator(".release-title")).toContainText(release);
+  await row.getByRole("button", { name: /^Grab / }).click();
+  await expect(page.locator(".releases-note")).toContainText(/grab started/i);
 }
 
 /** Then every request the page made to /api/v1/ carried an Authorization header */

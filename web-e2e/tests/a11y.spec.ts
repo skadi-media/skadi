@@ -302,11 +302,12 @@ test.describe("C31 a11y: axe on the main pages", () => {
     // Aurora's AppShell marks the open drawer; style.css locks the page on it
     // (SKADI-T-0717).
     await expect(page.locator(".cl-appshell")).toHaveClass(/cl-appshell--nav-open/);
-    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
+    // Aurora 0.6.1 locks the root element, not <body> (SKADI-T-0722).
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow)).toBe("hidden");
     await audit(page, "/ (drawer open, 375px)");
     await page.keyboard.press("Escape");
     await expect(page.locator(".cl-appshell")).not.toHaveClass(/cl-appshell--nav-open/);
-    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe("hidden");
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow)).not.toBe("hidden");
   });
 });
 

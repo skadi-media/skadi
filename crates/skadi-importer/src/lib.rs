@@ -1517,14 +1517,62 @@ pub fn place_file(src: &Path, dest: &Path, allow_hardlink: bool) -> Result<()> {
     Ok(())
 }
 
+/// The paths a delete refused because they do not resolve to a place under the
+/// library root (SKADI-T-0712). Nothing was deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutsideRoot(pub Vec<PathBuf>);
+
+impl std::fmt::Display for OutsideRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "not under the library root, so nothing was deleted: {}",
+            self.0
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+impl std::error::Error for OutsideRoot {}
+
 /// Delete `files` from disk and prune now-empty ancestor directories up to (but not including)
 /// `root` — the file side of a proper library-item delete (SKADI-T-0316). Best-effort and **safe**:
 /// a missing file or a still-non-empty directory is skipped, never an error; `remove_file` only
 /// touches the exact paths given and `remove_dir` only removes a directory once it is empty, so
 /// this can never cascade outside the files it was handed. Pruning stops at `root` (the domain
 /// library root), which is never removed. Returns the files actually removed.
-#[must_use]
-pub fn delete_files_and_prune(files: &[PathBuf], root: &Path) -> Vec<PathBuf> {
+///
+/// A path that does not resolve under `root` is refused (SKADI-T-0712): the check is on the
+/// canonical paths, so a symlink under the root that points outside it, or a `..`, is caught.
+/// One refused path refuses the whole call, before anything is removed, and the error names
+/// every refused path. A root that cannot be resolved (a dropped mount) refuses every path.
+pub fn delete_files_and_prune(
+    files: &[PathBuf],
+    root: &Path,
+) -> std::result::Result<Vec<PathBuf>, OutsideRoot> {
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Err(OutsideRoot(files.to_vec()));
+    };
+    let refused: Vec<PathBuf> = files
+        .iter()
+        .filter(|f| match f.canonicalize() {
+            Ok(real) => !real.starts_with(&canonical_root),
+            // A missing file is the safe no-op below, wherever its path points.
+            Err(_) => false,
+        })
+        .cloned()
+        .collect();
+    if !refused.is_empty() {
+        tracing::warn!(
+            root = %root.display(),
+            refused = ?refused,
+            "delete refused: file paths outside the library root"
+        );
+        return Err(OutsideRoot(refused));
+    }
     let mut removed = Vec::new();
     let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     for f in files {
@@ -1547,7 +1595,7 @@ pub fn delete_files_and_prune(files: &[PathBuf], root: &Path) -> Vec<PathBuf> {
     for d in &dirs {
         let _ = std::fs::remove_dir(d); // succeeds only if the dir is now empty
     }
-    removed
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1766,7 +1814,7 @@ mod tests {
         let keep = other.join("keep.m4b");
         std::fs::write(&keep, b"keep").unwrap();
 
-        let removed = delete_files_and_prune(&[f1.clone(), f2.clone()], &root);
+        let removed = delete_files_and_prune(&[f1.clone(), f2.clone()], &root).unwrap();
 
         assert_eq!(removed.len(), 2);
         assert!(!f1.exists() && !f2.exists(), "the two files are deleted");
@@ -1783,22 +1831,67 @@ mod tests {
     }
 
     #[test]
-    fn delete_files_is_safe_on_missing_and_outside_root() {
+    fn delete_files_is_safe_on_missing_and_refuses_outside_root() {
         let root = unique_dir("del2");
         std::fs::create_dir_all(&root).unwrap();
         // Missing file → no panic, nothing reported removed, root intact.
-        let removed = delete_files_and_prune(&[root.join("nope.m4b")], &root);
+        let removed = delete_files_and_prune(&[root.join("nope.m4b")], &root).unwrap();
         assert!(removed.is_empty());
         assert!(root.exists());
 
-        // A file outside `root` is removed if listed, but no dir outside root is pruned.
+        // A file outside `root` is refused, named, and survives; and because one
+        // refusal refuses the call, the in-root file listed beside it survives too
+        // (SKADI-T-0712).
         let outside = unique_dir("outside");
-        std::fs::create_dir_all(&outside).unwrap();
         let of = outside.join("x.m4b");
         std::fs::write(&of, b"x").unwrap();
-        let removed = delete_files_and_prune(std::slice::from_ref(&of), &root);
-        assert_eq!(removed, vec![of]);
+        let inside = root.join("y.m4b");
+        std::fs::write(&inside, b"y").unwrap();
+        let err = delete_files_and_prune(&[inside.clone(), of.clone()], &root).unwrap_err();
+        assert_eq!(err, OutsideRoot(vec![of.clone()]));
+        assert!(err.to_string().contains("x.m4b"), "{err}");
+        assert!(of.exists(), "the outside file survives");
+        assert!(
+            inside.exists(),
+            "nothing is deleted while a path is refused"
+        );
         assert!(outside.exists(), "a dir outside root is never pruned");
+
+        // A `..` in a path is resolved before the check.
+        let dotted = root
+            .join("..")
+            .join(outside.file_name().unwrap())
+            .join("x.m4b");
+        let err = delete_files_and_prune(std::slice::from_ref(&dotted), &root).unwrap_err();
+        assert_eq!(err.0, vec![dotted]);
+        assert!(of.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_files_does_not_follow_a_symlink_out_of_the_root() {
+        let root = unique_dir("del3");
+        let outside = unique_dir("outside3");
+        let target = outside.join("real.m4b");
+        std::fs::write(&target, b"real").unwrap();
+        let link = root.join("link.m4b");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = delete_files_and_prune(std::slice::from_ref(&link), &root).unwrap_err();
+        assert_eq!(err.0, vec![link.clone()]);
+        assert!(target.exists(), "the file behind the link survives");
+        assert!(
+            std::fs::symlink_metadata(&link).is_ok(),
+            "the link itself is left alone too"
+        );
+    }
+
+    #[test]
+    fn delete_files_refuses_everything_when_the_root_is_gone() {
+        let root = unique_dir("del4").join("missing-root");
+        let f = root.join("a.m4b");
+        let err = delete_files_and_prune(std::slice::from_ref(&f), &root).unwrap_err();
+        assert_eq!(err.0, vec![f]);
     }
 
     #[tokio::test]

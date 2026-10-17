@@ -1327,6 +1327,63 @@ async fn bulk_search_starts_runs_for_missing_editions_only() {
     assert_eq!(skipped, vec![owned.as_str(), busy.as_str()]);
 }
 
+/// A recorded file path outside the library root refuses the delete, single
+/// and bulk: the file survives, the row stays, and the response names the path
+/// (SKADI-T-0712).
+#[tokio::test]
+async fn delete_with_files_refuses_a_file_outside_the_library_root() {
+    let h = harness().await;
+    register_profile_and_root(&h.store).await;
+    let lib = std::env::temp_dir().join(format!("skadi-del-{}", uuid::Uuid::new_v4()));
+    h.store
+        .set_config("library.root", lib.to_str().unwrap(), ConfigSource::Runtime)
+        .await
+        .unwrap();
+    std::fs::create_dir_all(lib.join("movie")).unwrap();
+    let outside = std::env::temp_dir().join(format!("skadi-outside-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&outside).unwrap();
+    let stray = outside.join("Stray.mkv");
+    std::fs::write(&stray, b"video").unwrap();
+    let (id, ed) = add_quiet(&h, 1).await;
+    h.store
+        .set_edition_status(edition_id(&ed), imported_at(stray.clone()))
+        .await
+        .unwrap();
+
+    let (s, body) = call(
+        h.http.routes(),
+        "DELETE",
+        &format!("/movies/{id}?delete_files=true"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("Stray.mkv"), "{body}");
+    assert!(stray.exists(), "the file outside the root survives");
+    let (s, _) = call(h.http.routes(), "GET", &format!("/movies/{id}"), None).await;
+    assert_eq!(s, StatusCode::OK, "the row stays with its file");
+
+    let (s, report) = call(
+        h.http.routes(),
+        "POST",
+        "/movies/bulk",
+        Some(serde_json::json!({ "ids": [id], "action": "delete", "delete_files": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{report}");
+    assert_eq!(report["failed"].as_array().unwrap().len(), 1, "{report}");
+    assert!(
+        report["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Stray.mkv"),
+        "{report}"
+    );
+    assert!(stray.exists());
+    let _ = std::fs::remove_dir_all(&lib);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 /// Delete goes through the single delete: with `delete_files` the imported
 /// file goes and its emptied folder is pruned (the root stays); without it the
 /// file stays. The rows go either way.

@@ -265,6 +265,14 @@ impl DomainModule for AudiobooksModule {
             self.store.clone(),
         )));
 
+        // M4B conversion (SKADI-T-0139): always spawned, idle unless
+        // `import.audiobook_convert_to_m4b` is on. Reads the key every pass, so
+        // turning it on or off needs no restart.
+        workers.push(Box::new(crate::convert::AudiobookConvertWorker::new(
+            crate::convert::ConvertJob::new(self.store.clone()),
+            crate::convert::DEFAULT_CONVERT_INTERVAL,
+        )));
+
         // Author-discovery worker (SKADI-T-0132): only once both the catalog
         // provider (author → products) and the enrichment provider are wired.
         if let (Some(enrich), Some(catalog)) = (enrich, catalog) {
@@ -541,8 +549,13 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["audiobooks-hunter", "audiobooks-author-maintenance"],
-            "one hunter worker plus author maintenance (refresh and discovery deferred)"
+            vec![
+                "audiobooks-hunter",
+                "audiobooks-author-maintenance",
+                "audiobooks-m4b-convert"
+            ],
+            "one hunter worker, author maintenance and the M4B conversion (idle when off); \
+             refresh and discovery deferred"
         );
         module.runner().shutdown().await.unwrap();
     }

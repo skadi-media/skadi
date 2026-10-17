@@ -209,6 +209,38 @@ fn ext_lower(path: &Path) -> Option<String> {
     Some(path.extension()?.to_str()?.to_ascii_lowercase())
 }
 
+/// What the M4B conversion needs to know about one audio file (SKADI-T-0139).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioFacts {
+    /// Exact running time. [`MediaInfo::duration_secs`] rounds to whole seconds,
+    /// which drifts by up to a minute over a 60-file book's chapter marks.
+    pub duration: std::time::Duration,
+    /// The title tag, when the file has one.
+    pub title: Option<String>,
+    /// Audio bitrate in kbps, when known.
+    pub bitrate_kbps: Option<u32>,
+}
+
+/// Read [`AudioFacts`] from an audio file with lofty. `None` when lofty cannot
+/// read it. Blocking.
+#[must_use]
+pub fn audio_facts(path: &Path) -> Option<AudioFacts> {
+    use lofty::file::{AudioFile, TaggedFileExt};
+    use lofty::tag::Accessor;
+    let tagged = lofty::read_from_path(path).ok()?;
+    let props = tagged.properties();
+    let title = tagged
+        .primary_tag()
+        .or_else(|| tagged.first_tag())
+        .and_then(|t| t.title().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty());
+    Some(AudioFacts {
+        duration: props.duration(),
+        title,
+        bitrate_kbps: props.audio_bitrate(),
+    })
+}
+
 /// Audio (and m4b/m4a) via lofty: duration + bitrate + channels + sample rate + a codec
 /// from the detected file type.
 fn probe_audio(path: &Path) -> Option<MediaInfo> {

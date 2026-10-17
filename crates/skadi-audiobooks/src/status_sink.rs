@@ -71,7 +71,12 @@ impl StatusSink for AudiobookStatusSink {
     ) -> Result<()> {
         let id = decode(acquirable)?;
         let event = history_event(&status);
+        let imported = matches!(status, AcquisitionStatus::Imported { .. });
         self.repo.set_book_file_status(id, status).await?;
+        // Wake the M4B conversion (SKADI-T-0139); it does nothing when off.
+        if imported {
+            crate::convert::nudge();
+        }
 
         if let Some((event, detail, reason_code, at)) = event {
             let label = self

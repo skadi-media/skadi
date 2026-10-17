@@ -117,6 +117,37 @@ Already have audiobooks on disk? Use **library import**
 3. **Commit** — selected items are fetched from Audnexus and **hardlinked** into
    the canonical layout as `Imported`. Originals are never modified or removed.
 
+## Convert downloads to M4B (optional)
+
+Skadi prefers an M4B release when it searches. When only MP3 exists, it can
+convert the download to one M4B file with chapters after the import. This is
+off by default: MP3 to AAC is a lossy re-encode.
+
+Turn it on with the config key `import.audiobook_convert_to_m4b` (**Config →
+import**), or `SKADI_IMPORT_AUDIOBOOK_CONVERT_TO_M4B=true` in the environment.
+The deploy image carries a small static `ffmpeg` for this job and nothing else.
+
+- **Which books.** Books that Skadi downloads and imports as something other
+  than M4B. A library import is never converted.
+- **When.** A background job picks the book up shortly after the import, one
+  book at a time. It shows in Activity at the stage `converting`, and its
+  result is on the book's trace stream (`converted`, `convert_failed`,
+  `convert_skipped`).
+- **Chapters.** From a `.cue` sheet next to the files when it fits them, else
+  one chapter per file (named from the file name), else the file's own
+  chapters. A book without chapters gets one.
+- **Audio.** AAC at 128 kbps for a source at 112 kbps or more, else 64 kbps.
+  M4A/MP4 sources are copied, not re-encoded. The file is recorded at the
+  matching M4B quality tier.
+- **Failure.** The imported files stay as they were. A failed book is tried
+  again after a day, at most three times.
+- **Seeding stops.** Once the M4B is recorded, the book's download is removed
+  with its data, and every original in the library goes: to the recycle bin
+  when `import.recycle_bin` is set, else it is deleted. Skadi does not seed the
+  M4B.
+
+The conversion needs free space for the new file next to the originals.
+
 ## Metadata refresh
 
 Once added, a book's Audnexus-sourced fields are refreshed on a schedule (behind

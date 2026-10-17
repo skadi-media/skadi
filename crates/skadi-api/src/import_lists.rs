@@ -15,7 +15,7 @@ use skadi_core::Result;
 use skadi_metadata::import_list::ImportListProvider;
 use skadi_store::{ImportList, ImportListRepo};
 
-use crate::library::{ImportListAddOptions, LibraryProvider};
+use crate::library::{ImportListAddOptions, LibraryProvider, ListAdd};
 
 /// What one list's sync did.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -127,8 +127,9 @@ pub async fn sync_list(
             .add_from_list(&item.id_kind, &item.external_id, &opts)
             .await
         {
-            Ok(true) => report.added += 1,
-            Ok(false) => report.existing += 1,
+            Ok(ListAdd::Added) => report.added += 1,
+            Ok(ListAdd::Existing) => report.existing += 1,
+            Ok(ListAdd::Excluded) => report.excluded += 1,
             Err(e) => report
                 .failed
                 .push((item.external_id.clone(), e.to_string())),

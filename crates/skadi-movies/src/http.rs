@@ -2006,7 +2006,7 @@ impl LibraryProvider for MoviesLibrary {
         id_kind: &str,
         external_id: &str,
         opts: &skadi_api::library::ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
         let provider = self.provider.as_ref().ok_or_else(|| {
             AppError::Internal("movies library has no metadata provider configured".into())
         })?;
@@ -2017,7 +2017,7 @@ impl LibraryProvider for MoviesLibrary {
             TmdbId(tmdb)
         } else if id_kind.eq_ignore_ascii_case("imdb") {
             let Some(tmdb) = self.resolve_imdb(provider.as_ref(), external_id).await? else {
-                return Ok(false);
+                return Ok(skadi_api::library::ListAdd::Existing);
             };
             // The sync engine checked exclusions by the IMDb id. The movie
             // page's "Exclude from lists" posts the TMDB id, and that must
@@ -2028,7 +2028,7 @@ impl LibraryProvider for MoviesLibrary {
                     tmdb = tmdb.0,
                     "import list: excluded by TMDB id"
                 );
-                return Ok(false);
+                return Ok(skadi_api::library::ListAdd::Excluded);
             }
             tmdb
         } else {
@@ -2044,7 +2044,7 @@ impl LibraryProvider for MoviesLibrary {
             .await?
             .is_some()
         {
-            return Ok(false);
+            return Ok(skadi_api::library::ListAdd::Existing);
         }
 
         let profile = match &opts.profile_id {
@@ -2081,7 +2081,7 @@ impl LibraryProvider for MoviesLibrary {
                 .upsert_movie(&movie)
                 .await?;
         }
-        Ok(true)
+        Ok(skadi_api::library::ListAdd::Added)
     }
 
     async fn items(&self, monitored: Option<bool>) -> skadi_core::Result<Vec<LibraryItemDto>> {

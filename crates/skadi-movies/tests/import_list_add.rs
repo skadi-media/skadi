@@ -180,11 +180,12 @@ async fn an_exclusion_by_tmdb_id_holds_for_an_imdb_list() {
         .unwrap();
     let library =
         MoviesLibrary::new(store.clone()).with_provider(Arc::new(FakeProvider::default()));
-    let added = library
+    let outcome = library
         .add_from_list("imdb", "tt0133093", &ImportListAddOptions::default())
         .await
         .unwrap();
-    assert!(!added);
+    // Counted as excluded, not as already in the library.
+    assert_eq!(outcome, skadi_api::library::ListAdd::Excluded);
     assert!(
         (&store as &dyn MoviesRepo)
             .get_movie_by_tmdb(TmdbId(603))

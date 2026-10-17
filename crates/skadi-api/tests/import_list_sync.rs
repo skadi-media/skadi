@@ -55,18 +55,18 @@ impl LibraryProvider for StubDomain {
         _id_kind: &str,
         external_id: &str,
         opts: &ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
         if self.broken.iter().any(|b| b == external_id) {
             return Err(skadi_core::AppError::Validation("nope".into()));
         }
         if self.existing.iter().any(|e| e == external_id) {
-            return Ok(false);
+            return Ok(skadi_api::library::ListAdd::Existing);
         }
         self.added
             .lock()
             .unwrap()
             .push((external_id.to_string(), opts.monitored));
-        Ok(true)
+        Ok(skadi_api::library::ListAdd::Added)
     }
 }
 
@@ -335,8 +335,8 @@ impl LibraryProvider for TvStub {
         _id_kind: &str,
         _external_id: &str,
         _opts: &ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
-        Ok(true)
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
+        Ok(skadi_api::library::ListAdd::Added)
     }
 }
 

@@ -97,6 +97,17 @@ pub struct CalendarEntryDto {
     pub monitored: bool,
 }
 
+/// What an import list's add did for one item (SKADI-T-0733).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListAdd {
+    /// The item was added to the library.
+    Added,
+    /// The item was already in the library.
+    Existing,
+    /// An exclusion names the item under another id than the list's.
+    Excluded,
+}
+
 /// What an import list wants applied to the items it adds (SKADI-T-0511).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportListAddOptions {
@@ -146,8 +157,10 @@ pub trait LibraryProvider: Send + Sync {
     /// hand-added one are identical rows. A list that carried its own metadata
     /// would be a second path for the same fact, free to disagree with the first.
     ///
-    /// `Ok(false)` means "already present" — not an error, and the common case on
-    /// every sync after the first.
+    /// [`ListAdd::Existing`] means "already present" — not an error, and the
+    /// common case on every sync after the first. [`ListAdd::Excluded`] is for an
+    /// exclusion the domain finds under another id than the list's (an IMDb list
+    /// item excluded by its TMDB id, SKADI-T-0733).
     ///
     /// Defaults to **`Err`**, so a domain adopts this incrementally, like
     /// `calendar` and `items_page`. The default is an error rather than
@@ -159,7 +172,7 @@ pub trait LibraryProvider: Send + Sync {
         _id_kind: &str,
         _external_id: &str,
         _opts: &ImportListAddOptions,
-    ) -> Result<bool> {
+    ) -> Result<ListAdd> {
         Err(skadi_core::AppError::Internal(format!(
             "domain `{}` cannot add items from an import list yet",
             self.domain()

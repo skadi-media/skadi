@@ -2619,7 +2619,7 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
         id_kind: &str,
         external_id: &str,
         opts: &skadi_api::library::ImportListAddOptions,
-    ) -> skadi_core::Result<bool> {
+    ) -> skadi_core::Result<skadi_api::library::ListAdd> {
         if !id_kind.eq_ignore_ascii_case("asin") {
             return Err(AppError::Validation(format!(
                 "audiobooks can be added by asin, not `{id_kind}`"
@@ -2638,7 +2638,7 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
         let repo: &dyn AudiobooksRepo = &self.store;
         // Already present is the ordinary case on every sync after the first.
         if repo.get_book_by_asin(&asin).await?.is_some() {
-            return Ok(false);
+            return Ok(skadi_api::library::ListAdd::Existing);
         }
         // The profile as `POST /books` resolves it: an explicit id must be a
         // registered profile; none means the built-in audiobook ladder.
@@ -2668,7 +2668,7 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
             RootFolder::for_domain(library_root(&self.store).await, MediaKind::Audiobook);
         // `add_book` builds the book with `Book::new`, which is monitored.
         add_book(repo, provider.as_ref(), asin, profile, root_folder).await?;
-        Ok(true)
+        Ok(skadi_api::library::ListAdd::Added)
     }
 
     async fn items(

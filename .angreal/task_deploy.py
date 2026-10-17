@@ -644,7 +644,7 @@ def pull():
 def status():
     _DEP_compose(["ps"])
     # The image each of our containers runs, against the pin in deploy/.env
-    # (SKADI-T-0641): a `redeploy --local` or a changed pin shows here.
+    # (SKADI-T-0641): a `redeploy` on a pinned stack, or a changed pin, shows here.
     prefix, tag = _DEP_image_pin()
     running = _DEP_running_images()
     for svc in ("skadi", "skadi-downloader-worker"):

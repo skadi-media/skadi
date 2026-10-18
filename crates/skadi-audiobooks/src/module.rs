@@ -29,6 +29,7 @@ use skadi_store::{ConfigRepo, Store};
 use uuid::Uuid;
 
 use crate::matcher::AudiobookMatcher;
+use crate::prefer_m4b::PreferM4b;
 use crate::repo::AudiobooksRepo;
 use crate::status_sink::AudiobookStatusSink;
 use crate::wanted::{AudiobookWantedQuery, WantedScoring};
@@ -410,7 +411,9 @@ impl ImporterFactory for AudiobookImporterFactory {
         }
         let matcher = AudiobookMatcher::with_candidates(book, file, siblings, self.naming().await);
         let g = self.guards().await;
-        Ok(Arc::new(
+        // SKADI-T-0740: a download that holds the book as MP3s and as one M4B
+        // of the same length imports only the M4B.
+        Ok(Arc::new(PreferM4b::new(
             DefaultImporter::new(matcher)
                 .with_library_roots(g.library_roots)
                 .with_require_root_marker(g.require_root_marker)
@@ -420,7 +423,7 @@ impl ImporterFactory for AudiobookImporterFactory {
                 // SKADI-T-0138: acquire-path placement policy. Library-import
                 // has its own path and always hardlinks.
                 .with_move_on_import(g.move_on_import),
-        ) as Arc<dyn Importer>)
+        )) as Arc<dyn Importer>)
     }
 }
 

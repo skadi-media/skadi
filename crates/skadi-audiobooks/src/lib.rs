@@ -29,6 +29,7 @@ pub mod metadata;
 pub mod module;
 pub mod naming;
 pub mod parts;
+pub mod prefer_m4b;
 pub mod refresh;
 pub mod repo;
 pub mod roles;

@@ -1993,16 +1993,19 @@ fn search_titles_is_case_insensitive_and_skips_picked() {
             id: "1".into(),
             label: "The Matrix (1999)".into(),
             kind: "movie",
+            asin: None,
         },
         TitleRef {
             id: "2".into(),
             label: "Matrix Reloaded (2003)".into(),
             kind: "movie",
+            asin: None,
         },
         TitleRef {
             id: "3".into(),
             label: "Adventure Time (2010)".into(),
             kind: "series",
+            asin: None,
         },
     ];
     assert!(
@@ -2020,6 +2023,29 @@ fn search_titles_is_case_insensitive_and_skips_picked() {
         vec!["2"]
     );
     assert_eq!(search_titles("a", &items, &[], 1).len(), 1, "limit applies");
+}
+
+/// A book is picked by its ASIN and found again by it after a delete and
+/// re-add gives it a new id (SKADI-T-0741).
+#[wasm_bindgen_test]
+fn a_book_pick_stores_the_asin_and_matches_by_either() {
+    use skadi_web::household::{TitleRef, search_titles};
+    let book = TitleRef {
+        id: "new-id".into(),
+        label: "The Long Road · Robin Sample".into(),
+        kind: "audiobook",
+        asin: Some("B0TESTASIN".into()),
+    };
+    assert_eq!(book.key(), "B0TESTASIN");
+    assert!(book.named_by("B0TESTASIN"));
+    assert!(book.named_by("new-id"), "an older pick by id still counts");
+    assert!(!book.named_by("old-id"));
+    let items = vec![book];
+    assert!(search_titles("long", &items, &["B0TESTASIN".to_string()], 10).is_empty());
+    assert_eq!(
+        search_titles("long", &items, &["old-id".to_string()], 10).len(),
+        1
+    );
 }
 
 // --- Sign-in (SKADI-T-0621) ---------------------------------------------

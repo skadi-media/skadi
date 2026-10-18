@@ -34,11 +34,44 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
-/// The APK directory, when configured and present.
+/// Where the image carries the APK its release built (SKADI-T-0637).
+const BUILTIN_APK_DIR: &str = "/usr/share/skadi/apk";
+
+/// The APK directory to serve: the published one (`SKADI_APK_DIR`, written by
+/// `deploy/publish-apk.sh`) or the one built into the image, whichever holds the
+/// higher `version_code`. A deploy alone thus updates the app, and a newer
+/// manual publish still wins.
 fn apk_dir() -> Option<PathBuf> {
-    std::env::var_os("SKADI_APK_DIR")
+    let builtin = std::env::var_os("SKADI_APK_BUILTIN_DIR")
+        .map_or_else(|| PathBuf::from(BUILTIN_APK_DIR), PathBuf::from);
+    let candidates: Vec<PathBuf> = std::env::var_os("SKADI_APK_DIR")
         .map(PathBuf::from)
-        .filter(|p| p.is_dir())
+        .into_iter()
+        .chain(std::iter::once(builtin))
+        .collect();
+    pick_apk_dir(&candidates)
+}
+
+/// Of `candidates` (most preferred first), the directory whose manifest names
+/// an APK that exists with the highest `version_code`; a tie goes to the
+/// earlier one. With no valid manifest anywhere, the first directory that
+/// exists, so "no app published" reads as before.
+fn pick_apk_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
+    let mut best: Option<(u64, &PathBuf)> = None;
+    for dir in candidates.iter().filter(|d| d.is_dir()) {
+        let Some(m) = read_manifest(dir) else {
+            continue;
+        };
+        if !is_safe_name(&m.file) || !dir.join(&m.file).is_file() {
+            continue;
+        }
+        let code = m.version_code.unwrap_or(0);
+        if best.is_none_or(|(c, _)| code > c) {
+            best = Some((code, dir));
+        }
+    }
+    best.map(|(_, d)| d.clone())
+        .or_else(|| candidates.iter().find(|d| d.is_dir()).cloned())
 }
 
 /// `manifest.json` written by the publish script beside the APK.
@@ -245,6 +278,49 @@ fn hostname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn published(dir: &FsPath, code: u64) {
+        let file = format!("skadi-{code}.apk");
+        std::fs::write(dir.join(&file), b"fake apk").unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            format!(r#"{{"file":"{file}","version_name":"0.{code}.0","version_code":{code}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_higher_version_code_is_served() {
+        let mounted = tempfile::tempdir().unwrap();
+        let builtin = tempfile::tempdir().unwrap();
+        let dirs = [mounted.path().to_path_buf(), builtin.path().to_path_buf()];
+        // Nothing published anywhere: the mounted folder, as before.
+        assert_eq!(pick_apk_dir(&dirs).as_deref(), Some(mounted.path()));
+        // The image's newer build wins over an older manual publish.
+        published(mounted.path(), 33);
+        published(builtin.path(), 34);
+        assert_eq!(pick_apk_dir(&dirs).as_deref(), Some(builtin.path()));
+        // A newer manual publish wins over the image.
+        published(mounted.path(), 35);
+        assert_eq!(pick_apk_dir(&dirs).as_deref(), Some(mounted.path()));
+        // A tie goes to the mounted one.
+        published(builtin.path(), 35);
+        assert_eq!(pick_apk_dir(&dirs).as_deref(), Some(mounted.path()));
+    }
+
+    #[test]
+    fn a_manifest_without_its_apk_is_ignored() {
+        let mounted = tempfile::tempdir().unwrap();
+        let builtin = tempfile::tempdir().unwrap();
+        published(builtin.path(), 34);
+        std::fs::write(
+            mounted.path().join("manifest.json"),
+            r#"{"file":"skadi-99.apk","version_code":99}"#,
+        )
+        .unwrap();
+        let dirs = [mounted.path().to_path_buf(), builtin.path().to_path_buf()];
+        assert_eq!(pick_apk_dir(&dirs).as_deref(), Some(builtin.path()));
+    }
 
     #[tokio::test]
     async fn app_file_rejects_traversal_and_dotfiles() {

@@ -75,6 +75,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The release's APK (SKADI-T-0637), built by ci.yml's android-apk job,
+      # into the daemon image's /usr/share/skadi/apk. Absent off a tag, and
+      # then the image carries an empty apk-dist/ as a local build does.
+      - name: Fetch the release APK for the daemon image
+        if: matrix.image == 'skadi'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: apk-dist
+
       # Each arch pushes an untagged blob and reports its digest; the merge job
       # below assembles the tagged multi-arch manifest. Tagging here instead
       # would leave the two architectures racing to own the same tag.

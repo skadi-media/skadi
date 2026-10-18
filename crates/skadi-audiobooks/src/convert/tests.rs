@@ -288,17 +288,114 @@ async fn output_that_is_not_audio_is_refused() {
 }
 
 #[tokio::test]
-async fn a_folder_with_an_m4b_is_skipped_for_good() {
+async fn a_folder_with_an_m4b_of_another_length_is_skipped_for_good() {
     let (tmp, store) = fresh_store().await;
     let root = tmp.path().join("audiobooks");
     let (_, file, dir) = imported_book(&store, &root, &[("01.mp3", 2)], true).await;
+    // Not readable as audio: no length to compare, so not this book.
     std::fs::write(dir.join("the-long-road.m4b"), b"x").unwrap();
     enable(&store).await;
     let job = ConvertJob::with_ffmpeg(store.clone(), fake_ffmpeg(tmp.path(), "exit 1"));
     assert_eq!(job.run_pass(&CancellationToken::new()).await.skipped, 1);
     let traces = store.traces_for(&file.acquirable_ref().0).await.unwrap();
-    assert!(traces.iter().any(|t| t.event == "convert_skipped"));
+    assert!(
+        traces
+            .iter()
+            .any(|t| t.event == "convert_skipped" && t.message.contains("not the same length"))
+    );
     assert_eq!(job.run_pass(&CancellationToken::new()).await.candidates, 0);
+}
+
+#[tokio::test]
+async fn a_folder_with_two_m4bs_is_skipped_for_good() {
+    let (tmp, store) = fresh_store().await;
+    let root = tmp.path().join("audiobooks");
+    let (_, file, dir) = imported_book(&store, &root, &[("01.mp3", 2)], true).await;
+    std::fs::write(dir.join("one.m4b"), b"x").unwrap();
+    std::fs::write(dir.join("two.m4b"), b"x").unwrap();
+    enable(&store).await;
+    let job = ConvertJob::with_ffmpeg(store.clone(), fake_ffmpeg(tmp.path(), "exit 1"));
+    assert_eq!(job.run_pass(&CancellationToken::new()).await.skipped, 1);
+    let traces = store.traces_for(&file.acquirable_ref().0).await.unwrap();
+    assert!(
+        traces
+            .iter()
+            .any(|t| t.message.contains("more than one M4B"))
+    );
+}
+
+/// A release that ships the M4B beside the MP3s (SKADI-T-0139): the edition
+/// moves onto that M4B, the MP3 goes and the download stops seeding, with no
+/// encode.
+#[tokio::test]
+async fn an_m4b_of_the_same_length_is_adopted() {
+    let Some(bin) = working_ffmpeg("an_m4b_of_the_same_length_is_adopted").await else {
+        return;
+    };
+    let (tmp, store) = fresh_store().await;
+    let root = tmp.path().join("audiobooks");
+    let (_, file, dir) = imported_book(&store, &root, &[("the-long-road.mp3", 3)], true).await;
+    let m4b = dir.join("the-long-road.m4b");
+    let made = tokio::process::Command::new(&bin)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+        ])
+        .arg("anullsrc=r=44100:cl=mono")
+        .args(["-t", "3", "-c:a", "aac", "-b:a", "64k", "-f", "ipod"])
+        .arg(&m4b)
+        .status()
+        .await
+        .unwrap();
+    assert!(made.success());
+    use skadi_store::DownloadJobRepo;
+    let dl = store
+        .enqueue(&skadi_store::NewDownloadJob {
+            acquirable_ref: "The Long Road".into(),
+            source: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into(),
+            category: None,
+            incomplete_dir: None,
+            complete_dir: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_download_target(&dl.id, "audiobook", &file.acquirable_ref().0)
+        .await
+        .unwrap();
+    store.mark_complete(&dl.id, &[]).await.unwrap();
+    enable(&store).await;
+
+    // A fake ffmpeg that fails: adoption must not run it.
+    let report = ConvertJob::with_ffmpeg(store.clone(), fake_ffmpeg(tmp.path(), "exit 1"))
+        .run_pass(&CancellationToken::new())
+        .await;
+    assert_eq!(report.adopted, 1, "{report:?}");
+    assert_eq!(report.converted, 0);
+
+    let now = store.get_book_file(file.id).await.unwrap().unwrap();
+    assert_eq!(now.file.as_ref().unwrap().path, m4b);
+    let AcquisitionStatus::Imported {
+        file: f, quality, ..
+    } = &now.status
+    else {
+        panic!("still imported");
+    };
+    assert_eq!(f.path, m4b);
+    let def = skadi_quality::audiobook::default_audiobook_definitions()
+        .into_iter()
+        .find(|d| d.id == *quality)
+        .unwrap();
+    assert_eq!(def.format, AudioFormat::M4b);
+    assert!(m4b.exists() && !dir.join("the-long-road.mp3").exists());
+    let dl = store.get_download(&dl.id).await.unwrap().unwrap();
+    assert_eq!(dl.status, skadi_store::DownloadJobStatus::RemoveRequested);
+    assert!(dl.delete_data);
 }
 
 #[tokio::test]
@@ -544,6 +641,13 @@ fn retry_rule() {
     ];
     assert!(!attempt_allowed(&three, imported, now));
     assert!(!attempt_allowed(&[ev("convert_skipped", 5)], imported, now));
+    // The old "already holds an M4B" skip is tried again: such a folder is now
+    // adopted when its M4B matches.
+    let legacy = TraceEvent {
+        message: LEGACY_M4B_SKIP.into(),
+        ..ev("convert_skipped", 5)
+    };
+    assert!(attempt_allowed(&[legacy], imported, now));
     // Events from before the current import do not count.
     assert!(attempt_allowed(&[ev("convert_skipped", 20)], imported, now));
 }

@@ -95,6 +95,13 @@ pub enum Outcome {
         removed: usize,
         kept: usize,
     },
+    /// The folder already held an M4B of the same length as the other audio:
+    /// the edition now points at it, as after a conversion (SKADI-T-0139).
+    Adopted {
+        path: PathBuf,
+        removed: usize,
+        kept: usize,
+    },
     /// The conversion does not apply to this book; not tried again.
     Skipped(String),
     /// The conversion failed; the import is unchanged. Tried again later.
@@ -107,6 +114,8 @@ pub struct PassReport {
     pub enabled: bool,
     pub candidates: usize,
     pub converted: usize,
+    /// Editions moved onto an M4B that was already in their folder.
+    pub adopted: usize,
     pub failed: usize,
     pub skipped: usize,
     /// The conversion is on but ffmpeg cannot be run.
@@ -184,6 +193,7 @@ impl ConvertJob {
         while let Some(outcome) = outcomes.next().await {
             match outcome {
                 Some(Outcome::Converted { .. }) => report.converted += 1,
+                Some(Outcome::Adopted { .. }) => report.adopted += 1,
                 Some(Outcome::Failed(_)) => report.failed += 1,
                 Some(Outcome::Skipped(_)) => report.skipped += 1,
                 None => {}
@@ -300,6 +310,18 @@ impl ConvertJob {
                 ),
                 None,
             ),
+            Outcome::Adopted {
+                path,
+                removed,
+                kept,
+            } => (
+                "converted",
+                format!(
+                    "now points at {}, the M4B already in the folder; {removed} originals removed, {kept} kept",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("m4b"),
+                ),
+                None,
+            ),
             Outcome::Skipped(why) => ("convert_skipped", format!("not converted: {why}"), None),
             Outcome::Failed(why) => (
                 "convert_failed",
@@ -359,7 +381,7 @@ impl ConvertJob {
         let naming = crate::naming::AudiobookNaming::from_view(view);
         let guards = skadi_config::import_guards(view);
 
-        let prep = {
+        let job = {
             let (book, file, primary) = (book.clone(), file.clone(), primary.clone());
             let reserve = guards.min_free_bytes;
             match tokio::task::spawn_blocking(move || {
@@ -367,10 +389,14 @@ impl ConvertJob {
             })
             .await
             {
-                Ok(Ok(p)) => p,
+                Ok(Ok(job)) => job,
                 Ok(Err(o)) => return o,
                 Err(e) => return Outcome::Failed(format!("prepare task panicked: {e}")),
             }
+        };
+        let prep = match job {
+            Job::Convert(p) => p,
+            Job::Adopt(a) => return self.adopt(file, &primary, a, &guards).await,
         };
 
         let work = std::env::temp_dir().join(format!("skadi-m4b-{}", uuid::Uuid::new_v4()));
@@ -455,6 +481,66 @@ impl ConvertJob {
             path: prep.final_path,
             chapters,
             source: prep.chapter_source,
+            removed,
+            kept,
+        }
+    }
+
+    /// Point the edition at the M4B already in its folder, then do what a
+    /// conversion does after it records the M4B: stop seeding, retire the
+    /// originals. Nothing is encoded.
+    async fn adopt(
+        &self,
+        file: &BookFile,
+        primary: &Path,
+        a: Adopt,
+        guards: &skadi_config::ImportGuards,
+    ) -> Outcome {
+        match self.store.get_book_file(file.id).await {
+            Ok(Some(now)) if imported_path(&now).is_some_and(|(p, _)| p == *primary) => {}
+            Ok(_) => return Outcome::Skipped("the edition changed before the M4B was used".into()),
+            Err(e) => return Outcome::Failed(format!("re-reading the edition: {e}")),
+        }
+        let m4b = a.m4b.clone();
+        let media_info =
+            tokio::task::spawn_blocking(move || skadi_media_probe::DefaultProber.probe(&m4b))
+                .await
+                .ok()
+                .flatten();
+        let mut updated = file.clone();
+        if let Ok(Some(now)) = self.store.get_book_file(file.id).await {
+            updated = now;
+        }
+        let quality = m4b_quality(a.kbps);
+        if let AcquisitionStatus::Imported { score, at, .. } = updated.status.clone() {
+            updated.status = AcquisitionStatus::Imported {
+                file: FileRef {
+                    path: a.m4b.clone(),
+                },
+                quality,
+                score,
+                at,
+            };
+        }
+        updated.file = Some(FileRef {
+            path: a.m4b.clone(),
+        });
+        updated.quality = Some(quality);
+        if media_info.is_some() {
+            updated.media_info = media_info;
+        }
+        if let Err(e) = self.store.upsert_book_file(&updated).await {
+            return Outcome::Failed(format!("recording the M4B: {e}"));
+        }
+        self.stop_seeding(&file.acquirable_ref().0).await;
+        let sources = a.sources.clone();
+        let bin = guards.recycle_bin.clone();
+        let (removed, kept) =
+            tokio::task::spawn_blocking(move || retire_originals(&sources, bin.as_deref()))
+                .await
+                .unwrap_or((0, a.sources.len()));
+        Outcome::Adopted {
+            path: a.m4b,
             removed,
             kept,
         }
@@ -655,7 +741,9 @@ fn attempt_allowed(traces: &[TraceEvent], imported_at: DateTime<Utc>, now: DateT
             .iter()
             .filter(move |t| t.stage == STAGE && t.at >= imported_at)
     };
-    if ours().any(|t| t.event == "convert_skipped") {
+    // A skip is final, except the old "already holds an M4B" one: that folder
+    // is now adopted when its M4B matches (SKADI-T-0139).
+    if ours().any(|t| t.event == "convert_skipped" && t.message != LEGACY_M4B_SKIP) {
         return false;
     }
     let failures: Vec<DateTime<Utc>> = ours()
@@ -669,6 +757,20 @@ fn attempt_allowed(traces: &[TraceEvent], imported_at: DateTime<Utc>, now: DateT
         .iter()
         .max()
         .is_none_or(|last| now - *last >= RETRY_AFTER)
+}
+
+/// The skip message before a matching M4B was adopted; such a skip is tried
+/// again.
+const LEGACY_M4B_SKIP: &str = "not converted: the folder already holds an M4B";
+
+/// How far an M4B's length may differ from the other audio and still be the
+/// same book.
+const ADOPT_TOLERANCE: f64 = 0.03;
+
+/// Whether an M4B of `m4b` and audio of `others` total length are one book.
+fn same_length(m4b: Duration, others: Duration) -> bool {
+    let (a, b) = (m4b.as_secs_f64(), others.as_secs_f64());
+    b > 0.0 && ((a - b).abs() / b) <= ADOPT_TOLERANCE
 }
 
 /// The M4B tier for an AAC stream at `kbps`: the highest M4B tier at or below
@@ -686,6 +788,20 @@ pub fn m4b_quality(kbps: u32) -> QualityId {
         .rfind(|d| d.bitrate <= tier)
         .or_else(|| m4b.first())
         .map_or(unknown, |d| d.id)
+}
+
+/// What `prepare` decided for one edition.
+enum Job {
+    Convert(Prepared),
+    Adopt(Adopt),
+}
+
+/// An M4B already in the folder, of the same length as the other audio.
+struct Adopt {
+    m4b: PathBuf,
+    /// The other audio: the originals the M4B replaces.
+    sources: Vec<PathBuf>,
+    kbps: u32,
 }
 
 /// Everything the conversion of one edition reads, decided before ffmpeg runs.
@@ -709,7 +825,7 @@ fn prepare(
     primary: &Path,
     naming: &crate::naming::AudiobookNaming,
     reserve: u64,
-) -> Result<Prepared, Outcome> {
+) -> Result<Job, Outcome> {
     let skip = |s: &str| Err(Outcome::Skipped(s.to_string()));
     let Some(dir) = primary.parent().map(Path::to_path_buf) else {
         return skip("the imported file has no folder");
@@ -744,8 +860,37 @@ fn prepare(
             audio.push(p);
         }
     }
-    if audio.iter().any(|p| is_m4b(p)) {
-        return skip("the folder already holds an M4B");
+    let m4bs: Vec<PathBuf> = audio.iter().filter(|p| is_m4b(p)).cloned().collect();
+    if !m4bs.is_empty() {
+        // One M4B of the same length as the rest is this book already
+        // converted, often shipped in the same release: use it.
+        let [m4b] = m4bs.as_slice() else {
+            return skip("the folder holds more than one M4B");
+        };
+        let others: Vec<PathBuf> = audio.iter().filter(|p| !is_m4b(p)).cloned().collect();
+        if !others.iter().any(|p| p == primary) {
+            return Err(Outcome::Failed(format!(
+                "the imported file {} is missing",
+                primary.display()
+            )));
+        }
+        let facts = skadi_media_probe::audio_facts(m4b);
+        let total = others
+            .iter()
+            .map(|p| {
+                skadi_media_probe::audio_facts(p)
+                    .map(|f| f.duration)
+                    .filter(|d| !d.is_zero())
+            })
+            .sum::<Option<Duration>>();
+        return match (facts.as_ref().map(|f| f.duration), total) {
+            (Some(len), Some(total)) if same_length(len, total) => Ok(Job::Adopt(Adopt {
+                m4b: m4b.clone(),
+                sources: others,
+                kbps: facts.and_then(|f| f.bitrate_kbps).unwrap_or(64),
+            })),
+            _ => skip("the M4B in the folder is not the same length as the other audio"),
+        };
     }
     if !audio.iter().any(|p| p == primary) {
         return Err(Outcome::Failed(format!(
@@ -818,7 +963,7 @@ fn prepare(
         )));
     }
 
-    Ok(Prepared {
+    Ok(Job::Convert(Prepared {
         aref: file.acquirable_ref().0,
         sources,
         source_kbps,
@@ -827,7 +972,7 @@ fn prepare(
         total,
         final_path,
         partial,
-    })
+    }))
 }
 
 /// Check ffmpeg's output: it reads as audio, is about as long as the sources,

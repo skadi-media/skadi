@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Audiobooks domain for Skadi: Author/Series/Book/BookFile, repo, matcher, wanted-query, and DomainModule (SKADI-I-0017)"
 
 [dependencies]
+futures = { workspace = true }
 skadi-core = { workspace = true }
 skadi-store = { workspace = true }
 skadi-config = { workspace = true }

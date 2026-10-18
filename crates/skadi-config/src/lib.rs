@@ -488,13 +488,21 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
     },
     // Convert an acquired audiobook that is not M4B into one chapterized `.m4b`
     // with ffmpeg, after the import (SKADI-T-0139). Off by default: MP3 to AAC is
-    // a lossy re-encode of the operator's media. A background job, one book at a
-    // time; a failure leaves the import as it was. The originals follow
-    // `import.placement`. Acquire path only: a library import is never converted.
+    // a lossy re-encode of the operator's media. A background job; a failure
+    // leaves the import as it was. Once converted, the book stops seeding and its
+    // originals go. Acquire path only: a library import is never converted.
     ConfigKeySpec {
         key: "import.audiobook_convert_to_m4b",
         kind: ValueKind::Bool,
         default: "false",
+        tier: Tier::Tier1,
+    },
+    // How many books convert at the same time. ffmpeg's AAC encoder uses one
+    // core, so this is roughly how many cores the conversion takes. 1 to 8.
+    ConfigKeySpec {
+        key: "import.audiobook_convert_concurrency",
+        kind: ValueKind::U16,
+        default: "3",
         tier: Tier::Tier1,
     },
     // Worker (the `SKADI_WORKER_*` surface; defaults match its current
@@ -752,7 +760,11 @@ pub const HELP: &[(&str, &str)] = &[
     ),
     (
         "import.audiobook_convert_to_m4b",
-        "When on, an audiobook that skadi downloads as MP3 (or another format that is not M4B) is converted to one M4B file with chapters after the import. This re-encodes the audio. A failed conversion keeps the imported files. With placement seed, a file that is the only copy is kept next to the M4B.",
+        "When on, an audiobook that skadi downloads as MP3 (or another format that is not M4B) is converted to one M4B file with chapters after the import. This re-encodes the audio. A failed conversion keeps the imported files. After a conversion the book stops seeding: its download is removed with its data, and the originals go to the recycle bin when one is set, else they are deleted.",
+    ),
+    (
+        "import.audiobook_convert_concurrency",
+        "How many audiobooks convert to M4B at the same time, from 1 to 8. Each conversion uses about one CPU core.",
     ),
     (
         "import.recycle_bin",

@@ -432,7 +432,10 @@ pub fn ffmpeg_args(inv: &Invocation) -> Vec<String> {
     a.push(if inv.chapters_from_metadata { "1" } else { "0" }.into());
     match inv.audio {
         Audio::Encode(kbps) => {
-            a.extend(["-c:a", "aac", "-b:a"].map(String::from));
+            // The native encoder's fast coder (SKADI-T-0139): about 2 to 3 times
+            // quicker than the default `twoloop`, at no audible cost for speech at
+            // these bitrates.
+            a.extend(["-c:a", "aac", "-aac_coder", "fast", "-b:a"].map(String::from));
             a.push(format!("{kbps}k"));
         }
         Audio::Copy => a.extend(["-c:a", "copy"].map(String::from)),
@@ -600,7 +603,9 @@ mod tests {
         });
         let s = a.join(" ");
         assert!(s.contains("-f concat -safe 0 -i /t/list.txt -f ffmetadata -i /t/meta.txt"));
-        assert!(s.contains("-map 0:a:0 -map_metadata 1 -map_chapters 1 -c:a aac -b:a 64k"));
+        assert!(s.contains(
+            "-map 0:a:0 -map_metadata 1 -map_chapters 1 -c:a aac -aac_coder fast -b:a 64k"
+        ));
         assert!(s.ends_with("-f ipod /lib/book/.book.m4b.partial"));
     }
 }

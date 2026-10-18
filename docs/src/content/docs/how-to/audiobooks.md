@@ -129,14 +129,17 @@ The deploy image carries a small static `ffmpeg` for this job and nothing else.
 
 - **Which books.** Books that Skadi downloads and imports as something other
   than M4B. A library import is never converted.
-- **When.** A background job picks the book up shortly after the import, one
-  book at a time. It shows in Activity at the stage `converting`, and its
+- **When.** A background job picks the book up shortly after the import. It
+  converts `import.audiobook_convert_concurrency` books at the same time (3 by
+  default, 1 to 8; each uses about one CPU core). It shows in Activity at the
+  stage `converting`, and its
   result is on the book's trace stream (`converted`, `convert_failed`,
   `convert_skipped`).
 - **Chapters.** From a `.cue` sheet next to the files when it fits them, else
   one chapter per file (named from the file name), else the file's own
   chapters. A book without chapters gets one.
-- **Audio.** AAC at 128 kbps for a source at 112 kbps or more, else 64 kbps.
+- **Audio.** AAC at 128 kbps for a source at 112 kbps or more, else 64 kbps,
+  with the encoder's fast coder.
   M4A/MP4 sources are copied, not re-encoded. The file is recorded at the
   matching M4B quality tier.
 - **Failure.** The imported files stay as they were. A failed book is tried

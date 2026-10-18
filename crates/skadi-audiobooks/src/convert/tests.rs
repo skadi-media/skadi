@@ -578,3 +578,11 @@ fn the_silent_fixture_reads_as_mp3() {
         "{facts:?}"
     );
 }
+
+#[test]
+fn concurrency_is_three_by_default_and_1_to_8() {
+    assert_eq!(concurrency(None), 3);
+    assert_eq!(concurrency(Some(0)), 1);
+    assert_eq!(concurrency(Some(4)), 4);
+    assert_eq!(concurrency(Some(64)), MAX_CONCURRENCY);
+}

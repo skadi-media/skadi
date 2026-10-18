@@ -728,7 +728,7 @@ fn imported_path(file: &BookFile) -> Option<(PathBuf, DateTime<Utc>)> {
     }
 }
 
-fn is_m4b(path: &Path) -> bool {
+pub(crate) fn is_m4b(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("m4b"))
@@ -768,7 +768,7 @@ const LEGACY_M4B_SKIP: &str = "not converted: the folder already holds an M4B";
 const ADOPT_TOLERANCE: f64 = 0.03;
 
 /// Whether an M4B of `m4b` and audio of `others` total length are one book.
-fn same_length(m4b: Duration, others: Duration) -> bool {
+pub(crate) fn same_length(m4b: Duration, others: Duration) -> bool {
     let (a, b) = (m4b.as_secs_f64(), others.as_secs_f64());
     b > 0.0 && ((a - b).abs() / b) <= ADOPT_TOLERANCE
 }
@@ -1087,4 +1087,4 @@ fn concurrency(key: Option<u16>) -> usize {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

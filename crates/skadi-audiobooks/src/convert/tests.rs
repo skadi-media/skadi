@@ -33,7 +33,7 @@ async fn fresh_store() -> (tempfile::TempDir, Store) {
 
 /// A silent CBR MP3 of about `secs` seconds: MPEG-1 Layer III, 128 kbps,
 /// 44.1 kHz, mono frames whose side info and main data are all zero.
-fn silent_mp3(path: &Path, secs: u32) {
+pub(crate) fn silent_mp3(path: &Path, secs: u32) {
     const FRAME_LEN: usize = 417; // 144 * 128000 / 44100, no padding
     let frames = (secs as usize * 44_100).div_ceil(1152);
     let mut frame = vec![0u8; FRAME_LEN];
@@ -136,7 +136,7 @@ fn fake_ffmpeg(dir: &Path, body: &str) -> PathBuf {
 }
 
 /// A working ffmpeg, or `None` with the reason printed.
-async fn working_ffmpeg(test: &str) -> Option<PathBuf> {
+pub(crate) async fn working_ffmpeg(test: &str) -> Option<PathBuf> {
     let bin = std::env::var_os("SKADI_TEST_FFMPEG")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("ffmpeg"));

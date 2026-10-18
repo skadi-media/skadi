@@ -424,7 +424,7 @@ impl AppState {
             return;
         }
         let Some(store) = &self.store else { return };
-        let (id, body) = {
+        let id = {
             let mut dir = self.members.write().await;
             let Some(entry) = dir.members.iter_mut().find(|x| x.id == m.id) else {
                 return;
@@ -433,11 +433,26 @@ impl AppState {
                 return;
             }
             entry.last_seen_at = Some(now);
-            (
-                entry.id.clone(),
-                serde_json::to_value(&*entry).unwrap_or_default(),
-            )
+            entry.id.clone()
         };
+        // Change only `last_seen_at` on the stored row: writing the cached
+        // member back would undo a change made since the last refresh, such
+        // as an allowed book rewritten on a delete (SKADI-T-0741).
+        let mut body = match store.get_setting(MEMBERS_KIND, &id).await {
+            Ok(Some(row)) => row.body,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(error = %e, member = %id, "members: could not read for last_seen_at");
+                return;
+            }
+        };
+        let Some(obj) = body.as_object_mut() else {
+            return;
+        };
+        obj.insert(
+            "last_seen_at".into(),
+            serde_json::to_value(now).unwrap_or_default(),
+        );
         if let Err(e) = store.put_setting(MEMBERS_KIND, &id, &body).await {
             tracing::warn!(error = %e, member = %id, "members: could not record last_seen_at");
         }
@@ -471,6 +486,9 @@ impl Policy {
         genres: &[String],
     ) -> bool {
         use skadi_core::MediaKind;
+        if matches!(kind, MediaKind::Audiobook | MediaKind::Book) {
+            return self.permits_book(role, id, None);
+        }
         if role == Role::Admin {
             return true;
         }
@@ -483,14 +501,10 @@ impl Policy {
         let kind_name = match kind {
             MediaKind::Movie => "movie",
             MediaKind::Series => "series",
-            MediaKind::Audiobook | MediaKind::Book => "audiobook",
             _ => "other",
         };
         if !self.kinds.iter().any(|k| k == kind_name) {
             return false;
-        }
-        if matches!(kind, MediaKind::Audiobook | MediaKind::Book) {
-            return role != Role::Kid || self.allowed_books.iter().any(|b| b == id);
         }
         if genres.iter().any(|g| {
             self.blocked_genres
@@ -514,6 +528,75 @@ impl Policy {
             None => role != Role::Kid,
         }
     }
+
+    /// May a member with this policy see a book? (SKADI-T-0741)
+    ///
+    /// The same order as [`permits`](Self::permits), but a list entry names
+    /// the book by its id or by its Audible `asin`. An ASIN entry outlives a
+    /// delete and re-add, which gives the book a new id.
+    #[must_use]
+    pub fn permits_book(&self, role: Role, id: &str, asin: Option<&str>) -> bool {
+        if role == Role::Admin {
+            return true;
+        }
+        let names = |list: &[String]| {
+            list.iter()
+                .any(|e| e == id || asin.is_some_and(|a| e.eq_ignore_ascii_case(a)))
+        };
+        if names(&self.blocked_items) {
+            return false;
+        }
+        if names(&self.allowed_items) {
+            return true;
+        }
+        if !self.kinds.iter().any(|k| k == "audiobook") {
+            return false;
+        }
+        role != Role::Kid || names(&self.allowed_books)
+    }
+}
+
+/// Rewrite every member's allowed books once book `old` is gone
+/// (SKADI-T-0741): each `old` entry becomes `new`, or goes when `new` is
+/// `None`. A deleted book passes its ASIN, so the allowance holds if the book
+/// is added again; a merged duplicate passes the book it was merged into.
+/// Returns the number of members changed.
+///
+/// Reads and writes the stored rows; the member cache picks the change up on
+/// the next supervisor tick.
+pub async fn replace_allowed_book(
+    store: &skadi_store::Store,
+    old: &str,
+    new: Option<&str>,
+) -> skadi_core::Result<usize> {
+    let mut changed = 0;
+    for row in store.list_settings(MEMBERS_KIND).await? {
+        let mut body = row.body;
+        let Some(list) = body
+            .pointer_mut("/policy/allowed_books")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        if !list.iter().any(|e| e.as_str() == Some(old)) {
+            continue;
+        }
+        let mut next: Vec<serde_json::Value> = Vec::with_capacity(list.len());
+        for e in list.drain(..) {
+            let e = match (e.as_str() == Some(old), new) {
+                (true, Some(n)) => serde_json::Value::from(n),
+                (true, None) => continue,
+                (false, _) => e,
+            };
+            if !next.contains(&e) {
+                next.push(e);
+            }
+        }
+        *list = next;
+        store.put_setting(MEMBERS_KIND, &row.id, &body).await?;
+        changed += 1;
+    }
+    Ok(changed)
 }
 
 /// The read/play surface a non-admin may reach (SKADI-T-0612). Everything
@@ -1318,6 +1401,34 @@ mod tests {
         let back: Policy = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
         assert_eq!(p, back);
         assert_eq!(back.max_rating.movie.as_deref(), Some("PG"));
+    }
+
+    #[test]
+    fn a_book_is_named_by_its_id_or_its_asin() {
+        let p = Policy {
+            allowed_books: vec!["book-id".into(), "B0ALLOWED1".into()],
+            blocked_items: vec!["B0BLOCKED1".into()],
+            ..Policy::default()
+        };
+        let kid = Role::Kid;
+        assert!(p.permits_book(kid, "book-id", None), "by id");
+        assert!(
+            p.permits_book(kid, "new-id", Some("b0allowed1")),
+            "by ASIN, in any case: a re-added book has a new id"
+        );
+        assert!(!p.permits_book(kid, "other", Some("B0OTHER001")));
+        assert!(!p.permits_book(kid, "other", None));
+        assert!(
+            !p.permits_book(Role::Member, "x", Some("B0BLOCKED1")),
+            "a block by ASIN holds"
+        );
+        assert!(p.permits_book(Role::Member, "other", None));
+        let no_books = Policy {
+            kinds: vec!["movie".into()],
+            ..p.clone()
+        };
+        assert!(!no_books.permits_book(Role::Member, "book-id", None));
+        assert!(no_books.permits_book(Role::Admin, "book-id", None));
     }
 
     #[test]

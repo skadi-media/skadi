@@ -243,6 +243,55 @@ async fn book_crud_lifecycle() {
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
+/// SKADI-T-0741: a kid allowed a book still sees it after the book is
+/// deleted and added again. The delete moves the allowance from the old id to
+/// the ASIN, and the re-added book (a new id) matches the ASIN.
+#[tokio::test]
+async fn a_kid_keeps_a_book_that_is_deleted_and_added_again() {
+    let h = harness().await;
+    let routes = || h.http.routes();
+    let (profile_id, root_path) = register_profile_and_root(&h.store).await;
+    let req = json!({ "asin": "B003ITRL7G", "profile": profile_id, "root": root_path });
+    let (s, created) = call(routes(), "POST", "/books", Some(req.clone())).await;
+    assert_eq!(s, StatusCode::CREATED, "create: {created}");
+    let old_id = created["id"].as_str().unwrap().to_string();
+
+    let kid = json!({
+        "id": "kid-1",
+        "name": "Robin",
+        "role": "kid",
+        "policy": { "kinds": ["audiobook"], "allowed_books": [old_id] },
+        "created_at": "2026-01-01T00:00:00Z",
+    });
+    h.store
+        .put_setting(skadi_api::household::MEMBERS_KIND, "kid-1", &kid)
+        .await
+        .unwrap();
+
+    let (s, _) = call(routes(), "DELETE", &format!("/books/{old_id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let row = h
+        .store
+        .get_setting(skadi_api::household::MEMBERS_KIND, "kid-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.body["policy"]["allowed_books"], json!(["B003ITRL7G"]));
+
+    let (s, again) = call(routes(), "POST", "/books", Some(req)).await;
+    assert_eq!(s, StatusCode::CREATED, "re-add: {again}");
+    let new_id = again["id"].as_str().unwrap().to_string();
+    assert_ne!(new_id, old_id);
+
+    let member: skadi_api::household::Member = serde_json::from_value(row.body).unwrap();
+    let as_kid = || routes().layer(axum::Extension(member.clone()));
+    let (s, _) = call(as_kid(), "GET", &format!("/books/{new_id}"), None).await;
+    assert_eq!(s, StatusCode::OK, "the kid sees the re-added book");
+    let (s, list) = call(as_kid(), "GET", "/books", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn add_book_defaults_and_validation() {
     let h = harness().await;

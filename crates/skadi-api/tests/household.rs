@@ -1041,3 +1041,60 @@ async fn the_event_stream_follows_the_role_gate_of_each_topic() {
     let text = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
     assert!(text.starts_with("event: downloads\ndata: ["), "{text:?}");
 }
+
+/// A kid's allowed book follows a delete (SKADI-T-0741): the id becomes the
+/// ASIN, or goes when there is none. A token use afterwards records
+/// `last_seen_at` without writing the stale cached policy back.
+#[tokio::test]
+async fn a_deleted_book_moves_to_its_asin_on_every_list() {
+    use skadi_store::SettingsRepo;
+    let db = TestDb::new_store_only().await;
+    let state = AppState::new_full(config(), Some(db.store.clone()), vec![], vec![]);
+    let kid = serde_json::json!({
+        "id": "kid-1",
+        "name": "Robin",
+        "role": "kid",
+        "policy": {
+            "kinds": ["movie", "series", "audiobook"],
+            "allowed_books": ["gone-1", "keep-1", "B0GONE0001", "gone-2"],
+        },
+        "tokens": [{"label": "phone", "token": "kid-device-token", "created_at": "2026-01-01T00:00:00Z"}],
+        "username": "robin",
+        "created_at": "2026-01-01T00:00:00Z",
+    });
+    db.store
+        .put_setting(skadi_api::household::MEMBERS_KIND, "kid-1", &kid)
+        .await
+        .unwrap();
+    // The cache holds the old policy from here on.
+    state.refresh_members().await;
+
+    let n = skadi_api::household::replace_allowed_book(&db.store, "gone-1", Some("B0GONE0001"))
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    skadi_api::household::replace_allowed_book(&db.store, "gone-2", None)
+        .await
+        .unwrap();
+    let n = skadi_api::household::replace_allowed_book(&db.store, "not-listed", None)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a member who never had the book is not written");
+
+    // A request from the kid's device records last_seen_at.
+    let (st, _) = call(&state, "GET", "/api/v1/me", Some("kid-device-token"), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let row = db
+        .store
+        .get_setting(skadi_api::household::MEMBERS_KIND, "kid-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.body["policy"]["allowed_books"],
+        serde_json::json!(["B0GONE0001", "keep-1"]),
+        "the id became the ASIN once, and the book with no ASIN went"
+    );
+    assert!(row.body["last_seen_at"].is_string());
+}

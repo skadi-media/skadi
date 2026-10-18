@@ -122,6 +122,28 @@ pub struct TitleRef {
     pub id: String,
     pub label: String,
     pub kind: &'static str,
+    /// A book's Audible ASIN (SKADI-T-0741). A pick stores it instead of the
+    /// id, so the pick holds if the book is deleted and added again.
+    pub asin: Option<String>,
+}
+
+impl TitleRef {
+    /// What a pick of this title stores: the ASIN when there is one, else
+    /// the id.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        self.asin.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Whether a stored `entry` names this title, by id or by ASIN.
+    #[must_use]
+    pub fn named_by(&self, entry: &str) -> bool {
+        entry == self.id
+            || self
+                .asin
+                .as_deref()
+                .is_some_and(|a| a.eq_ignore_ascii_case(entry))
+    }
 }
 
 /// Case-insensitive substring search over the library, at most `limit` hits,
@@ -140,7 +162,7 @@ pub fn search_titles<'a>(
     }
     items
         .iter()
-        .filter(|t| !picked.iter().any(|p| p == &t.id))
+        .filter(|t| !picked.iter().any(|p| t.named_by(p)))
         .filter(|t| t.label.to_lowercase().contains(&q))
         .take(limit)
         .collect()
@@ -284,6 +306,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     id: m.id.clone(),
                     label: format!("{}{year}", m.title),
                     kind: "movie",
+                    asin: None,
                 });
                 genres.push(&m.genres);
             }
@@ -293,6 +316,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     id: s.id.clone(),
                     label: format!("{}{year}", s.title),
                     kind: "series",
+                    asin: None,
                 });
                 genres.push(&s.genres);
             }
@@ -307,6 +331,7 @@ pub fn HouseholdPage() -> impl IntoView {
                     id: b.id.clone(),
                     label: format!("{}{by}", b.title),
                     kind: "audiobook",
+                    asin: b.external_ids.asin.clone(),
                 });
             }
             lib.books.sort_by(|a, b| a.label.cmp(&b.label));
@@ -851,7 +876,7 @@ fn picker(
             .map(|id| {
                 let label = items
                     .iter()
-                    .find(|t| t.id == id)
+                    .find(|t| t.named_by(&id))
                     .map(|t| t.label.clone())
                     .unwrap_or_else(|| id.clone());
                 let id2 = id.clone();
@@ -876,7 +901,7 @@ fn picker(
             <TextInput label=label placeholder=placeholder value=query/>
             <div class="picker-hits">
                 {move || hits().into_iter().map(|t| {
-                    let id = t.id.clone();
+                    let id = t.key().to_string();
                     let kind = match t.kind { "movie" => "film", "series" => "tv", _ => "book" };
                     view! {
                         <button type="button" class="picker-hit" on:click=move |_| {

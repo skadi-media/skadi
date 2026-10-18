@@ -938,12 +938,10 @@ async fn list_books(
             .collect()
     };
     let permitted = |b: &Book| {
-        member.policy.permits(
+        member.policy.permits_book(
             member.role,
-            skadi_core::MediaKind::Audiobook,
             &b.id.to_string(),
-            None,
-            &[],
+            b.external_ids.asin.as_ref().map(|a| a.0.as_str()),
         )
     };
     // `?author=` narrows to one author (and is combined with the monitored
@@ -1294,12 +1292,10 @@ async fn get_book(
         .get_book(id)
         .await?
         .filter(|b| {
-            member.policy.permits(
+            member.policy.permits_book(
                 member.role,
-                skadi_core::MediaKind::Audiobook,
                 &b.id.to_string(),
-                None,
-                &[],
+                b.external_ids.asin.as_ref().map(|a| a.0.as_str()),
             )
         })
         .ok_or_else(|| ApiError(AppError::NotFound(format!("book {id} not found"))))?;
@@ -1415,6 +1411,14 @@ async fn delete_one(
         let _ = http.store.clear_item("audiobook", &id.0.to_string()).await;
     }
     repo(http).delete_book(id).await?;
+    // A kid allowed this book keeps it if it is added again (SKADI-T-0741):
+    // the re-add has a new id, so the allowance moves to the ASIN.
+    let asin = book.external_ids.asin.as_ref().map(|a| a.0.as_str());
+    if let Err(e) =
+        skadi_api::household::replace_allowed_book(&http.store, &id.0.to_string(), asin).await
+    {
+        tracing::warn!(book = %id, error = %e, "delete: allowed books not rewritten");
+    }
     Ok(true)
 }
 
@@ -1611,12 +1615,10 @@ async fn book_file_audio(
     if !member.is_admin() {
         // Household policy (SKADI-T-0612): a hidden book's bytes are hidden too.
         let ok = repo(&http).get_book(book_id).await?.is_some_and(|b| {
-            member.policy.permits(
+            member.policy.permits_book(
                 member.role,
-                skadi_core::MediaKind::Audiobook,
                 &b.id.to_string(),
-                None,
-                &[],
+                b.external_ids.asin.as_ref().map(|a| a.0.as_str()),
             )
         });
         if !ok {
@@ -1686,12 +1688,10 @@ async fn book_file_chapters(
     if !member.is_admin() {
         // Household policy (SKADI-T-0612): a hidden book's bytes are hidden too.
         let ok = repo(&http).get_book(book_id).await?.is_some_and(|b| {
-            member.policy.permits(
+            member.policy.permits_book(
                 member.role,
-                skadi_core::MediaKind::Audiobook,
                 &b.id.to_string(),
-                None,
-                &[],
+                b.external_ids.asin.as_ref().map(|a| a.0.as_str()),
             )
         });
         if !ok {
@@ -3072,6 +3072,24 @@ async fn merge_editions(
     axum::extract::Query(opts): axum::extract::Query<ApplyOpts>,
 ) -> Result<impl IntoResponse, ApiError> {
     let report = crate::maintenance::merge_book_editions(repo(&http), opts.apply).await?;
+    // A kid allowed a removed duplicate is allowed the book it became
+    // (SKADI-T-0741).
+    if opts.apply {
+        for c in &report.candidates {
+            let to = c.canonical.to_string();
+            for dup in &c.duplicates {
+                if let Err(e) = skadi_api::household::replace_allowed_book(
+                    &http.store,
+                    &dup.to_string(),
+                    Some(&to),
+                )
+                .await
+                {
+                    tracing::warn!(book = %dup, error = %e, "merge: allowed books not rewritten");
+                }
+            }
+        }
+    }
     Ok(axum::Json(serde_json::json!({
         "applied": opts.apply,
         "scanned": report.scanned,

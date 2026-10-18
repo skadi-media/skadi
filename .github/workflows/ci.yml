@@ -418,8 +418,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Only platform-tools: the action's default list still names `tools`,
+      # which cmdline-tools 16 no longer has, and sdkmanager fails on it.
+      # Gradle fetches the platform and build tools the app asks for.
       - uses: android-actions/setup-android@v3
         if: steps.sign.outputs.ready == 'true'
+        with:
+          packages: platform-tools
 
       - name: Build the signed APK
         if: steps.sign.outputs.ready == 'true'

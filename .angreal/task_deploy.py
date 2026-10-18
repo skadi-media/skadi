@@ -270,6 +270,53 @@ DEP_INIT_SECRETS = [
 DEP_INIT_EMPTY_FILES = ["tailscale_authkey"]
 
 
+# The worker's threads sit in uninterruptible NFS I/O while it seeds, so a
+# `docker stop` can take minutes to land: the kill waits for those reads. When
+# compose recreates the stack it removes the old daemon, then blocks on the old
+# worker, and the new daemon stays "Created": the 0.1.5 and 0.1.10 deploys left
+# skadi down until the worker died (SKADI-T-0645). Stopping the worker on its
+# own first, and waiting until it has really exited, keeps the daemon serving
+# until compose replaces it.
+WORKER_SERVICE = "skadi-downloader-worker"
+WORKER_STOP_WAIT_S = 600
+
+
+def _DEP_container_running(container_id):
+    out = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", container_id],
+        capture_output=True, text=True,
+    )
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
+def _DEP_stop_worker_first(wait_s=WORKER_STOP_WAIT_S):
+    """Stop the worker and wait until it has exited. True when it is down."""
+    ps = subprocess.run(
+        _DEP_compose_argv(["ps", "-q", WORKER_SERVICE]),
+        cwd=DEP_DEPLOY_DIR, env=_DEP_build_env(), capture_output=True, text=True,
+    )
+    ids = [i for i in ps.stdout.split() if i] if ps.returncode == 0 else []
+    running = [i for i in ids if _DEP_container_running(i)]
+    if not running:
+        return True
+    print(f"stopping {WORKER_SERVICE} first (it can take minutes over NFS) ...", flush=True)
+    # The stop's own timeout is short on purpose: it only has to send the
+    # signal and the kill; the loop below waits for the exit itself.
+    _DEP_compose(["stop", "-t", "30", WORKER_SERVICE])
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if not any(_DEP_container_running(i) for i in running):
+            print(f"{WORKER_SERVICE} stopped", flush=True)
+            return True
+        time.sleep(10)
+    print(
+        f"{WORKER_SERVICE} still running after {wait_s}s; not continuing, so the "
+        "daemon is not taken down with it. Check `docker ps` and retry.",
+        flush=True,
+    )
+    return False
+
+
 def _DEP_render_env(example, values):
     """`example` (the text of .env.example) with each `KEY=` line of a key in
     `values` set to its value. A commented `#KEY=…` line is uncommented when
@@ -449,6 +496,8 @@ def up(build=False):
     # Named before the failure rather than after it (SKADI-T-0478): the compose
     # error names neither the subnet nor the squatting network.
     _DEP_preflight()
+    if not _DEP_stop_worker_first():
+        raise SystemExit(1)
     args = ["up", "-d"]
     if build:
         args.append("--build")
@@ -591,6 +640,8 @@ def redeploy(service=None):
         started = _DEP_image_name(svc, "", f"dev-{sha}")
         print(f"deploy/.env pins {pinned}; building this checkout as {started} instead", flush=True)
     if _DEP_compose(["build", svc], env=env).returncode != 0:
+        raise SystemExit(1)
+    if svc == WORKER_SERVICE and not _DEP_stop_worker_first():
         raise SystemExit(1)
     # --no-deps with the local tag: the override renames every image of ours,
     # and the other service has no build under that name.

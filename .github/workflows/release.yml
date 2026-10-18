@@ -145,11 +145,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      # Only this release's files: the run also holds image digests and
+      # coverage, which are not release assets.
+      - name: Download the binaries
         uses: actions/download-artifact@v4
         with:
+          pattern: skadi-linux-*
           path: artifacts
           merge-multiple: true
+
+      # The signed APK and its manifest (SKADI-T-0637), from ci.yml's
+      # android-apk job. Absent when the signing secrets are not set.
+      - name: Download the APK
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

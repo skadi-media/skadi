@@ -1,0 +1,2 @@
+# The release workflow puts the signed APK and its manifest.json here before
+# the daemon image builds (SKADI-T-0637). Empty in a local build.

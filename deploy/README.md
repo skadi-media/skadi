@@ -92,6 +92,14 @@ never `down -v`, and prune the builder cache after image builds:
 angreal deploy init | up | down | status | logs [-s svc] | build [-s svc] | redeploy [-s svc]
 ```
 
+**The Android app.** A release image carries the signed APK its release built
+(`/usr/share/skadi/apk`), when the repository has the four
+`SKADI_ANDROID_*` signing secrets. The daemon serves that APK or the one in
+`deploy/apk/`, whichever has the higher `version_code`, so a deploy alone
+offers phones the new app. `deploy/publish-apk.sh` still publishes into
+`deploy/apk/`, for an app build between releases; the release's APK is also on
+its GitHub release page.
+
 If you ran `deploy/publish-apk.sh`, check that
 `curl -s http://127.0.0.1:${SKADI_PORT:-8080}/app/manifest.json` gives
 `{"file":"skadi-N.apk",...}`. A 404 means the `./apk` mount points at the wrong

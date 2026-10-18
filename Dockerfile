@@ -161,6 +161,10 @@ COPY --from=builder /src/target/release/skadi /usr/local/bin/skadi
 COPY --from=ffprobe-build /ff/ffprobe /usr/local/bin/ffprobe
 # Static, for the opt-in M4B conversion only (SKADI-T-0139).
 COPY --from=ffmpeg-build /ff/ffmpeg /usr/local/bin/ffmpeg
+# The Android APK the release built (SKADI-T-0637), when CI put one in
+# apk-dist/; empty otherwise. The daemon serves it when its version_code is
+# higher than the one published into SKADI_APK_DIR.
+COPY apk-dist/ /usr/share/skadi/apk/
 
 # Pre-create the cardigann definitions dir owned by `skadi`, so a FRESH named
 # volume mounted at /data/definitions inherits skadi's ownership (Docker copies

@@ -90,6 +90,8 @@ fn sql_str(s: &str) -> String {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let o = parse_opts();
+    // librqbit 9 hashes the files on a blocking pool it is handed.
+    let spawner = librqbit::spawn_utils::BlockingSpawner::new(4);
     let incomplete = o.root.join("skadi/downloads/incomplete");
     let complete = o.root.join("skadi/downloads/complete");
     let torrents = o.root.join("skadi/lab-torrents");
@@ -128,8 +130,10 @@ async fn main() -> anyhow::Result<()> {
                 &src_dir,
                 CreateTorrentOptions {
                     name: Some(&name),
+                    trackers: Vec::new(),
                     piece_length: Some(o.piece_kib * 1024),
                 },
+                &spawner,
             )
             .await?;
             fs::write(&torrent_path, t.as_bytes()?)?;

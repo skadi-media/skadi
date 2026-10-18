@@ -43,6 +43,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -60,6 +61,10 @@ use crate::repo::{AudiobooksRepo, BookFilter};
 
 /// The config key that turns the conversion on.
 pub const CONVERT_KEY: &str = "import.audiobook_convert_to_m4b";
+/// The config key for how many books convert at the same time.
+pub const CONCURRENCY_KEY: &str = "import.audiobook_convert_concurrency";
+/// The most books that convert at the same time, whatever the key says.
+pub const MAX_CONCURRENCY: usize = 8;
 /// How often the worker looks for books to convert when nothing nudges it.
 pub const DEFAULT_CONVERT_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// How long the worker waits after an import nudge, so the acquire run can
@@ -164,11 +169,20 @@ impl ConvertJob {
             report.ffmpeg_missing = true;
             return report;
         }
-        for (book, file) in candidates {
-            if cancel.is_cancelled() {
-                break;
-            }
-            match self.convert_tracked(&book, &file, &view, cancel).await {
+        // Each conversion is one ffmpeg on about one core, so several books at a
+        // time is what makes a large backlog finish in hours, not days.
+        let width = concurrency(view.get_u16(CONCURRENCY_KEY).ok());
+        let view = &view;
+        let mut outcomes = futures::stream::iter(candidates)
+            .map(|(book, file)| async move {
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                self.convert_tracked(&book, &file, view, cancel).await
+            })
+            .buffer_unordered(width);
+        while let Some(outcome) = outcomes.next().await {
+            match outcome {
                 Some(Outcome::Converted { .. }) => report.converted += 1,
                 Some(Outcome::Failed(_)) => report.failed += 1,
                 Some(Outcome::Skipped(_)) => report.skipped += 1,
@@ -919,6 +933,12 @@ impl Worker for AudiobookConvertWorker {
             }
         })
     }
+}
+
+/// How many books convert at the same time: the key's value, 1 to
+/// [`MAX_CONCURRENCY`]; 3 when it is unset or unreadable.
+fn concurrency(key: Option<u16>) -> usize {
+    key.map_or(3, usize::from).clamp(1, MAX_CONCURRENCY)
 }
 
 #[cfg(test)]

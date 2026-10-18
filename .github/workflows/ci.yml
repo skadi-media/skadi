@@ -380,7 +380,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TAGGED: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      TAGGED: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/ci-android-apk' }}
     steps:
       - uses: actions/checkout@v4
         if: env.TAGGED == 'true'

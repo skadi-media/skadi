@@ -76,13 +76,79 @@ def write_version(new_version):
                 f.write(updated)
             print(f"  Updated {os.path.relpath(cargo_path, cwd)}")
 
+    _write_lockfiles(new_version)
+
 
 # Crates outside the workspace carry a literal version (they cannot use
 # `version.workspace = true`), so every version sweep names them (SKADI-T-0640).
 EXCLUDED_CRATE_MANIFESTS = [
     os.path.join(cwd, "crates", "skadi-web", "Cargo.toml"),
+    os.path.join(cwd, "crates", "skadi-web", "aurora-css", "Cargo.toml"),
     os.path.join(cwd, "crates", "skadi-downloader-worker", "Cargo.toml"),
 ]
+
+# npm lockfiles carry the package's own version twice (top level and the
+# root `packages[""]` entry); the 0.1.9 bump left them behind.
+LOCKFILES = [os.path.join(cwd, "web-e2e", "package-lock.json")]
+
+# The Android app has its own version (versionCode / versionName) in this file.
+# A phone only offers an update for a higher versionCode, so a release whose
+# app changed must raise it (SKADI-T-0637; 0.1.9 shipped app changes as 0.18.0).
+ANDROID_GRADLE = os.path.join(cwd, "clients", "skadi-android", "app", "build.gradle.kts")
+ANDROID_DIR = os.path.join(cwd, "clients", "skadi-android")
+
+
+def _write_lockfiles(new_version):
+    for path in LOCKFILES:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r") as f:
+            lock = json.load(f)
+        lock["version"] = new_version
+        if "" in lock.get("packages", {}):
+            lock["packages"][""]["version"] = new_version
+        with open(path, "w") as f:
+            json.dump(lock, f, indent=2)
+            f.write("\n")
+        print(f"  Updated {os.path.relpath(path, cwd)}")
+
+
+def _app_changed_since_last_tag():
+    """True when clients/skadi-android changed since its versionCode last rose.
+
+    Compared with the commit that last changed versionCode, not the last tag:
+    0.1.9 shipped app changes without a bump, and a tag-based check would never
+    notice them again.
+    """
+    last = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "-G", "versionCode", "--", ANDROID_GRADLE],
+        cwd=cwd, capture_output=True, text=True,
+    )
+    base = last.stdout.strip()
+    if last.returncode != 0 or not base:
+        return True
+    diff = subprocess.run(
+        ["git", "diff", "--quiet", base, "HEAD", "--", ANDROID_DIR],
+        cwd=cwd,
+    )
+    return diff.returncode != 0
+
+
+def bump_android_app():
+    """Raise the app's versionCode by one and its versionName's minor part."""
+    with open(ANDROID_GRADLE, "r") as f:
+        content = f.read()
+    code = re.search(r"versionCode\s*=\s*(\d+)", content)
+    name = re.search(r'versionName\s*=\s*"(\d+)\.(\d+)\.(\d+)"', content)
+    if not code or not name:
+        raise ValueError(f"no versionCode/versionName in {ANDROID_GRADLE}")
+    new_code = int(code.group(1)) + 1
+    new_name = f"{name.group(1)}.{int(name.group(2)) + 1}.0"
+    content = content.replace(code.group(0), f"versionCode = {new_code}", 1)
+    content = content.replace(name.group(0), f'versionName = "{new_name}"', 1)
+    with open(ANDROID_GRADLE, "w") as f:
+        f.write(content)
+    print(f"  Updated {os.path.relpath(ANDROID_GRADLE, cwd)}: app {new_name} (code {new_code})")
 
 
 def _standalone_manifests():
@@ -188,6 +254,11 @@ def bump_version(part):
     print(f"Bumping version: {current} -> {new}")
     write_version(new)
     print(f"Updated workspace version to {new}")
+    if os.path.isfile(ANDROID_GRADLE):
+        if _app_changed_since_last_tag():
+            bump_android_app()
+        else:
+            print("  Android app unchanged since its version last rose; it stays")
 
     # Verify the workspace is consistent
     result = subprocess.run(["cargo", "check", "--workspace"], cwd=cwd, capture_output=True)

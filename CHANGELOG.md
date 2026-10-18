@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-18
+
+### Fixed
+- The downloader worker grew about 29 MiB a minute until its memory cap. It now runs librqbit 9 from skadi's fork, which bounds the DHT peer-search queue (ikatson/rqbit#706) and the per-torrent peers map (ikatson/rqbit#667) (SKADI-T-0645).
+
+### Changed
+- The worker is on librqbit 9. It listens on one port (the forwarded port, else the first of the range), IPv4 only as before. The session saved by 0.1.9 restores without a full re-check.
+- `angreal version bump` raises the Android app's version when the app changed since its version last rose, and bumps `aurora-css` and the e2e lockfile too.
+
+### Added
+- `import.audiobook_convert_concurrency` (default 3, 1 to 8): how many audiobooks convert to M4B at the same time. The AAC encoder uses its fast coder (SKADI-T-0139).
+
 ## [0.1.9] - 2026-10-17
 
 ### Fixed

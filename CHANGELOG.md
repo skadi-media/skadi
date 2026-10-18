@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-18
+
+### Fixed
+- A kid lost an allowed audiobook when the book was deleted and added again: the list held the old book id. The list now matches a book by its id or its Audible ASIN, and a delete moves the entry to the ASIN (SKADI-T-0741).
+- An audiobook download that holds the book as MP3s and as one M4B of the same length imports the M4B. It used to record the first MP3 (SKADI-T-0740).
+- `angreal deploy up` and `redeploy` stop the downloader worker first and wait for it, so a slow worker stop no longer leaves the daemon down (SKADI-T-0645).
+
+### Changed
+- The M4B conversion uses an M4B already in the book's folder, when it is the same length as the other audio, instead of skipping the book. The edition moves onto it, seeding stops and the other audio is retired (SKADI-T-0139).
+- CI builds and signs the Android APK, and the `skadi` image carries it, so the app update notice works without a separate publish (SKADI-T-0637).
+
 ## [0.1.10] - 2026-10-18
 
 ### Fixed

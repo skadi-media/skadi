@@ -290,10 +290,12 @@ async fn main() {
                 kind: MediaKind::Audiobook,
             },
         ],
-        // No audiobooks `LibraryProvider` exists in the crate; movies is the only
-        // unified-library contributor. The audiobooks spec asserts state via the
-        // book detail page + `GET /books`, not the unified `/library`.
-        vec![movies_library],
+        // Both domains contribute, as in the daemon: the new-imports views
+        // resolve each domain's rows through its provider (SKADI-T-0745).
+        vec![
+            movies_library,
+            Arc::new(skadi_audiobooks::AudiobooksLibrary::new(ab_module.store())),
+        ],
     );
     // The domain sets applied above, so the `database` health check expects
     // them (SKADI-T-0682).
@@ -371,6 +373,7 @@ mod seed {
     pub fn routes(store: Store) -> Router {
         Router::new()
             .route("/e2e/downloads", post(seed))
+            .route("/e2e/history", post(seed_history))
             .route("/e2e/gate", post(gate))
             .with_state(store)
     }
@@ -381,6 +384,57 @@ mod seed {
         method: String,
         /// The nested API path: no `/api/v1`, no query.
         path: String,
+    }
+
+    /// One acquisition history row to write (SKADI-T-0745).
+    #[derive(serde::Deserialize)]
+    struct HistoryRow {
+        /// `movie`, `episode` or `audiobook`: the kind the domain sinks write.
+        kind: String,
+        /// An edition, episode or book-file id.
+        acquirable_ref: String,
+        label: String,
+        #[serde(default = "imported")]
+        event: String,
+        #[serde(default)]
+        upgrade: bool,
+        /// How long ago it landed.
+        #[serde(default)]
+        minutes_ago: i64,
+    }
+
+    fn imported() -> String {
+        "imported".into()
+    }
+
+    /// `POST /e2e/history`: write history rows as the domain sinks would
+    /// (SKADI-T-0745). The harness's mock downloader never completes an
+    /// import, so the new-imports views would have nothing to show.
+    async fn seed_history(
+        State(store): State<Store>,
+        Json(rows): Json<Vec<HistoryRow>>,
+    ) -> Json<Vec<String>> {
+        use skadi_store::{HistoryEntry, HistoryRepo};
+        let mut ids = Vec::new();
+        for r in rows {
+            let id = uuid::Uuid::new_v4().to_string();
+            store
+                .record_history(&HistoryEntry {
+                    id: id.clone(),
+                    at: chrono::Utc::now() - chrono::Duration::minutes(r.minutes_ago),
+                    kind: r.kind,
+                    acquirable_ref: r.acquirable_ref,
+                    label: r.label,
+                    event: r.event,
+                    detail: Some("Bluray-1080p".into()),
+                    reason_code: None,
+                    upgrade: r.upgrade,
+                })
+                .await
+                .expect("record history");
+            ids.push(id);
+        }
+        Json(ids)
     }
 
     /// What the server's gate decides for `role` calling `method path`

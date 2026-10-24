@@ -172,6 +172,7 @@ fn Shell() -> impl IntoView {
                     <Route path=path!("/add") view=AddPage/>
                     <Route path=path!("/setup") view=crate::setup::SetupPage/>
                     <Route path=path!("/activity") view=ActivityPage/>
+                    <Route path=path!("/new") view=crate::new_imports::NewImportsPage/>
                     <Route path=path!("/wanted") view=crate::wanted::WantedPage/>
                     <Route path=path!("/players") view=crate::offline::PlayersPage/>
                     <Route path=path!("/upload") view=crate::upload::UploadPage/>
@@ -648,6 +649,8 @@ fn Sidebar() -> impl IntoView {
             // strip on the page itself, so deep links still work.
             <SideNavGroup>
                 <SideNavLink href="/" active=active("/")>"Overview"</SideNavLink>
+                // What is new in the library, for every role (SKADI-T-0745).
+                <SideNavLink href="/new" active=active("/new")>"New"</SideNavLink>
                 // A contributor can see what is still missing but not the
                 // hunter's internals, so their Activity link is Wanted.
                 {move || is_admin().then(|| view! {

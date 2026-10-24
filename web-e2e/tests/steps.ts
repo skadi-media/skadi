@@ -48,6 +48,23 @@ export async function givenDownloads(request: APIRequestContext, rows: SeedRow[]
   return (await r.json()) as string[];
 }
 
+/** One acquisition history row for `POST /e2e/history` (SKADI-T-0745). */
+export type HistorySeed = {
+  kind: "movie" | "episode" | "audiobook";
+  acquirable_ref: string;
+  label: string;
+  upgrade?: boolean;
+  minutes_ago?: number;
+};
+
+/** Given these imports landed. The harness's mock downloader never completes
+ * an import, so its harness-only `POST /e2e/history` writes the rows the
+ * domain sinks would. */
+export async function givenImports(request: APIRequestContext, rows: HistorySeed[]) {
+  const r = await request.post(`${API}/e2e/history`, { data: rows });
+  expect(r.ok(), `seed history: ${r.status()}`).toBeTruthy();
+}
+
 /** Given the harness's health checks have run once (SKADI-T-0722).
  *
  * The checks run on a schedule and the page reads their cache (SKADI-T-0679),

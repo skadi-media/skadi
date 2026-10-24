@@ -67,6 +67,9 @@ web-sys = { version = "0.3", features = [
     # Server push (SKADI-T-0711): the event stream is read with fetch() and a
     # ReadableStream reader, which can send the bearer header.
     "ReadableStream", "ReadableStreamDefaultReader", "AbortController", "AbortSignal",
+    # New imports page (SKADI-T-0745): load the next page as the list end
+    # scrolls into view.
+    "IntersectionObserver", "IntersectionObserverEntry",
     "TextDecoder", "TextDecodeOptions",
 ] }
 console_error_panic_hook = "0.1"

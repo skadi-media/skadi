@@ -228,6 +228,52 @@ pub trait LibraryProvider: Send + Sync {
     async fn genres(&self) -> Result<Vec<GenreCountDto>> {
         Ok(Vec::new())
     }
+
+    /// What the new-imports list shows for each history ref this domain owns
+    /// (SKADI-T-0744), keyed by the ref. A ref is left out when its item is
+    /// gone or when `member`'s policy hides the item, so the list and its count
+    /// skip it. `refs` are the `acquirable_ref` of `imported` rows of this
+    /// domain's history kind (see [`history_kind`]).
+    ///
+    /// Defaults to **empty**, so a domain adopts this incrementally like
+    /// `calendar`: its imports simply do not show.
+    async fn resolve_imports(
+        &self,
+        _member: &crate::household::Member,
+        _refs: &[String],
+    ) -> Result<std::collections::HashMap<String, ImportedItemDto>> {
+        Ok(std::collections::HashMap::new())
+    }
+}
+
+/// The `kind` a domain writes on its acquisition history rows: the movies sink
+/// writes `movie`, the TV sink `episode`, the audiobooks sink `audiobook`.
+/// `None` for a kind with no history writer.
+#[must_use]
+pub fn history_kind(kind: MediaKind) -> Option<&'static str> {
+    match kind {
+        MediaKind::Movie => Some("movie"),
+        MediaKind::Series => Some("episode"),
+        MediaKind::Audiobook => Some("audiobook"),
+        _ => None,
+    }
+}
+
+/// The library item behind one new import (SKADI-T-0744): what a client
+/// shows and where it links.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct ImportedItemDto {
+    /// The item page to open: a movie, series or book id.
+    pub item_id: String,
+    /// The movie, series or book title.
+    pub title: String,
+    /// `S01E05` for an episode; `None` otherwise.
+    pub episode: Option<String>,
+    /// The episode's own title, when it has one.
+    pub episode_title: Option<String>,
+    pub year: Option<u16>,
+    /// Poster (movie, series) or cover (book) URL, when known.
+    pub poster_url: Option<String>,
 }
 
 /// One entry of the genre facet: a name and how many items carry it.

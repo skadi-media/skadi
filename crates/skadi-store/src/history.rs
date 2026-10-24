@@ -71,6 +71,15 @@ pub struct HistoryCounts {
     pub failed: i64,
 }
 
+/// Where a newest-first page of history stopped: the time and id of its last
+/// row (SKADI-T-0744). The next page starts strictly after it in that order, so
+/// rows that arrive while a client scrolls never shift what it has not read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryCursor {
+    pub at: DateTime<Utc>,
+    pub id: String,
+}
+
 /// Append + read the acquisition history.
 #[async_trait]
 pub trait HistoryRepo: Send + Sync {
@@ -91,6 +100,15 @@ pub trait HistoryRepo: Send + Sync {
     ) -> Result<Vec<HistoryEntry>>;
     /// Total rows matching `query` (ignores limit/offset) — for pagination.
     async fn count_history(&self, query: &HistoryQuery) -> Result<i64>;
+    /// Up to `limit` rows matching `query`, newest first (time, then id), that
+    /// come after `after` in that order — the whole log when `after` is `None`.
+    /// The keyset read the new-imports list scrolls with (SKADI-T-0744).
+    async fn list_history_after(
+        &self,
+        query: &HistoryQuery,
+        after: Option<&HistoryCursor>,
+        limit: i64,
+    ) -> Result<Vec<HistoryEntry>>;
     /// Whole-table per-event totals for badges (unfiltered).
     async fn history_counts(&self) -> Result<HistoryCounts>;
     /// Delete events older than `cutoff` (age-based retention, SKADI-T-0199);
@@ -150,6 +168,35 @@ impl From<&HistoryEntry> for Row {
     }
 }
 
+/// The boxed `acquisition_history` query with every `HistoryQuery` filter
+/// applied. A macro, not a function: the boxed type over the dual backend is
+/// inferred at `load`, and naming it would tie this to one backend.
+macro_rules! filtered {
+    ($query:expr) => {{
+        let query: &HistoryQuery = &$query;
+        let mut q = acquisition_history::table.into_boxed();
+        if let Some(ev) = &query.event {
+            q = q.filter(acquisition_history::event.eq(ev.clone()));
+        }
+        if let Some(kind) = &query.kind {
+            q = q.filter(acquisition_history::kind.eq(kind.clone()));
+        }
+        if let Some(aref) = &query.acquirable_ref {
+            q = q.filter(acquisition_history::acquirable_ref.eq(aref.clone()));
+        }
+        if let Some(rc) = &query.reason_code {
+            q = q.filter(acquisition_history::reason_code.eq(rc.clone()));
+        }
+        if let Some(since) = query.since {
+            q = q.filter(acquisition_history::at.ge(Timestamp(since)));
+        }
+        if let Some(until) = query.until {
+            q = q.filter(acquisition_history::at.lt(Timestamp(until)));
+        }
+        q
+    }};
+}
+
 #[async_trait]
 impl HistoryRepo for Store {
     async fn record_history(&self, entry: &HistoryEntry) -> Result<()> {
@@ -193,26 +240,7 @@ impl HistoryRepo for Store {
         self.with_conn(move |conn| {
             // `into_boxed()` gives a uniform type so optional filters can be added
             // conditionally; the backend is inferred from `load(conn)` (MultiBackend).
-            let mut q = acquisition_history::table.into_boxed();
-            if let Some(ev) = &query.event {
-                q = q.filter(acquisition_history::event.eq(ev.clone()));
-            }
-            if let Some(kind) = &query.kind {
-                q = q.filter(acquisition_history::kind.eq(kind.clone()));
-            }
-            if let Some(aref) = &query.acquirable_ref {
-                q = q.filter(acquisition_history::acquirable_ref.eq(aref.clone()));
-            }
-            if let Some(rc) = &query.reason_code {
-                q = q.filter(acquisition_history::reason_code.eq(rc.clone()));
-            }
-            if let Some(since) = query.since {
-                q = q.filter(acquisition_history::at.ge(Timestamp(since)));
-            }
-            if let Some(until) = query.until {
-                q = q.filter(acquisition_history::at.lt(Timestamp(until)));
-            }
-            let rows: Vec<Row> = q
+            let rows: Vec<Row> = filtered!(query)
                 .select(Row::as_select())
                 .order(acquisition_history::at.desc())
                 .limit(limit)
@@ -227,27 +255,41 @@ impl HistoryRepo for Store {
     async fn count_history(&self, query: &HistoryQuery) -> Result<i64> {
         let query = query.clone();
         self.with_conn(move |conn| {
-            let mut q = acquisition_history::table.into_boxed();
-            if let Some(ev) = &query.event {
-                q = q.filter(acquisition_history::event.eq(ev.clone()));
-            }
-            if let Some(kind) = &query.kind {
-                q = q.filter(acquisition_history::kind.eq(kind.clone()));
-            }
-            if let Some(aref) = &query.acquirable_ref {
-                q = q.filter(acquisition_history::acquirable_ref.eq(aref.clone()));
-            }
-            if let Some(rc) = &query.reason_code {
-                q = q.filter(acquisition_history::reason_code.eq(rc.clone()));
-            }
-            if let Some(since) = query.since {
-                q = q.filter(acquisition_history::at.ge(Timestamp(since)));
-            }
-            if let Some(until) = query.until {
-                q = q.filter(acquisition_history::at.lt(Timestamp(until)));
-            }
-            let n: i64 = q.count().get_result(conn).map_err(db_err)?;
+            let n: i64 = filtered!(query).count().get_result(conn).map_err(db_err)?;
             Ok(n)
+        })
+        .await
+    }
+
+    async fn list_history_after(
+        &self,
+        query: &HistoryQuery,
+        after: Option<&HistoryCursor>,
+        limit: i64,
+    ) -> Result<Vec<HistoryEntry>> {
+        let query = query.clone();
+        let after = after.cloned();
+        self.with_conn(move |conn| {
+            let mut q = filtered!(query);
+            if let Some(c) = after {
+                q = q.filter(
+                    acquisition_history::at
+                        .lt(Timestamp(c.at))
+                        .or(acquisition_history::at
+                            .eq(Timestamp(c.at))
+                            .and(acquisition_history::id.lt(c.id))),
+                );
+            }
+            let rows: Vec<Row> = q
+                .select(Row::as_select())
+                .order((
+                    acquisition_history::at.desc(),
+                    acquisition_history::id.desc(),
+                ))
+                .limit(limit)
+                .load(conn)
+                .map_err(db_err)?;
+            Ok(rows.into_iter().map(HistoryEntry::from).collect())
         })
         .await
     }
@@ -396,6 +438,43 @@ mod tests {
             .unwrap();
         assert!(store.get_history("u").await.unwrap().unwrap().upgrade);
         assert!(!store.get_history("n").await.unwrap().unwrap().upgrade);
+    }
+
+    #[tokio::test]
+    async fn keyset_pages_walk_newest_first_without_gaps_or_repeats() {
+        let store = temp_store().await;
+        // Two rows share a timestamp: the id breaks the tie.
+        for (id, secs) in [("a", 0), ("b", 10), ("c", 10), ("d", 20)] {
+            store
+                .record_history(&entry(id, secs, "imported"))
+                .await
+                .unwrap();
+        }
+        store
+            .record_history(&entry("g", 15, "grabbed"))
+            .await
+            .unwrap();
+        let q = HistoryQuery {
+            event: Some("imported".into()),
+            ..Default::default()
+        };
+        let first = store.list_history_after(&q, None, 2).await.unwrap();
+        let ids = |v: &[HistoryEntry]| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&first), ["d", "c"]);
+        let cursor = HistoryCursor {
+            at: first[1].at,
+            id: first[1].id.clone(),
+        };
+        // A row arriving between pages lands before the cursor and is not re-read.
+        store
+            .record_history(&entry("e", 30, "imported"))
+            .await
+            .unwrap();
+        let second = store
+            .list_history_after(&q, Some(&cursor), 2)
+            .await
+            .unwrap();
+        assert_eq!(ids(&second), ["b", "a"]);
     }
 
     fn at(secs: i64) -> DateTime<Utc> {

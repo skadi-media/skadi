@@ -1052,3 +1052,68 @@ async fn delete_with_files_removes_every_part() {
     assert!(dir.join("cover.jpg").exists());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// SKADI-T-0744: the new-imports resolver names a book file's book, and a kid
+/// sees it only when the book is on their allowed list — tested with throwaway
+/// non-admin members, since an admin passes every rule.
+#[tokio::test]
+async fn new_imports_resolve_book_files_by_the_member_policy() {
+    use skadi_api::LibraryProvider;
+    use skadi_api::household::{Member, Policy, Role};
+    use skadi_audiobooks::AudiobooksRepo;
+    let h = harness().await;
+    let book_id = seed_book(
+        &h.store,
+        "B0NEW",
+        "/library/audiobook",
+        imported_at("/library/audiobook/a.m4b".into()),
+    )
+    .await;
+    let book = h
+        .store
+        .get_book(uuid::Uuid::parse_str(&book_id).unwrap().into())
+        .await
+        .unwrap()
+        .unwrap();
+    let file_ref = book.files[0].id.to_string();
+    let lib = skadi_audiobooks::AudiobooksLibrary::new(h.store.clone());
+    let refs = vec![file_ref.clone(), uuid::Uuid::new_v4().to_string()];
+    let who = |role: Role, kinds: &[&str], allowed: &[&str]| Member {
+        role,
+        policy: Policy {
+            kinds: kinds.iter().map(|k| (*k).to_string()).collect(),
+            allowed_books: allowed.iter().map(|b| (*b).to_string()).collect(),
+            ..Policy::default()
+        },
+        ..Member::open_mode_admin()
+    };
+
+    let got = lib
+        .resolve_imports(&Member::open_mode_admin(), &refs)
+        .await
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[&file_ref].item_id, book_id);
+    assert_eq!(got[&file_ref].title, "Book B0NEW");
+
+    let kid = lib
+        .resolve_imports(&who(Role::Kid, &["audiobook"], &[]), &refs)
+        .await
+        .unwrap();
+    assert!(kid.is_empty(), "a kid sees no book that is not allowed");
+    let by_id = lib
+        .resolve_imports(&who(Role::Kid, &["audiobook"], &[&book_id]), &refs)
+        .await
+        .unwrap();
+    assert_eq!(by_id.len(), 1, "allowed by id");
+    let by_asin = lib
+        .resolve_imports(&who(Role::Kid, &["audiobook"], &["B0NEW"]), &refs)
+        .await
+        .unwrap();
+    assert_eq!(by_asin.len(), 1, "allowed by ASIN");
+    let no_books = lib
+        .resolve_imports(&who(Role::Member, &["movie", "series"], &[]), &refs)
+        .await
+        .unwrap();
+    assert!(no_books.is_empty(), "a member without audiobooks sees none");
+}

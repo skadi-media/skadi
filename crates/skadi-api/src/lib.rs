@@ -33,6 +33,7 @@ pub mod import_lists_http;
 pub mod library;
 pub mod logbuf;
 pub mod naming;
+pub mod new_imports;
 pub mod openapi;
 pub mod pair;
 pub mod providers;
@@ -61,7 +62,8 @@ pub use health_checks::{CheckResult, HealthCheck, HealthRegistry, Severity};
 pub use http_module::HttpModule;
 pub use import_lists_http::import_lists_router;
 pub use library::{
-    LibraryEditionDto, LibraryItemDto, LibraryProvider, library_router, quality_display_name,
+    ImportedItemDto, LibraryEditionDto, LibraryItemDto, LibraryProvider, history_kind,
+    library_router, quality_display_name,
 };
 pub use providers::{
     OneProvider, ProviderReloader, ProviderSet, build_one, build_providers, provider_fingerprint,

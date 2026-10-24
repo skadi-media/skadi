@@ -1397,6 +1397,53 @@ impl LibraryProvider for TelevisionLibrary {
     fn kind(&self) -> MediaKind {
         MediaKind::Series
     }
+    /// New imports (SKADI-T-0744): each episode ref as its series and
+    /// `SxxEyy`, when both still exist and `member` may see the series.
+    async fn resolve_imports(
+        &self,
+        member: &skadi_api::household::Member,
+        refs: &[String],
+    ) -> skadi_core::Result<std::collections::HashMap<String, skadi_api::ImportedItemDto>> {
+        let mut out = std::collections::HashMap::new();
+        // A pack lands many episodes of one series: load each series once.
+        let mut series: std::collections::HashMap<skadi_core::SeriesId, Option<Series>> =
+            std::collections::HashMap::new();
+        for r in refs {
+            let Ok(id) = Uuid::parse_str(r) else { continue };
+            let Some(ep) =
+                TvRepo::get_episode(&self.store, skadi_core::EpisodeId::from(id)).await?
+            else {
+                continue;
+            };
+            if let std::collections::hash_map::Entry::Vacant(slot) = series.entry(ep.series_id) {
+                slot.insert(TvRepo::get_series(&self.store, ep.series_id).await?);
+            }
+            let Some(Some(s)) = series.get(&ep.series_id) else {
+                continue;
+            };
+            if !member.policy.permits(
+                member.role,
+                MediaKind::Series,
+                &s.id.to_string(),
+                s.content_rating.as_deref(),
+                &s.genres,
+            ) {
+                continue;
+            }
+            out.insert(
+                r.clone(),
+                skadi_api::ImportedItemDto {
+                    item_id: s.id.to_string(),
+                    title: s.title.clone(),
+                    episode: Some(format!("S{:02}E{:02}", ep.season, ep.number)),
+                    episode_title: ep.title.clone(),
+                    year: s.year,
+                    poster_url: s.poster_url.clone(),
+                },
+            );
+        }
+        Ok(out)
+    }
 
     /// Add a series by TVDB id on behalf of an import list (SKADI-T-0564).
     ///

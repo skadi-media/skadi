@@ -53,6 +53,7 @@ pub fn build_app_with_schemas(
         .merge(crate::diagnostics::diagnostics_router())
         .merge(crate::backup::backup_router())
         .merge(crate::library::library_router())
+        .merge(crate::new_imports::new_imports_router())
         .merge(crate::quality::quality_router())
         .merge(crate::search::search_router())
         .merge(crate::definitions::definitions_router())

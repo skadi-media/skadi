@@ -677,6 +677,9 @@ pub fn path_allowed(role: Role, method: &axum::http::Method, path: &str) -> bool
         ["books"] | ["books", _] => true,
         ["books", _, "files", _, "audio"] | ["books", _, "files", _, "chapters"] => true,
         ["library", "genres"] => true,
+        // What is new in the library (SKADI-T-0744). Every role: the handler
+        // filters each row by the member's policy, like `/movies`.
+        ["new-imports"] | ["new-imports", "count"] => true,
         // Which media kinds exist and are enabled. Not sensitive, and the
         // sidebar builds its library links from it — so gating this to the
         // admin meant a read-only member saw **no Movies, TV or Audiobooks
@@ -1721,6 +1724,22 @@ mod tests {
             &Method::POST,
             "/audiobooks/discover"
         ));
+    }
+
+    #[test]
+    fn every_role_can_read_the_new_imports() {
+        // The list filters each row by the member's policy (SKADI-T-0744), so
+        // the gate opens it to everyone; writing is still nobody's.
+        use axum::http::Method;
+        for role in [Role::Admin, Role::Contributor, Role::Member, Role::Kid] {
+            assert!(path_allowed(role, &Method::GET, "/new-imports"), "{role:?}");
+            assert!(
+                path_allowed(role, &Method::GET, "/new-imports/count"),
+                "{role:?}"
+            );
+        }
+        assert!(!path_allowed(Role::Member, &Method::POST, "/new-imports"));
+        assert!(!path_allowed(Role::Kid, &Method::GET, "/new-imports/x/y"));
     }
 
     #[test]

@@ -2665,6 +2665,48 @@ impl skadi_api::LibraryProvider for AudiobooksLibrary {
         skadi_core::MediaKind::Audiobook
     }
 
+    /// New imports (SKADI-T-0744): each book-file ref as its book, when both
+    /// still exist and `member` may see the book.
+    async fn resolve_imports(
+        &self,
+        member: &skadi_api::household::Member,
+        refs: &[String],
+    ) -> skadi_core::Result<std::collections::HashMap<String, skadi_api::ImportedItemDto>> {
+        let mut out = std::collections::HashMap::new();
+        for r in refs {
+            let Ok(id) = Uuid::parse_str(r) else { continue };
+            let Some(file) = self
+                .store
+                .get_book_file(skadi_core::BookFileId::from(id))
+                .await?
+            else {
+                continue;
+            };
+            let Some(book) = self.store.get_book(file.book_id).await? else {
+                continue;
+            };
+            if !member.policy.permits_book(
+                member.role,
+                &book.id.to_string(),
+                book.external_ids.asin.as_ref().map(|a| a.0.as_str()),
+            ) {
+                continue;
+            }
+            out.insert(
+                r.clone(),
+                skadi_api::ImportedItemDto {
+                    item_id: book.id.to_string(),
+                    title: book.title.clone(),
+                    episode: None,
+                    episode_title: None,
+                    year: book.year,
+                    poster_url: book.cover_url.clone(),
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// Add a book by ASIN on behalf of an import list (SKADI-T-0733).
     ///
     /// Goes through `add_book`, the function `POST /books` calls, so a

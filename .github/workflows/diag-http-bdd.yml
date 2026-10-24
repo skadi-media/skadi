@@ -1,0 +1,51 @@
+# Temporary (SKADI-T-0747): find where the BDD job hangs on the runner.
+# Runs the CI job's own command; a watcher dumps every thread's backtrace of
+# any BDD binary that runs longer than 120 s, then kills it. Removed once the
+# cause is fixed.
+name: diag-http-bdd
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [".github/workflows/diag-http-bdd.yml"]
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+      - name: Build the BDD binaries
+        run: cargo test --workspace --test bdd --no-run
+      - name: Run the workspace BDD 3 times with a hang watcher
+        run: |
+          watcher() {
+            while true; do
+              for pid in $(pgrep -f 'target/debug/deps/bdd-' || true); do
+                age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+                if [ -n "$age" ] && [ "$age" -gt 120 ]; then
+                  echo "=== HUNG pid $pid ($(ps -o args= -p "$pid")) after ${age}s ==="
+                  ls -l /proc/$pid/fd 2>/dev/null | wc -l
+                  sudo gdb -p "$pid" -batch -ex "set pagination off" -ex "thread apply all bt" 2>&1 | head -3000
+                  kill -9 "$pid"
+                fi
+              done
+              sleep 5
+            done
+          }
+          watcher > /tmp/watcher.log 2>&1 &
+          for i in 1 2 3; do
+            echo "=== pass $i ==="
+            cargo test --workspace --test bdd > /tmp/pass-$i.log 2>&1; echo "pass $i rc=$?"
+            grep -E "Running tests/bdd.rs|^[0-9]+ scenarios" /tmp/pass-$i.log
+          done
+          echo "=== watcher ==="
+          cat /tmp/watcher.log

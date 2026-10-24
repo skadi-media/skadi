@@ -90,6 +90,7 @@ pub fn allowed(role: Role, method: &str, path: &str) -> bool {
         ["books"] | ["books", _] => true,
         ["books", _, "files", _, "audio"] | ["books", _, "files", _, "chapters"] => true,
         ["library", "genres"] => true,
+        ["new-imports"] | ["new-imports", "count"] => true,
         ["domains"] => true,
         ["events"] => true,
         ["edition-kinds"] => true,

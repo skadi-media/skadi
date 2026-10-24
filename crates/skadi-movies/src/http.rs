@@ -2009,6 +2009,55 @@ impl LibraryProvider for MoviesLibrary {
     fn kind(&self) -> MediaKind {
         MediaKind::Movie
     }
+    /// New imports (SKADI-T-0744): each edition ref as its movie, when the
+    /// movie still exists and `member` may see it.
+    async fn resolve_imports(
+        &self,
+        member: &skadi_api::household::Member,
+        refs: &[String],
+    ) -> skadi_core::Result<std::collections::HashMap<String, skadi_api::ImportedItemDto>> {
+        let mut out = std::collections::HashMap::new();
+        let mut movies: std::collections::HashMap<skadi_core::MovieId, Option<Movie>> =
+            std::collections::HashMap::new();
+        for r in refs {
+            let Ok(id) = Uuid::parse_str(r) else { continue };
+            let Some(edition) = self
+                .store
+                .get_edition(skadi_core::MovieEditionId::from(id))
+                .await?
+            else {
+                continue;
+            };
+            if let std::collections::hash_map::Entry::Vacant(slot) = movies.entry(edition.movie_id)
+            {
+                slot.insert(self.store.get_movie(edition.movie_id).await?);
+            }
+            let Some(Some(movie)) = movies.get(&edition.movie_id) else {
+                continue;
+            };
+            if !member.policy.permits(
+                member.role,
+                MediaKind::Movie,
+                &movie.id.to_string(),
+                movie.content_rating.as_deref(),
+                &movie.genres,
+            ) {
+                continue;
+            }
+            out.insert(
+                r.clone(),
+                skadi_api::ImportedItemDto {
+                    item_id: movie.id.to_string(),
+                    title: movie.title.clone(),
+                    episode: None,
+                    episode_title: None,
+                    year: movie.year,
+                    poster_url: movie.poster_url.clone(),
+                },
+            );
+        }
+        Ok(out)
+    }
     /// Add a movie by TMDB or IMDb id on behalf of an import list
     /// (SKADI-T-0511, SKADI-T-0733).
     ///

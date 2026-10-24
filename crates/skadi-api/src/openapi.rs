@@ -430,6 +430,19 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
         "Show where a completed download would be placed",
     ),
     ("GET", "/history", "history", "Grab and import history"),
+    // Media new to the library, as the member may see it (SKADI-T-0744).
+    (
+        "GET",
+        "/new-imports",
+        "history",
+        "New imports, newest first, filtered by the member's policy",
+    ),
+    (
+        "GET",
+        "/new-imports/count",
+        "history",
+        "How many new imports of the last 7 days the member may see",
+    ),
     ("GET", "/history/{id}", "history", "One history record"),
     (
         "GET",
@@ -1178,6 +1191,8 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
     // is describable since SKADI-T-0548 put `schemars` in skadi-core alongside
     // the `Serialize` derives that were already there.
     ("GET", "/calendar", "CalendarEntryDto"),
+    ("GET", "/new-imports", "NewImportsPage"),
+    ("GET", "/new-imports/count", "NewImportsCount"),
     // The list adds sort keys to each book (SKADI-T-0737).
     ("GET", "/books", "ListedBook"),
     ("GET", "/books/{id}", "Book"),
@@ -1191,6 +1206,8 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
 fn builtin_schemas() -> Schemas {
     let mut out = schema_for::<crate::config_api::ConfigKeyDto>();
     out.extend(schema_for::<crate::library::CalendarEntryDto>());
+    out.extend(schema_for::<crate::new_imports::NewImportsPage>());
+    out.extend(schema_for::<crate::new_imports::NewImportsCount>());
     out
 }
 

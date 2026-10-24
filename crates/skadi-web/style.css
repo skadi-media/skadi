@@ -1590,3 +1590,19 @@ kbd {
 .import-exclusions { list-style: none; padding: 0; margin: 0.5rem 0 1rem; display: flex; flex-direction: column; gap: 0.35rem; }
 .import-exclusion { display: flex; align-items: center; gap: 0.8rem; }
 .import-exclusion-form { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+
+/* ====================================================================
+   New imports — Overview widget and /new (SKADI-T-0745)
+   ==================================================================== */
+.ni-row { display: flex; align-items: center; gap: 0.6rem; min-width: 0; width: 100%; }
+.ni-poster { width: 32px; height: 48px; flex: none; border-radius: 3px; object-fit: cover; background: var(--faint); }
+.ni-poster-empty { display: inline-block; }
+.ni-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.ni-title { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ni-sub { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ni-tags { display: flex; align-items: center; gap: 0.4rem; flex: none; }
+.ni-quality { font-size: 11px; color: var(--gold); }
+.ni-count { font-size: 12px; color: var(--muted); margin-left: auto; margin-right: 0.8rem; }
+.ni-controls { display: flex; gap: 1rem; margin: 0 0 1rem; max-width: 16rem; }
+.ni-sentinel { height: 1px; }
+.ni-more { margin: 1rem 0; }

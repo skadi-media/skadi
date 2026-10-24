@@ -3367,3 +3367,93 @@ fn an_item_excludes_by_its_list_id() {
     assert!(exclusion_for("series", "tvdb", None, "Andor").is_none());
     assert!(exclusion_for("series", "tvdb", Some(" ".into()), "Andor").is_none());
 }
+
+// --- new imports (SKADI-T-0745) ---
+
+fn new_import(id: &str, kind: &str, episode: Option<&str>) -> skadi_web::api::NewImport {
+    serde_json::from_value(json!({
+        "id": id,
+        "at": "2026-10-24T12:00:00Z",
+        "kind": kind,
+        "quality": "Bluray-1080p",
+        "upgrade": false,
+        "item_id": format!("item-{id}"),
+        "title": format!("Title {id}"),
+        "episode": episode,
+        "episode_title": episode.map(|_| "Pilot"),
+        "year": 2024,
+        "poster_url": null,
+    }))
+    .unwrap()
+}
+
+#[wasm_bindgen_test]
+fn new_import_rows_link_to_their_item_page() {
+    use skadi_web::new_imports::{item_href, season_of};
+    assert_eq!(item_href(&new_import("m", "movie", None)), "/movies/item-m");
+    assert_eq!(
+        item_href(&new_import("b", "audiobook", None)),
+        "/audiobooks/item-b"
+    );
+    assert_eq!(
+        item_href(&new_import("e", "series", Some("S03E07"))),
+        "/tv/item-e?season=3",
+        "an episode opens its series at its season"
+    );
+    assert_eq!(item_href(&new_import("e", "series", None)), "/tv/item-e");
+    assert_eq!(season_of("S10E02"), Some(10));
+    assert_eq!(season_of("E02"), None);
+    assert_eq!(season_of("Sxx"), None);
+}
+
+#[wasm_bindgen_test]
+fn new_import_rows_read_their_subtitle_tag_and_count() {
+    use skadi_web::new_imports::{count_label, kind_param, kind_tag, subtitle};
+    assert_eq!(
+        subtitle(&new_import("e", "series", Some("S01E01"))),
+        "S01E01 · Pilot"
+    );
+    assert_eq!(subtitle(&new_import("m", "movie", None)), "2024");
+    assert_eq!(kind_tag("series").0, "TV");
+    assert_eq!(kind_tag("audiobook").0, "BOOK");
+    assert_eq!(kind_tag("movie").0, "FILM");
+    assert_eq!(count_label(0), "Nothing new this week");
+    assert_eq!(count_label(4), "4 new this week");
+    assert_eq!(kind_param("all"), None);
+    assert_eq!(kind_param("series"), Some("series"));
+}
+
+#[wasm_bindgen_test]
+fn a_refresh_puts_new_rows_on_top_and_keeps_the_rest() {
+    use skadi_web::new_imports::merge_newer;
+    let shown = vec![
+        new_import("b", "movie", None),
+        new_import("a", "movie", None),
+    ];
+    let fresh = vec![
+        new_import("c", "movie", None),
+        new_import("b", "movie", None),
+        new_import("a", "movie", None),
+    ];
+    let ids: Vec<String> = merge_newer(&shown, fresh)
+        .into_iter()
+        .map(|n| n.id)
+        .collect();
+    assert_eq!(ids, ["c", "b", "a"]);
+}
+
+#[wasm_bindgen_test]
+fn the_new_imports_url_escapes_the_cursor() {
+    use skadi_web::api::{new_imports_url, query_escape};
+    assert_eq!(
+        query_escape("2026-10-24T12:00:00.5Z~a b"),
+        "2026-10-24T12%3A00%3A00.5Z~a%20b"
+    );
+    let url = new_imports_url(Some("series"), Some("t~id"), 30);
+    assert!(
+        url.ends_with("/new-imports?limit=30&kind=series&cursor=t~id"),
+        "{url}"
+    );
+    let plain = new_imports_url(None, None, 15);
+    assert!(plain.ends_with("/new-imports?limit=15"), "{plain}");
+}

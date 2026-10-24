@@ -43,6 +43,7 @@ const SOURCES: &[(&str, &str)] = sources![
     "loading",
     "main",
     "movies",
+    "new_imports",
     "naming",
     "offline",
     "path_picker",

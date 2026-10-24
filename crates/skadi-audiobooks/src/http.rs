@@ -2457,7 +2457,8 @@ async fn library_import_commit(
         _ => crate::audiobook_builtin_profile_id(),
     };
     // Derived root (SKADI-T-0302): books adopt into `<library.root>/audiobook`.
-    let root = RootFolder::for_domain(library_root(&http.store).await, MediaKind::Audiobook);
+    let lib_root = library_root(&http.store).await;
+    let root = RootFolder::for_domain(&lib_root, MediaKind::Audiobook);
 
     let n_items = req.items.len();
     tracing::info!(items = n_items, "audiobook library-import commit: starting");
@@ -2482,6 +2483,11 @@ async fn library_import_commit(
             .first()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| item.asin.clone());
+        // Only an upload is new media (SKADI-T-0743); an adoption of an
+        // existing tree goes through this same commit and is not.
+        let upload = files
+            .first()
+            .is_some_and(|f| skadi_core::is_upload_staged(&lib_root, f));
         let result = import::commit_item(
             repo(&http),
             http.provider.as_ref(),
@@ -2495,6 +2501,25 @@ async fn library_import_commit(
         match result {
             Ok(Some((book, placement))) => {
                 imported += 1;
+                if upload
+                    && placement != import::Placement::AdoptedDest
+                    && let Some(file) = book
+                        .files
+                        .iter()
+                        .filter_map(|f| match &f.status {
+                            AcquisitionStatus::Imported { at, .. } => Some((at, f)),
+                            _ => None,
+                        })
+                        .max_by_key(|(at, _)| **at)
+                        .map(|(_, f)| f)
+                {
+                    crate::AudiobookStatusSink::new(
+                        Arc::new(http.store.clone()),
+                        Arc::new(http.store.clone()),
+                    )
+                    .record_upload(file.id, &file.status)
+                    .await;
+                }
                 for name in book.authors {
                     let name = name.trim();
                     if !name.is_empty() {

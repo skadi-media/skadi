@@ -37,12 +37,13 @@ impl AudiobookStatusSink {
     }
 }
 
+/// `(event, detail, reason_code, at)` of one history row.
+type HistoryEvent = (&'static str, Option<String>, Option<String>, DateTime<Utc>);
+
 /// Map a status to a history event, or `None` for the transient states we don't
 /// log. Returns `(event, detail, reason_code, at)` — `reason_code` is the
 /// structured failure code for `failed` events (SKADI-T-0200).
-fn history_event(
-    status: &AcquisitionStatus,
-) -> Option<(&'static str, Option<String>, Option<String>, DateTime<Utc>)> {
+fn history_event(status: &AcquisitionStatus) -> Option<HistoryEvent> {
     match status {
         AcquisitionStatus::Snatched { at, .. } => Some(("grabbed", None, None, *at)),
         AcquisitionStatus::Imported { quality, at, .. } => {
@@ -62,6 +63,79 @@ fn history_event(
     }
 }
 
+impl AudiobookStatusSink {
+    /// Persist `status`, then append its history row. `upgrade` says the
+    /// import replaced a held file (SKADI-T-0743).
+    async fn write(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        let id = decode(acquirable)?;
+        let event = history_event(&status);
+        let imported = matches!(status, AcquisitionStatus::Imported { .. });
+        // A resumed run writes the same import again: one file, one row in the
+        // new-imports list. An upgrade to the same path and quality is still new.
+        let replay = !upgrade
+            && imported
+            && self
+                .repo
+                .get_book_file(id)
+                .await?
+                .is_some_and(|f| f.status.is_same_import(&status));
+        self.repo.set_book_file_status(id, status).await?;
+        // Wake the M4B conversion (SKADI-T-0139); it does nothing when off.
+        if imported {
+            crate::convert::nudge();
+        }
+
+        if let Some(event) = event
+            && !replay
+        {
+            self.record(id, acquirable, event, upgrade).await;
+        }
+        Ok(())
+    }
+
+    /// Append to the acquisition history, best-effort.
+    async fn record(
+        &self,
+        id: BookFileId,
+        acquirable: &AcquirableRef,
+        (event, detail, reason_code, at): HistoryEvent,
+        upgrade: bool,
+    ) {
+        let label = self
+            .title_for(id)
+            .await
+            .unwrap_or_else(|| "(unknown)".into());
+        let entry = HistoryEntry {
+            id: Uuid::new_v4().to_string(),
+            at,
+            kind: "audiobook".into(),
+            acquirable_ref: acquirable.0.clone(),
+            label,
+            event: event.into(),
+            detail,
+            reason_code,
+            upgrade: upgrade && event == "imported",
+        };
+        if let Err(e) = self.history.record_history(&entry).await {
+            tracing::warn!(error = %e, "failed to record acquisition history");
+        }
+    }
+
+    /// Append the `imported` row for a book file that library import placed
+    /// from an upload (SKADI-T-0743). The commit already persisted the status.
+    pub async fn record_upload(&self, file: BookFileId, status: &AcquisitionStatus) {
+        if let Some(event) = history_event(status) {
+            let acquirable = AcquirableRef(file.to_string());
+            self.record(file, &acquirable, event, false).await;
+        }
+    }
+}
+
 #[async_trait]
 impl StatusSink for AudiobookStatusSink {
     async fn set_status(
@@ -69,35 +143,16 @@ impl StatusSink for AudiobookStatusSink {
         acquirable: &AcquirableRef,
         status: AcquisitionStatus,
     ) -> Result<()> {
-        let id = decode(acquirable)?;
-        let event = history_event(&status);
-        let imported = matches!(status, AcquisitionStatus::Imported { .. });
-        self.repo.set_book_file_status(id, status).await?;
-        // Wake the M4B conversion (SKADI-T-0139); it does nothing when off.
-        if imported {
-            crate::convert::nudge();
-        }
+        self.write(acquirable, status, false).await
+    }
 
-        if let Some((event, detail, reason_code, at)) = event {
-            let label = self
-                .title_for(id)
-                .await
-                .unwrap_or_else(|| "(unknown)".into());
-            let entry = HistoryEntry {
-                id: Uuid::new_v4().to_string(),
-                at,
-                kind: "audiobook".into(),
-                acquirable_ref: acquirable.0.clone(),
-                label,
-                event: event.into(),
-                detail,
-                reason_code,
-            };
-            if let Err(e) = self.history.record_history(&entry).await {
-                tracing::warn!(error = %e, "failed to record acquisition history");
-            }
-        }
-        Ok(())
+    async fn set_imported(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        self.write(acquirable, status, upgrade).await
     }
 
     async fn get_status(&self, acquirable: &AcquirableRef) -> Result<Option<AcquisitionStatus>> {

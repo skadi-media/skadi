@@ -54,11 +54,12 @@ fn decode(r: &AcquirableRef) -> Result<Option<EpisodeId>> {
     }
 }
 
+/// `(event, detail, reason_code, at)` of one history row.
+type HistoryEvent = (&'static str, Option<String>, Option<String>, DateTime<Utc>);
+
 /// Map a status to a loggable history event, or `None` for transient states
 /// (Missing/Searching/Downloading/Cutoff). Mirrors the movies sink.
-fn history_event(
-    status: &AcquisitionStatus,
-) -> Option<(&'static str, Option<String>, Option<String>, DateTime<Utc>)> {
+fn history_event(status: &AcquisitionStatus) -> Option<HistoryEvent> {
     match status {
         AcquisitionStatus::Snatched { at, .. } => Some(("grabbed", None, None, *at)),
         AcquisitionStatus::Imported { quality, at, .. } => {
@@ -78,6 +79,77 @@ fn history_event(
     }
 }
 
+impl EpisodeStatusSink {
+    /// Persist `status`, then append its history row. `upgrade` says the
+    /// import replaced a held file (SKADI-T-0743).
+    async fn write(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        let Some(id) = decode(acquirable)? else {
+            tracing::debug!(acquirable = %acquirable.0, ?status, "season-pack run status (no row)");
+            return Ok(());
+        };
+        let event = history_event(&status);
+        // A resumed run writes the same import again: one file, one row in the
+        // new-imports list. An upgrade to the same path and quality is still new.
+        let replay = !upgrade
+            && matches!(status, AcquisitionStatus::Imported { .. })
+            && self
+                .repo
+                .get_episode(id)
+                .await?
+                .is_some_and(|e| e.status.is_same_import(&status));
+        self.repo.set_episode_status(id, status).await?;
+
+        if let Some(event) = event
+            && !replay
+        {
+            self.record(id, acquirable, event, upgrade).await;
+        }
+        Ok(())
+    }
+
+    /// Append to the acquisition history, best-effort.
+    async fn record(
+        &self,
+        id: EpisodeId,
+        acquirable: &AcquirableRef,
+        (event, detail, reason_code, at): HistoryEvent,
+        upgrade: bool,
+    ) {
+        let label = self
+            .label_for(id)
+            .await
+            .unwrap_or_else(|| "(unknown)".into());
+        let entry = HistoryEntry {
+            id: Uuid::new_v4().to_string(),
+            at,
+            kind: "episode".into(),
+            acquirable_ref: acquirable.0.clone(),
+            label,
+            event: event.into(),
+            detail,
+            reason_code,
+            upgrade: upgrade && event == "imported",
+        };
+        if let Err(e) = self.history.record_history(&entry).await {
+            tracing::warn!(error = %e, "failed to record episode acquisition history");
+        }
+    }
+
+    /// Append the `imported` row for an episode that library import placed from
+    /// an upload (SKADI-T-0743). The commit already persisted the status.
+    pub async fn record_upload(&self, episode: EpisodeId, status: &AcquisitionStatus) {
+        if let Some(event) = history_event(status) {
+            let acquirable = AcquirableRef(episode.to_string());
+            self.record(episode, &acquirable, event, false).await;
+        }
+    }
+}
+
 #[async_trait]
 impl StatusSink for EpisodeStatusSink {
     async fn set_status(
@@ -85,33 +157,16 @@ impl StatusSink for EpisodeStatusSink {
         acquirable: &AcquirableRef,
         status: AcquisitionStatus,
     ) -> Result<()> {
-        let Some(id) = decode(acquirable)? else {
-            tracing::debug!(acquirable = %acquirable.0, ?status, "season-pack run status (no row)");
-            return Ok(());
-        };
-        let event = history_event(&status);
-        self.repo.set_episode_status(id, status).await?;
+        self.write(acquirable, status, false).await
+    }
 
-        if let Some((event, detail, reason_code, at)) = event {
-            let label = self
-                .label_for(id)
-                .await
-                .unwrap_or_else(|| "(unknown)".into());
-            let entry = HistoryEntry {
-                id: Uuid::new_v4().to_string(),
-                at,
-                kind: "episode".into(),
-                acquirable_ref: acquirable.0.clone(),
-                label,
-                event: event.into(),
-                detail,
-                reason_code,
-            };
-            if let Err(e) = self.history.record_history(&entry).await {
-                tracing::warn!(error = %e, "failed to record episode acquisition history");
-            }
-        }
-        Ok(())
+    async fn set_imported(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        self.write(acquirable, status, upgrade).await
     }
 
     async fn get_status(&self, acquirable: &AcquirableRef) -> Result<Option<AcquisitionStatus>> {

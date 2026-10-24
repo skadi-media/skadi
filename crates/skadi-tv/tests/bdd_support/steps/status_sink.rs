@@ -185,3 +185,58 @@ async fn media_persisted(w: &mut World, s: u16, n: u16, title: String) {
         .unwrap_or_else(|| panic!("no video track recorded: {info:?}"));
     assert_eq!((video.width, video.height), (1920, 1080), "{info:?}");
 }
+
+// SKADI-T-0743: the import step's upgrade flag reaches the history row.
+#[when(expr = "the import step records Imported for episode S{int}E{int} of {string}")]
+async fn import_step(w: &mut World, s: u16, n: u16, title: String) {
+    let r = w.episode(&title, s, n).acquirable_ref();
+    sink(w)
+        .set_imported(&r, canned("Imported"), false)
+        .await
+        .expect("set_imported");
+}
+
+#[when(
+    expr = "the import step records Imported for episode S{int}E{int} of {string} as an upgrade"
+)]
+async fn import_step_upgrade(w: &mut World, s: u16, n: u16, title: String) {
+    let r = w.episode(&title, s, n).acquirable_ref();
+    sink(w)
+        .set_imported(&r, canned("Imported"), true)
+        .await
+        .expect("set_imported");
+}
+
+#[then(expr = "the acquisition history has {int} upgrade(s)")]
+async fn upgrades(w: &mut World, n: usize) {
+    w.history = w.store().list_history(50, 0).await.unwrap();
+    let got = w.history.iter().filter(|h| h.upgrade).count();
+    assert_eq!(got, n, "{:?}", w.history);
+}
+
+#[when(expr = "library import places an upload for episode S{int}E{int} of {string}")]
+async fn upload(w: &mut World, s: u16, n: u16, title: String) {
+    let e = w.episode(&title, s, n);
+    sink(w).record_upload(e.id, &canned("Imported")).await;
+}
+
+#[when(expr = "the import step records Imported for the season {int} pack of {string}")]
+async fn import_step_pack(w: &mut World, season: u16, title: String) {
+    let r = skadi_tv::acquirable::TvAcquirable::season_ref(w.series_id(&title), season);
+    sink(w)
+        .set_imported(&r, canned("Imported"), false)
+        .await
+        .expect("set_imported");
+}
+
+#[then(expr = "the acquisition history has an {string} row labelled {string}")]
+async fn has_row(w: &mut World, event: String, label: String) {
+    w.history = w.store().list_history(50, 0).await.unwrap();
+    assert!(
+        w.history
+            .iter()
+            .any(|h| h.event == event && h.label == label),
+        "{:?}",
+        w.history
+    );
+}

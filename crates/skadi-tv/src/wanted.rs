@@ -908,6 +908,14 @@ mod tests {
         }
         let lost_row = store.get_episode(lost.id).await.unwrap().unwrap();
         assert!(matches!(lost_row.status, AcquisitionStatus::Missing));
+        // Healing a file already on disk is not new media (SKADI-T-0743).
+        assert!(
+            skadi_store::HistoryRepo::list_history(store, 10, 0)
+                .await
+                .unwrap()
+                .is_empty(),
+            "reconcile writes no history row"
+        );
 
         // Only the lost episode is still wanted — the healed ones must NOT be
         // re-grabbed (the 12 Monkeys S01E01–04 loop).

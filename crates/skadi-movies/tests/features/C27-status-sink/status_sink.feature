@@ -67,3 +67,40 @@ Feature: Movie status sink — persisting the acquisition lifecycle (C27)
   Scenario: probed media info is persisted on the edition
     When the probe reports 1920x1080 video for "The Matrix"
     Then the edition of "The Matrix" shows resolution tier "1080p"
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an import that replaced a held file is marked as an upgrade
+    When the import step records Imported for the edition of "The Matrix" as an upgrade
+    Then the latest history event is "imported" labelled "The Matrix"
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a first import is not an upgrade
+    When the import step records Imported for the edition of "The Matrix"
+    Then the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a resumed run that writes the same import again adds no second history row
+    When the import step records Imported for the edition of "The Matrix"
+    And the import step records Imported for the edition of "The Matrix"
+    Then the acquisition history has 1 entry
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upgrade to the same file and quality still adds a row
+    When the import step records Imported for the edition of "The Matrix"
+    And the import step records Imported for the edition of "The Matrix" as an upgrade
+    Then the acquisition history has 2 entries
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a grab is never marked as an upgrade
+    When the hunter records Snatched for the edition of "The Matrix"
+    Then the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upload placed by library import writes one imported row
+    When library import places an upload for the edition of "The Matrix"
+    Then the latest history event is "imported" labelled "The Matrix"
+    And the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades

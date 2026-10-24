@@ -1209,7 +1209,8 @@ async fn library_import_commit(
     };
 
     // Series adopt into `<library.root>/television` (SKADI-T-0302).
-    let root = RootFolder::for_domain(library_root(&http.store).await, MediaKind::Series);
+    let lib_root = library_root(&http.store).await;
+    let root = RootFolder::for_domain(&lib_root, MediaKind::Series);
 
     // Operator-configured naming (else the built-in default), like the importer factory.
     let naming = match http.store.list_config().await {
@@ -1279,6 +1280,7 @@ async fn library_import_commit(
         errors = out.errors.len(),
         "tv library-import commit: done"
     );
+    record_uploads(&http.store, &lib_root, &out.placed).await;
     Ok(Json(CommitResult {
         imported: out.imported,
         skipped: out.skipped,
@@ -1287,6 +1289,32 @@ async fn library_import_commit(
         unmatched: out.unmatched,
         errors: out.errors,
     }))
+}
+
+/// Append the `imported` history row of each episode placed from an upload
+/// (SKADI-T-0743). Only an upload is new media: adopting an existing tree is
+/// not, and it goes through this same commit.
+async fn record_uploads(
+    store: &Store,
+    library_root: &std::path::Path,
+    placed: &[(skadi_core::EpisodeId, PathBuf)],
+) {
+    let uploads: Vec<skadi_core::EpisodeId> = placed
+        .iter()
+        .filter(|(_, src)| skadi_core::is_upload_staged(library_root, src))
+        .map(|(id, _)| *id)
+        .collect();
+    if uploads.is_empty() {
+        return;
+    }
+    let sink = crate::EpisodeStatusSink::new(Arc::new(store.clone()), Arc::new(store.clone()));
+    for id in uploads {
+        match TvRepo::get_episode(store, id).await {
+            Ok(Some(ep)) => sink.record_upload(id, &ep.status).await,
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "upload history: reading the episode failed"),
+        }
+    }
 }
 
 // --- library provider ---

@@ -769,6 +769,68 @@ async fn library_import_scan_then_commit_in_place() {
     assert_eq!(again["imported"], 0);
     assert_eq!(again["skipped"], 1);
 
+    // 7) Adopting an existing tree is not new media (SKADI-T-0743): no history row.
+    assert!(
+        skadi_store::HistoryRepo::list_history(&h.store, 10, 0)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a library adoption writes no imported row"
+    );
+
+    std::fs::remove_dir_all(&media).ok();
+}
+
+/// An upload is new media (SKADI-T-0743): library import of a file under
+/// `<library.root>/incoming` writes one `imported` history row for the edition.
+#[tokio::test]
+async fn library_import_of_an_upload_writes_an_imported_history_row() {
+    let h = harness().await;
+    let routes = || h.http.routes();
+    register_profile_and_root(&h.store).await;
+
+    let media = skadi_core::unique_temp_path("libimport-upload");
+    let incoming = media.join(skadi_core::UPLOAD_STAGING_DIR);
+    std::fs::create_dir_all(&incoming).unwrap();
+    let file = incoming.join("The.Matrix.1999.1080p.BluRay.x264.mkv");
+    std::fs::File::create(&file)
+        .unwrap()
+        .set_len(64 * 1024 * 1024)
+        .unwrap();
+    h.store
+        .set_config(
+            "library.root",
+            &media.display().to_string(),
+            ConfigSource::Runtime,
+        )
+        .await
+        .unwrap();
+
+    let (s, result) = call(
+        routes(),
+        "POST",
+        "/library-import/commit",
+        Some(serde_json::json!({
+            "items": [{ "path": file.display().to_string(), "tmdb_id": 603 }],
+        })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{result}");
+    assert_eq!(result["imported"], 1, "{result}");
+
+    let (_, movies) = call(routes(), "GET", "/movies", None).await;
+    let edition_id = movies[0]["editions"][0]["id"].as_str().unwrap().to_string();
+    let history = skadi_store::HistoryRepo::list_history(&h.store, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 1, "{history:?}");
+    let row = &history[0];
+    assert_eq!(row.event, "imported");
+    assert_eq!(row.kind, "movie");
+    assert_eq!(row.acquirable_ref, edition_id);
+    assert_eq!(row.label, "The Matrix");
+    assert!(!row.upgrade);
+
     std::fs::remove_dir_all(&media).ok();
 }
 

@@ -38,7 +38,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    use diesel::sql_types::{Nullable, Text};
+    use diesel::sql_types::{Bool, Nullable, Text};
     use diesel_dualdb::sql_types::Timestamp;
 
     acquisition_history (id) {
@@ -50,6 +50,7 @@ diesel::table! {
         event -> Text,
         detail -> Nullable<Text>,
         reason_code -> Nullable<Text>,
+        upgrade -> Bool,
     }
 }
 

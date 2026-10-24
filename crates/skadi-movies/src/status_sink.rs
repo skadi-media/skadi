@@ -37,13 +37,14 @@ impl MovieStatusSink {
     }
 }
 
+/// `(event, detail, reason_code, at)` of one history row.
+type HistoryEvent = (&'static str, Option<String>, Option<String>, DateTime<Utc>);
+
 /// Map an acquisition status to a history event, or `None` for the transient
 /// states we don't log (Missing/Searching/Downloading/Cutoff). Returns
 /// `(event, detail, reason_code, at)` — `reason_code` is the structured failure
 /// code for `failed` events (SKADI-T-0200), `None` otherwise.
-fn history_event(
-    status: &AcquisitionStatus,
-) -> Option<(&'static str, Option<String>, Option<String>, DateTime<Utc>)> {
+fn history_event(status: &AcquisitionStatus) -> Option<HistoryEvent> {
     match status {
         AcquisitionStatus::Snatched { at, .. } => Some(("grabbed", None, None, *at)),
         AcquisitionStatus::Imported { quality, at, .. } => {
@@ -63,6 +64,82 @@ fn history_event(
     }
 }
 
+impl MovieStatusSink {
+    /// Persist `status`, then append its history row. `upgrade` says the
+    /// import replaced a held file (SKADI-T-0743).
+    async fn write(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        let id = decode(acquirable)?;
+        // Compute the history event before `status` is moved into the repo.
+        let event = history_event(&status);
+        // A resumed run writes the same import again (the trait asks for
+        // idempotence): one file gives one row in the new-imports list. An
+        // upgrade to the same path and quality is still a new file.
+        let replay = !upgrade
+            && matches!(status, AcquisitionStatus::Imported { .. })
+            && self
+                .repo
+                .get_edition(id)
+                .await?
+                .is_some_and(|e| e.status.is_same_import(&status));
+        // Repo's `set_edition_status` already does the right thing for both
+        // backends: writes status_json + status_kind + updated_at, plus
+        // file/quality/format_score on `Imported`. We don't need a second
+        // round-trip here.
+        self.repo.set_edition_status(id, status).await?;
+
+        if let Some(event) = event
+            && !replay
+        {
+            self.record(id, acquirable, event, upgrade).await;
+        }
+        Ok(())
+    }
+
+    /// Append to the persistent acquisition history (best-effort — never fail
+    /// the acquire workflow because history recording failed). SKADI-T-0082.
+    async fn record(
+        &self,
+        id: MovieEditionId,
+        acquirable: &AcquirableRef,
+        (event, detail, reason_code, at): HistoryEvent,
+        upgrade: bool,
+    ) {
+        let label = self
+            .title_for(id)
+            .await
+            .unwrap_or_else(|| "(unknown)".into());
+        let entry = HistoryEntry {
+            id: Uuid::new_v4().to_string(),
+            at,
+            kind: "movie".into(),
+            acquirable_ref: acquirable.0.clone(),
+            label,
+            event: event.into(),
+            detail,
+            reason_code,
+            upgrade: upgrade && event == "imported",
+        };
+        if let Err(e) = self.history.record_history(&entry).await {
+            tracing::warn!(error = %e, "failed to record acquisition history");
+        }
+    }
+
+    /// Append the `imported` row for an edition that library import placed
+    /// from an upload (SKADI-T-0743). The status is already persisted by the
+    /// commit, so this writes history only.
+    pub async fn record_upload(&self, edition: MovieEditionId, status: &AcquisitionStatus) {
+        if let Some(event) = history_event(status) {
+            let acquirable = AcquirableRef(edition.to_string());
+            self.record(edition, &acquirable, event, false).await;
+        }
+    }
+}
+
 #[async_trait]
 impl StatusSink for MovieStatusSink {
     async fn set_status(
@@ -70,37 +147,16 @@ impl StatusSink for MovieStatusSink {
         acquirable: &AcquirableRef,
         status: AcquisitionStatus,
     ) -> Result<()> {
-        let id = decode(acquirable)?;
-        // Compute the history event before `status` is moved into the repo.
-        let event = history_event(&status);
-        // Repo's `set_edition_status` already does the right thing for both
-        // backends: writes status_json + status_kind + updated_at, plus
-        // file/quality/format_score on `Imported`. We don't need a second
-        // round-trip here.
-        self.repo.set_edition_status(id, status).await?;
+        self.write(acquirable, status, false).await
+    }
 
-        // Append to the persistent acquisition history (best-effort — never fail
-        // the acquire workflow because history recording failed). SKADI-T-0082.
-        if let Some((event, detail, reason_code, at)) = event {
-            let label = self
-                .title_for(id)
-                .await
-                .unwrap_or_else(|| "(unknown)".into());
-            let entry = HistoryEntry {
-                id: Uuid::new_v4().to_string(),
-                at,
-                kind: "movie".into(),
-                acquirable_ref: acquirable.0.clone(),
-                label,
-                event: event.into(),
-                detail,
-                reason_code,
-            };
-            if let Err(e) = self.history.record_history(&entry).await {
-                tracing::warn!(error = %e, "failed to record acquisition history");
-            }
-        }
-        Ok(())
+    async fn set_imported(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        upgrade: bool,
+    ) -> Result<()> {
+        self.write(acquirable, status, upgrade).await
     }
 
     async fn get_status(&self, acquirable: &AcquirableRef) -> Result<Option<AcquisitionStatus>> {

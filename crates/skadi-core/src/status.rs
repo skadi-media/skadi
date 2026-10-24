@@ -172,6 +172,20 @@ enum StatusKind {
 }
 
 impl AcquisitionStatus {
+    /// Both are `Imported` with the same file and quality: a resumed run
+    /// writing an import again, not a new one (SKADI-T-0743). The time and the
+    /// score are ignored, since a rewrite stamps a fresh time.
+    #[must_use]
+    pub fn is_same_import(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (
+                Self::Imported { file: a, quality: qa, .. },
+                Self::Imported { file: b, quality: qb, .. },
+            ) if a == b && qa == qb
+        )
+    }
+
     fn kind(&self) -> StatusKind {
         match self {
             Self::Missing => StatusKind::Missing,
@@ -220,6 +234,21 @@ impl AcquisitionStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_import_ignores_time_but_not_file_or_quality() {
+        let q = QualityId::new();
+        let imported = |path: &str, quality: QualityId, secs: i64| AcquisitionStatus::Imported {
+            file: FileRef { path: path.into() },
+            quality,
+            score: 0,
+            at: DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap(),
+        };
+        assert!(imported("/a.mkv", q, 0).is_same_import(&imported("/a.mkv", q, 60)));
+        assert!(!imported("/a.mkv", q, 0).is_same_import(&imported("/b.mkv", q, 0)));
+        assert!(!imported("/a.mkv", q, 0).is_same_import(&imported("/a.mkv", QualityId::new(), 0)));
+        assert!(!AcquisitionStatus::Missing.is_same_import(&imported("/a.mkv", q, 0)));
+    }
 
     fn searching() -> AcquisitionStatus {
         AcquisitionStatus::Searching {

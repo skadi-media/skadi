@@ -210,3 +210,35 @@ async fn tier(w: &mut World, title: String, want: String) {
     let e = w.reload_edition(&title).await;
     assert_eq!(e.media_info.unwrap().video.unwrap().resolution_tier(), want);
 }
+
+// SKADI-T-0743: the import step's upgrade flag reaches the history row.
+#[when(expr = "the import step records Imported for the edition of {string}")]
+async fn import_step(w: &mut World, title: String) {
+    let r = w.editions.get(&title).expect("edition").acquirable_ref();
+    sink(w)
+        .set_imported(&r, canned("Imported"), false)
+        .await
+        .expect("set_imported");
+}
+
+#[when(expr = "the import step records Imported for the edition of {string} as an upgrade")]
+async fn import_step_upgrade(w: &mut World, title: String) {
+    let r = w.editions.get(&title).expect("edition").acquirable_ref();
+    sink(w)
+        .set_imported(&r, canned("Imported"), true)
+        .await
+        .expect("set_imported");
+}
+
+#[then(expr = "the acquisition history has {int} upgrade(s)")]
+async fn upgrades(w: &mut World, n: usize) {
+    w.history = w.store().list_history(50, 0).await.unwrap();
+    let got = w.history.iter().filter(|h| h.upgrade).count();
+    assert_eq!(got, n, "{:?}", w.history);
+}
+
+#[when(expr = "library import places an upload for the edition of {string}")]
+async fn upload(w: &mut World, title: String) {
+    let e = w.editions.get(&title).expect("edition").clone();
+    sink(w).record_upload(e.id, &canned("Imported")).await;
+}

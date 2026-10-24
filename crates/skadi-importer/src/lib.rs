@@ -148,6 +148,11 @@ pub struct CompletedDownload {
 pub struct ImportedFile {
     pub acquirable: AcquirableRef,
     pub file: FileRef,
+    /// This placement superseded a file the library already held: the per-file
+    /// form of [`ImportOutcome::replaced`] (SKADI-T-0743). Absent in a state
+    /// written before the field, which reads as not replaced.
+    #[serde(default)]
+    pub replaced: bool,
 }
 
 /// The result of importing a completed download.
@@ -644,6 +649,7 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                         // Upgrade cleanup (SKADI-T-0218): remove any superseded library
                         // files (a prior import at a different path), best-effort, and
                         // report them. The just-placed dest is never in this list.
+                        let replaced_before = outcome.replaced.len();
                         for old in supersedes_to_remove(&m.supersedes, &m.dest) {
                             let p = old.clone();
                             let bin = self.recycle_bin.clone();
@@ -723,6 +729,7 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                         outcome.imported.push(ImportedFile {
                             acquirable: m.acquirable,
                             file: FileRef { path: m.dest },
+                            replaced: outcome.replaced.len() > replaced_before,
                         });
                     }
                     // The destination is already this acquirable's file (SKADI-T-0385):
@@ -738,6 +745,7 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                         outcome.already_present.push(ImportedFile {
                             acquirable: m.acquirable,
                             file: FileRef { path: m.dest },
+                            replaced: false,
                         });
                     }
                 }
@@ -1996,6 +2004,10 @@ mod tests {
         let outcome = importer.import(completed(vec![src.clone()])).await.unwrap();
 
         assert_eq!(outcome.imported.len(), 1);
+        assert!(
+            !outcome.imported[0].replaced,
+            "a fresh placement replaced nothing"
+        );
         assert!(outcome.rejected.is_empty());
         let dest = &outcome.imported[0].file.path;
         assert!(dest.exists());
@@ -2122,6 +2134,10 @@ mod tests {
         });
         let outcome = over.import(completed(vec![src.clone()])).await.unwrap();
         assert_eq!(outcome.imported.len(), 1);
+        assert!(
+            outcome.imported[0].replaced,
+            "an overwrite is a replacement"
+        );
         assert!(outcome.rejected.is_empty());
         assert_eq!(std::fs::read(&dest).unwrap(), b"new", "replaced");
 
@@ -2454,6 +2470,10 @@ mod tests {
         assert!(dest.exists(), "new file placed");
         assert!(!old.exists(), "superseded old file removed");
         assert_eq!(outcome.replaced, vec![old], "replacement reported");
+        assert!(
+            outcome.imported[0].replaced,
+            "the placed file is marked replaced"
+        );
         assert!(src.exists(), "source preserved (seedable)");
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -22,7 +22,9 @@ pub mod streaming;
 
 pub use errors::{AppError, Result};
 pub use external::{AsinId, ExternalIds, GoodreadsId, ImdbId, MusicBrainzId, TmdbId, TvdbId};
-pub use folder::{RootFolder, RootFolderStatus, probe_root_status};
+pub use folder::{
+    RootFolder, RootFolderStatus, UPLOAD_STAGING_DIR, is_upload_staged, probe_root_status,
+};
 pub use id::{
     AuthorId, BookFileId, BookId, BookSeriesId, CustomFormatId, DownloaderId, EditionKindId,
     EpisodeId, IndexerId, ItemId, MovieEditionId, MovieId, NotifierId, ProfileId, QualityId,

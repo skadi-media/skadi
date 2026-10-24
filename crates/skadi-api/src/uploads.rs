@@ -75,7 +75,7 @@ pub const CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 const CHUNK_BODY_LIMIT: usize = (CHUNK_BYTES as usize) + 64 * 1024;
 
 /// The staging directory's name under the library root.
-const INCOMING: &str = "incoming";
+const INCOMING: &str = skadi_core::UPLOAD_STAGING_DIR;
 
 /// Where in-flight sessions live. Dot-prefixed so a library scan of
 /// `incoming/` never treats a half-uploaded `part` file as media.

@@ -8,6 +8,25 @@ use serde::{Deserialize, Serialize};
 use crate::id::RootFolderId;
 use crate::status::MediaKind;
 
+/// The folder under `library.root` where browser uploads land (SKADI-T-0628).
+pub const UPLOAD_STAGING_DIR: &str = "incoming";
+
+/// True when `path` is inside the upload folder of `library_root`.
+///
+/// Library import is one commit path for two things: adopting an existing tree
+/// and placing an upload. Only the upload is new media (SKADI-T-0743), and the
+/// source path is the only thing that tells them apart. A path with a `..`
+/// component is never an upload: `incoming/../movie` is under the library, not
+/// under `incoming`.
+#[must_use]
+pub fn is_upload_staged(library_root: impl AsRef<Path>, path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    !path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+        && path.starts_with(library_root.as_ref().join(UPLOAD_STAGING_DIR))
+}
+
 /// A filesystem path that holds a media library, plus its identifier.
 ///
 /// A [`LibraryItem`](crate::item::LibraryItem) is stored under exactly one root
@@ -114,6 +133,19 @@ fn probe_writable(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_path_inside_incoming_is_an_upload() {
+        assert!(is_upload_staged("/data", "/data/incoming/film.mkv"));
+        assert!(is_upload_staged("/data", "/data/incoming/a/b.m4b"));
+        assert!(!is_upload_staged("/data", "/data/movie/film.mkv"));
+        assert!(!is_upload_staged("/data", "/elsewhere/incoming/film.mkv"));
+        assert!(!is_upload_staged(
+            "/data",
+            "/data/incoming/../movie/film.mkv"
+        ));
+        assert!(!is_upload_staged("/data", "/data/incomingx/film.mkv"));
+    }
 
     #[test]
     fn status_problem_reports_the_first_failing_check() {

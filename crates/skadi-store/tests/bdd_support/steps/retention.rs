@@ -20,6 +20,7 @@ fn history(i: usize, age_days: i64) -> HistoryEntry {
         event: "grabbed".into(),
         detail: None,
         reason_code: None,
+        upgrade: false,
     }
 }
 

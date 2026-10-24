@@ -49,7 +49,7 @@ pub use downloads::{
     DownloadJob, DownloadJobRepo, DownloadJobStatus, DownloadProgress, ImportState, NewDownloadJob,
     QueueMove,
 };
-pub use history::{HistoryCounts, HistoryEntry, HistoryQuery, HistoryRepo};
+pub use history::{HistoryCounts, HistoryCursor, HistoryEntry, HistoryQuery, HistoryRepo};
 pub use import_lists::{ImportList, ImportListExclusion, ImportListRepo};
 pub use item_tags::ItemTagRepo;
 pub use repo::{DomainState, DomainStateRepo};

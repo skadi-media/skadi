@@ -1506,3 +1506,75 @@ async fn bulk_delete_removes_rows_and_only_asked_for_files() {
     assert_eq!(left.as_array().unwrap().len(), 0);
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// SKADI-T-0744: the new-imports resolver names an imported edition's film,
+/// and hides it by the same household policy as `/movies` — tested with
+/// throwaway non-admin members, since an admin passes every rule.
+#[tokio::test]
+async fn new_imports_resolve_editions_by_the_member_policy() {
+    use skadi_api::LibraryProvider;
+    use skadi_api::household::{MaxRating, Member, Policy, Role};
+    let h = harness().await;
+    let (profile_id, root_path) = register_profile_and_root(&h.store).await;
+    let req =
+        serde_json::json!({ "tmdb_id": 603, "profile": profile_id, "root_folder": root_path });
+    let (s, created) = call(h.http.routes(), "POST", "/movies", Some(req)).await;
+    assert_eq!(s, StatusCode::CREATED);
+    assert_eq!(created["content_rating"], "R");
+    let id = created["id"].as_str().unwrap().to_string();
+    let edition = created["editions"][0]["id"].as_str().unwrap().to_string();
+
+    let lib = skadi_movies::MoviesLibrary::new(h.store.clone());
+    let refs = vec![
+        edition.clone(),
+        uuid::Uuid::new_v4().to_string(),
+        "not-a-uuid".to_string(),
+    ];
+    let who = |role: Role, ceiling: Option<&str>, kinds: &[&str]| Member {
+        role,
+        policy: Policy {
+            kinds: kinds.iter().map(|k| (*k).to_string()).collect(),
+            max_rating: MaxRating {
+                movie: ceiling.map(str::to_string),
+                series: None,
+            },
+            ..Policy::default()
+        },
+        ..Member::open_mode_admin()
+    };
+    let all = ["movie", "series", "audiobook"];
+
+    let got = lib
+        .resolve_imports(&Member::open_mode_admin(), &refs)
+        .await
+        .unwrap();
+    assert_eq!(got.len(), 1, "only the real edition resolves: {got:?}");
+    let item = &got[&edition];
+    assert_eq!(item.item_id, id);
+    assert_eq!(item.title, "The Matrix");
+    assert_eq!(item.episode, None);
+
+    let kid_pg = lib
+        .resolve_imports(&who(Role::Kid, Some("PG"), &all), &refs)
+        .await
+        .unwrap();
+    assert!(kid_pg.is_empty(), "an R film is hidden from a PG kid");
+    let kid_r = lib
+        .resolve_imports(&who(Role::Kid, Some("R"), &all), &refs)
+        .await
+        .unwrap();
+    assert_eq!(kid_r.len(), 1, "an R ceiling shows it");
+    let no_movies = lib
+        .resolve_imports(&who(Role::Member, None, &["series", "audiobook"]), &refs)
+        .await
+        .unwrap();
+    assert!(no_movies.is_empty(), "a member without movies sees none");
+
+    let (s, _) = call(h.http.routes(), "DELETE", &format!("/movies/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let gone = lib
+        .resolve_imports(&Member::open_mode_admin(), &refs)
+        .await
+        .unwrap();
+    assert!(gone.is_empty(), "a deleted film's imports drop out");
+}

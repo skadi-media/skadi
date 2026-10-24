@@ -551,3 +551,79 @@ async fn bulk_delete_removes_rows_and_only_asked_for_files() {
     assert_eq!(left.as_array().unwrap().len(), 0);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// SKADI-T-0744: the new-imports resolver names an episode's series and
+/// `SxxEyy`, and hides it by the household policy — tested with throwaway
+/// non-admin members, since an admin passes every rule.
+#[tokio::test]
+async fn new_imports_resolve_episodes_by_the_member_policy() {
+    use skadi_api::LibraryProvider;
+    use skadi_api::household::{MaxRating, Member, Policy, Role};
+    let h = harness().await;
+    set_domain(&h.store, true).await;
+    let mut series = skadi_tv::Series::new(
+        skadi_core::ExternalIds {
+            tvdb: Some(TvdbId(1234)),
+            ..Default::default()
+        },
+        "Severance",
+        skadi_core::ProfileId::new(),
+        skadi_core::RootFolder::new("/library/television"),
+    );
+    series.year = Some(2022);
+    series.content_rating = Some("TV-MA".into());
+    series.genres = vec!["Drama".into()];
+    h.store.upsert_series(&series).await.unwrap();
+    let mut e1 = skadi_tv::Episode::missing(series.id, 1, 1);
+    e1.title = Some("Good News About Hell".into());
+    let e2 = skadi_tv::Episode::missing(series.id, 1, 2);
+    h.store.upsert_episode(&e1).await.unwrap();
+    h.store.upsert_episode(&e2).await.unwrap();
+
+    let lib = skadi_tv::TelevisionLibrary::new(h.store.clone());
+    let refs = vec![
+        e1.id.to_string(),
+        e2.id.to_string(),
+        uuid::Uuid::new_v4().to_string(),
+    ];
+    let who = |role: Role, ceiling: Option<&str>, blocked_genres: &[&str]| Member {
+        role,
+        policy: Policy {
+            max_rating: MaxRating {
+                movie: None,
+                series: ceiling.map(str::to_string),
+            },
+            blocked_genres: blocked_genres.iter().map(|g| (*g).to_string()).collect(),
+            ..Policy::default()
+        },
+        ..Member::open_mode_admin()
+    };
+
+    let got = lib
+        .resolve_imports(&Member::open_mode_admin(), &refs)
+        .await
+        .unwrap();
+    assert_eq!(got.len(), 2, "both real episodes resolve: {got:?}");
+    let first = &got[&e1.id.to_string()];
+    assert_eq!(first.item_id, series.id.to_string());
+    assert_eq!(first.title, "Severance");
+    assert_eq!(first.episode.as_deref(), Some("S01E01"));
+    assert_eq!(first.episode_title.as_deref(), Some("Good News About Hell"));
+    assert_eq!(got[&e2.id.to_string()].episode.as_deref(), Some("S01E02"));
+
+    let kid = lib
+        .resolve_imports(&who(Role::Kid, Some("TV-PG"), &[]), &refs)
+        .await
+        .unwrap();
+    assert!(kid.is_empty(), "a TV-MA series is hidden from a TV-PG kid");
+    let kid_ma = lib
+        .resolve_imports(&who(Role::Kid, Some("TV-MA"), &[]), &refs)
+        .await
+        .unwrap();
+    assert_eq!(kid_ma.len(), 2);
+    let no_drama = lib
+        .resolve_imports(&who(Role::Member, None, &["drama"]), &refs)
+        .await
+        .unwrap();
+    assert!(no_drama.is_empty(), "a blocked genre hides the series");
+}

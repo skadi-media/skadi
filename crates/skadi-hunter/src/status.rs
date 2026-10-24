@@ -27,6 +27,19 @@ pub trait StatusSink: Send + Sync {
     async fn set_status(&self, acquirable: &AcquirableRef, status: AcquisitionStatus)
     -> Result<()>;
 
+    /// Persist an `Imported` status from the import step, saying whether the
+    /// placed file replaced one the library held (SKADI-T-0743), so the domain's
+    /// history row can carry the upgrade. Default: [`set_status`](Self::set_status),
+    /// for sinks that keep no history.
+    async fn set_imported(
+        &self,
+        acquirable: &AcquirableRef,
+        status: AcquisitionStatus,
+        _upgrade: bool,
+    ) -> Result<()> {
+        self.set_status(acquirable, status).await
+    }
+
     /// The last persisted status for `acquirable`, if any.
     async fn get_status(&self, acquirable: &AcquirableRef) -> Result<Option<AcquisitionStatus>>;
 

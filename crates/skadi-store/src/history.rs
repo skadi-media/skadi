@@ -37,6 +37,9 @@ pub struct HistoryEntry {
     /// Structured failure reason code (SKADI-T-0200) for failed events — the
     /// machine-filterable companion to `detail`. `None` for non-failures.
     pub reason_code: Option<String>,
+    /// An `imported` row whose file replaced one the library already held
+    /// (SKADI-T-0743). False for every other row.
+    pub upgrade: bool,
 }
 
 /// Server-side filter for the history read (SKADI-T-0194). Every field is
@@ -112,6 +115,7 @@ struct Row {
     event: String,
     detail: Option<String>,
     reason_code: Option<String>,
+    upgrade: bool,
 }
 
 impl From<Row> for HistoryEntry {
@@ -125,6 +129,7 @@ impl From<Row> for HistoryEntry {
             event: r.event,
             detail: r.detail,
             reason_code: r.reason_code,
+            upgrade: r.upgrade,
         }
     }
 }
@@ -140,6 +145,7 @@ impl From<&HistoryEntry> for Row {
             event: e.event.clone(),
             detail: e.detail.clone(),
             reason_code: e.reason_code.clone(),
+            upgrade: e.upgrade,
         }
     }
 }
@@ -342,6 +348,7 @@ mod tests {
             event: event.into(),
             detail: Some("Bluray-1080p".into()),
             reason_code: None,
+            upgrade: false,
         }
     }
 
@@ -377,6 +384,20 @@ mod tests {
         assert_eq!(page[0].id, "c");
     }
 
+    #[tokio::test]
+    async fn the_upgrade_flag_round_trips() {
+        let store = temp_store().await;
+        let mut up = entry("u", 0, "imported");
+        up.upgrade = true;
+        store.record_history(&up).await.unwrap();
+        store
+            .record_history(&entry("n", 1, "imported"))
+            .await
+            .unwrap();
+        assert!(store.get_history("u").await.unwrap().unwrap().upgrade);
+        assert!(!store.get_history("n").await.unwrap().unwrap().upgrade);
+    }
+
     fn at(secs: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap()
     }
@@ -391,6 +412,7 @@ mod tests {
             event: event.into(),
             detail: None,
             reason_code: None,
+            upgrade: false,
         }
     }
 
@@ -589,6 +611,7 @@ mod tests {
             event: "failed".into(),
             detail: Some("boom".into()),
             reason_code: code.map(Into::into),
+            upgrade: false,
         };
         store
             .record_history(&mk("a", Some("import_failed")))

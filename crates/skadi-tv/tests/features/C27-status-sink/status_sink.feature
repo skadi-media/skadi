@@ -59,3 +59,51 @@ Feature: Episode status sink — persisting the acquisition lifecycle (C27)
   Scenario: probed media info is persisted for an episode like it is for movies and audiobooks
     When the probe reports 1920x1080 video for episode S1E5 of "Game of Thrones"
     Then the probed media info is persisted for episode S1E5 of "Game of Thrones"
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an import that replaced a held file is marked as an upgrade
+    When the import step records Imported for episode S1E5 of "Game of Thrones" as an upgrade
+    Then the latest history event is "imported" labelled "Game of Thrones - S01E05"
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a first import is not an upgrade
+    When the import step records Imported for episode S1E5 of "Game of Thrones"
+    Then the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a resumed run that writes the same import again adds no second history row
+    When the import step records Imported for episode S1E5 of "Game of Thrones"
+    And the import step records Imported for episode S1E5 of "Game of Thrones"
+    Then the acquisition history has 1 entry
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upgrade to the same file and quality still adds a row
+    When the import step records Imported for episode S1E5 of "Game of Thrones"
+    And the import step records Imported for episode S1E5 of "Game of Thrones" as an upgrade
+    Then the acquisition history has 2 entries
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a grab is never marked as an upgrade
+    When the hunter records Snatched for episode S1E5 of "Game of Thrones"
+    Then the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upload placed by library import writes one imported row
+    When library import places an upload for episode S1E5 of "Game of Thrones"
+    Then the latest history event is "imported" labelled "Game of Thrones - S01E05"
+    And the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a season pack import writes one row per episode and none for the pack
+    Given "Game of Thrones" has episode S1E6 aired on 2011-05-22 that is Missing
+    When the import step records Imported for the season 1 pack of "Game of Thrones"
+    Then the acquisition history has 0 entries
+    When the import step records Imported for episode S1E5 of "Game of Thrones"
+    And the import step records Imported for episode S1E6 of "Game of Thrones"
+    Then the acquisition history has 2 entries
+    And the acquisition history has an "imported" row labelled "Game of Thrones - S01E05"
+    And the acquisition history has an "imported" row labelled "Game of Thrones - S01E06"

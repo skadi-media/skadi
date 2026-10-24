@@ -20,6 +20,7 @@ fn history_row(i: usize, event: &str, reason_code: Option<&str>) -> HistoryEntry
         event: event.into(),
         detail: Some(format!("detail {i}")),
         reason_code: reason_code.map(str::to_string),
+        upgrade: false,
     }
 }
 

@@ -333,6 +333,7 @@ async fn history_endpoint_filters_paginates_reports_total_and_counts() {
         event: ev.into(),
         detail: None,
         reason_code: None,
+        upgrade: false,
     };
     for e in [
         mk("g1", 0, "movie", "grabbed"),
@@ -400,6 +401,7 @@ async fn history_detail_and_blocklist_and_search() {
             event: "failed".into(),
             detail: Some("ImportFailed".into()),
             reason_code: Some("import_failed".into()),
+            upgrade: false,
         })
         .await
         .unwrap();
@@ -462,6 +464,7 @@ async fn history_detail_and_blocklist_and_search() {
             event: "failed".into(),
             detail: None,
             reason_code: None,
+            upgrade: false,
         })
         .await
         .unwrap();

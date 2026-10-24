@@ -102,6 +102,7 @@ async fn imported_book(
                 event: "imported".into(),
                 detail: None,
                 reason_code: None,
+                upgrade: false,
             })
             .await
             .unwrap();

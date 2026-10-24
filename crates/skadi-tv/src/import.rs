@@ -393,6 +393,9 @@ pub struct CommitOutcome {
     /// (SKADI-T-0324). Each entry is `path: reason`.
     pub unmatched: Vec<String>,
     pub errors: Vec<String>,
+    /// Each episode this batch placed, with the source file it came from: the
+    /// handler writes the history row of an upload from it (SKADI-T-0743).
+    pub placed: Vec<(EpisodeId, PathBuf)>,
 }
 
 /// A minimal completed-download stand-in for the matcher (it ignores everything
@@ -744,16 +747,23 @@ async fn commit_one(
 
     // One (file, episode) placement's bookkeeping, shared by both paths below.
     // Returns (linked, bad) deltas for this single placement.
-    fn tally(out: &mut CommitOutcome, path: &Path, res: Result<MarkOutcome>) -> (bool, bool) {
+    fn tally(
+        out: &mut CommitOutcome,
+        path: &Path,
+        ep_id: EpisodeId,
+        res: Result<MarkOutcome>,
+    ) -> (bool, bool) {
         match res {
             Ok(MarkOutcome::Placed(Placement::Linked)) => {
                 out.imported += 1;
                 out.linked += 1;
+                out.placed.push((ep_id, path.to_path_buf()));
                 (true, false)
             }
             Ok(MarkOutcome::Placed(Placement::InPlace)) => {
                 out.imported += 1;
                 out.in_place += 1;
+                out.placed.push((ep_id, path.to_path_buf()));
                 (false, false)
             }
             Ok(MarkOutcome::AdoptedDest) => {
@@ -800,7 +810,7 @@ async fn commit_one(
         let resolution = parse_tv(name).resolution;
         let dest = matcher.dest_for(&item.path, ep, resolution.as_deref());
         let res = place_and_mark(repo, &item.path, dest.clone(), ep.id, quality).await;
-        let (l, b) = tally(out, &item.path, res);
+        let (l, b) = tally(out, &item.path, ep.id, res);
         return (l, b, l.then_some(dest));
     }
 
@@ -828,7 +838,7 @@ async fn commit_one(
             }
         };
         let res = place_and_mark(repo, &item.path, m.dest.clone(), ep_id, quality).await;
-        let (l, b) = tally(out, &item.path, res);
+        let (l, b) = tally(out, &item.path, ep_id, res);
         if l && link_dest.is_none() {
             link_dest = Some(m.dest.clone());
         }
@@ -1019,6 +1029,8 @@ mod tests {
         };
         assert!(dest.exists(), "canonical episode file exists");
         assert!(dest.starts_with(&lib), "placed under the library root");
+        // The handler reads the placed episode and its source (SKADI-T-0743).
+        assert_eq!(out.placed, vec![(e1.id, src.clone())]);
         // (c) A fresh link is an adoption move — the source was dropped.
         assert!(!src.exists(), "source dropped on Linked");
 
@@ -1040,6 +1052,7 @@ mod tests {
         .await;
         assert_eq!(again.skipped, 1);
         assert_eq!(again.imported, 0);
+        assert!(again.placed.is_empty(), "a skip places nothing");
         assert!(again.errors.is_empty(), "{:?}", again.errors);
     }
 

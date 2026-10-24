@@ -201,6 +201,18 @@ fn distinct_imported(
         .collect()
 }
 
+/// Did this import replace a held file for `acquirable`? True when any of its
+/// placed files superseded one (SKADI-T-0743): a pack can upgrade one episode
+/// and place another fresh, so the flag is per acquirable, not per run.
+fn acquirable_replaced(
+    imported: &[skadi_importer::ImportedFile],
+    acquirable: &skadi_importer::AcquirableRef,
+) -> bool {
+    imported
+        .iter()
+        .any(|f| f.replaced && f.acquirable == *acquirable)
+}
+
 /// Re-check backoff for a **not-found** failure — search returned nothing, or no
 /// candidate was suitable (SKADI-T-0177). Unlike a transfer failure (fixed 30 min),
 /// a not-found item is re-checked on an **escalating** schedule: soon after a fresh
@@ -1426,7 +1438,7 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
 
                     let _ = svc
                         .status
-                        .set_status(
+                        .set_imported(
                             &imported.acquirable,
                             AcquisitionStatus::Imported {
                                 file: FileRef {
@@ -1436,6 +1448,7 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
                                 score: format_score,
                                 at: Utc::now(),
                             },
+                            acquirable_replaced(&outcome.imported, &imported.acquirable),
                         )
                         .await;
 
@@ -1986,6 +1999,7 @@ mod tests {
         let mk = |a: &str, p: &str| ImportedFile {
             acquirable: AcquirableRef(a.to_string()),
             file: FileRef { path: p.into() },
+            replaced: false,
         };
         // A pack outcome: books A (2 files), B (2 files), C (1) interleaved — the status
         // fan-out (SKADI-T-0310) must mark each book once, using its first file.
@@ -2001,5 +2015,26 @@ mod tests {
             .map(|f| (f.acquirable.0.as_str(), f.file.path.to_str().unwrap()))
             .collect();
         assert_eq!(got, vec![("A", "a1"), ("B", "b1"), ("C", "c1")]);
+    }
+
+    #[test]
+    fn acquirable_replaced_is_per_acquirable() {
+        use super::acquirable_replaced;
+        use skadi_core::FileRef;
+        use skadi_importer::{AcquirableRef, ImportedFile};
+        let mk = |a: &str, p: &str, replaced: bool| ImportedFile {
+            acquirable: AcquirableRef(a.to_string()),
+            file: FileRef { path: p.into() },
+            replaced,
+        };
+        // A pack that upgraded episode A (its second file) and placed B fresh.
+        let imported = vec![
+            mk("A", "a1", false),
+            mk("A", "a2", true),
+            mk("B", "b1", false),
+        ];
+        assert!(acquirable_replaced(&imported, &AcquirableRef("A".into())));
+        assert!(!acquirable_replaced(&imported, &AcquirableRef("B".into())));
+        assert!(!acquirable_replaced(&imported, &AcquirableRef("C".into())));
     }
 }

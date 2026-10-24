@@ -1776,7 +1776,8 @@ async fn library_import_commit(
             })?,
     };
     // Derived root (SKADI-T-0302): movies adopt into `<library.root>/movie`.
-    let root = RootFolder::for_domain(library_root(&http.store).await, MediaKind::Movie);
+    let lib_root = library_root(&http.store).await;
+    let root = RootFolder::for_domain(&lib_root, MediaKind::Movie);
 
     let n_items = req.items.len();
     tracing::info!(items = n_items, "library-import commit: starting");
@@ -1804,8 +1805,21 @@ async fn library_import_commit(
         )
         .await;
         match result {
-            Ok(Some((_, placement))) => {
+            Ok(Some((movie, placement))) => {
                 imported += 1;
+                // Only an upload is new media (SKADI-T-0743); an adoption of an
+                // existing tree goes through this same commit and is not.
+                if placement != import::Placement::AdoptedDest
+                    && skadi_core::is_upload_staged(&lib_root, &item.path)
+                    && let Some(edition) = movie.editions.last()
+                {
+                    crate::MovieStatusSink::new(
+                        Arc::new(http.store.clone()),
+                        Arc::new(http.store.clone()),
+                    )
+                    .record_upload(edition.id, &edition.status)
+                    .await;
+                }
                 match placement {
                     import::Placement::Linked => linked += 1,
                     import::Placement::InPlace => in_place += 1,

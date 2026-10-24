@@ -59,3 +59,40 @@ Feature: Audiobook status sink — persisting the acquisition lifecycle (C27)
   Scenario: probed media info is persisted on the file
     When the probe reports a 128 kbps aac stream for B003
     Then the file of B003 shows a 128 kbps audio stream
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an import that replaced a held file is marked as an upgrade
+    When the import step records Imported for the file of B003 as an upgrade
+    Then the latest history event is "imported" labelled "The Way of Kings"
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a first import is not an upgrade
+    When the import step records Imported for the file of B003
+    Then the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a resumed run that writes the same import again adds no second history row
+    When the import step records Imported for the file of B003
+    And the import step records Imported for the file of B003
+    Then the acquisition history has 1 entry
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upgrade to the same file and quality still adds a row
+    When the import step records Imported for the file of B003
+    And the import step records Imported for the file of B003 as an upgrade
+    Then the acquisition history has 2 entries
+    And the acquisition history has 1 upgrade
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: a grab is never marked as an upgrade
+    When the hunter records Snatched for the file of B003
+    Then the acquisition history has 0 upgrades
+
+  @C27 @passing @SKADI-T-0743
+  Scenario: an upload placed by library import writes one imported row
+    When library import places an upload for the file of B003
+    Then the latest history event is "imported" labelled "The Way of Kings"
+    And the acquisition history has 1 entry
+    And the acquisition history has 0 upgrades

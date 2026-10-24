@@ -88,6 +88,10 @@ fun LibraryScreen(
     baseUrl: String,
     token: String,
     onPlay: (String) -> Unit,
+    /** A book to open, asked for by another tab (the New tab, SKADI-T-0746);
+     *  consumed once via [onRequestConsumed]. */
+    request: String? = null,
+    onRequestConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val api = remember(baseUrl, token) { SkadiApi(baseUrl, token) }
@@ -113,6 +117,9 @@ fun LibraryScreen(
     var refreshing by remember { mutableStateOf(false) }
     // A tapped book opens its page; Listen / Download live there (SKADI-T-0586).
     var openBook by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(request) {
+        request?.let { openBook = it; onRequestConsumed() }
+    }
     // Explore (SKADI-T-0604): an author's or a series' whole body of work.
     var openAuthor by rememberSaveable { mutableStateOf<String?>(null) }
     var openSeries by rememberSaveable { mutableStateOf<String?>(null) }

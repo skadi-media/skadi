@@ -66,6 +66,10 @@ fun MoviesScreen(
     baseUrl: String,
     token: String,
     onPlay: (url: String, title: String, progressKey: String) -> Unit,
+    /** A film to open, asked for by another tab (the New tab, SKADI-T-0746);
+     *  consumed once via [onRequestConsumed]. */
+    request: String? = null,
+    onRequestConsumed: () -> Unit = {},
 ) {
     val api = remember(baseUrl, token) { SkadiApi(baseUrl, token) }
     val context = LocalContext.current
@@ -92,6 +96,9 @@ fun MoviesScreen(
     var openCollection by remember { mutableStateOf<MovieTile.Collection?>(null) }
     // A tapped film opens its page; Play lives there (SKADI-T-0586).
     var openMovie by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(request) {
+        request?.let { openMovie = it; onRequestConsumed() }
+    }
 
     // Films on the phone (SKADI-T-0637). Offline, the tab opens on them: the
     // only films that can play on a plane.

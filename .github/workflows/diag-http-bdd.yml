@@ -1,6 +1,7 @@
-# Temporary (SKADI-T-0747): find where the skadi-http BDD hangs on the runner.
-# Runs the suite many times; a run that passes 60 s gets every thread's
-# backtrace from gdb, then is killed. Removed once the cause is fixed.
+# Temporary (SKADI-T-0747): find where the BDD job hangs on the runner.
+# Runs the CI job's own command; a watcher dumps every thread's backtrace of
+# any BDD binary that runs longer than 120 s, then kills it. Removed once the
+# cause is fixed.
 name: diag-http-bdd
 
 on:
@@ -11,43 +12,40 @@ on:
 jobs:
   loop:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
       - uses: Swatinem/rust-cache@v2
       - name: Install gdb
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
-      - name: Build the skadi-http BDD binary
-        run: cargo test -p skadi-http --test bdd --no-run
-      - name: Run it 60 times, dump stacks on a hang
-        working-directory: crates/skadi-http
+      - name: Build the BDD binaries
+        run: cargo test --workspace --test bdd --no-run
+      - name: Run the workspace BDD 3 times with a hang watcher
         run: |
-          BIN=$(ls -t ../../target/debug/deps/bdd-* | grep -v '\.d$' | head -1)
-          echo "binary: $BIN"
-          hangs=0
-          for i in $(seq 1 60); do
-            "$BIN" > "/tmp/run-$i.log" 2>&1 &
-            pid=$!
-            waited=0
-            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 60 ]; do
-              sleep 1; waited=$((waited + 1))
+          watcher() {
+            while true; do
+              for pid in $(pgrep -f 'target/debug/deps/bdd-' || true); do
+                age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
+                if [ -n "$age" ] && [ "$age" -gt 120 ]; then
+                  echo "=== HUNG pid $pid ($(ps -o args= -p "$pid")) after ${age}s ==="
+                  ls -l /proc/$pid/fd 2>/dev/null | wc -l
+                  sudo gdb -p "$pid" -batch -ex "set pagination off" -ex "thread apply all bt" 2>&1 | head -3000
+                  kill -9 "$pid"
+                fi
+              done
+              sleep 5
             done
-            if kill -0 "$pid" 2>/dev/null; then
-              hangs=$((hangs + 1))
-              echo "::group::run $i HUNG after 60 s — last output"
-              tail -40 "/tmp/run-$i.log"
-              echo "::endgroup::"
-              echo "::group::run $i thread backtraces"
-              sudo gdb -p "$pid" -batch -ex "set pagination off" -ex "thread apply all bt" 2>&1 | head -2000
-              echo "::endgroup::"
-              kill -9 "$pid"
-              [ "$hangs" -ge 2 ] && break
-            else
-              wait "$pid"; rc=$?
-              echo "run $i rc=$rc ${waited}s $(grep -E '^[0-9]+ scenarios' /tmp/run-$i.log)"
-            fi
+          }
+          watcher > /tmp/watcher.log 2>&1 &
+          for i in 1 2 3; do
+            echo "=== pass $i ==="
+            cargo test --workspace --test bdd > /tmp/pass-$i.log 2>&1; echo "pass $i rc=$?"
+            grep -E "Running tests/bdd.rs|^[0-9]+ scenarios" /tmp/pass-$i.log
           done
-          echo "hangs: $hangs"
+          echo "=== watcher ==="
+          cat /tmp/watcher.log

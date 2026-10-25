@@ -13,7 +13,9 @@ LIMIT="${LIMIT:-180}"
 
 watch() {
   while true; do
-    for pid in $(pgrep -f '/deps/bdd-' || true); do
+    # The executable itself, first on its command line: not this script or
+    # cargo, whose arguments may name a runner.
+    for pid in $(pgrep -f '^[^ ]*/deps/bdd-[^ ]*( |$)' || true); do
       age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
       [ -n "$age" ] && [ "$age" -gt "$LIMIT" ] || continue
       echo "::error::BDD runner hung: $(ps -o args= -p "$pid") ran ${age}s (limit ${LIMIT}s)"

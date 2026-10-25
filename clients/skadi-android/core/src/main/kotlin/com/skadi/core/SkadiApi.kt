@@ -395,6 +395,14 @@ class SkadiApi(
     /** The member this token belongs to. Cached by the app; refreshed on foreground. */
     suspend fun me(): Me = getJson("/me", "me")
 
+    /** New imports, newest first, as this member may see them (SKADI-T-0746). */
+    suspend fun newImports(kind: String?, cursor: String?, limit: Int = 30): NewImportsPage =
+        getJson(newImportsPath(kind, cursor, limit), "new-imports")
+
+    /** How many new imports of the last 7 days this member may see. */
+    suspend fun newImportsCount(): Int =
+        getJson<NewImportsCount>("/new-imports/count", "new-imports/count").count
+
     /**
      * Change your own password (SKADI-T-0626). Signs your *other* devices out
      * and leaves this one signed in.

@@ -21,13 +21,17 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -160,6 +164,8 @@ private enum class Tab(val label: String, val icon: ImageVector, val outline: Im
     // Home first and default (SKADI-T-0578): the app opens on what you were in
     // the middle of, not on a list of everything.
     Home("Home", Icons.Filled.Home, Icons.Outlined.Home),
+    // What is new in the library (SKADI-T-0746), with this week's count.
+    New("New", Icons.Filled.NewReleases, Icons.Outlined.NewReleases),
     // "Books", not "Audiobooks": six items share the bar (SKADI-T-0608) and the
     // long label clipped to "Audiobook".
     Audiobooks("Books", Icons.Filled.Headphones, Icons.Outlined.Headphones),
@@ -255,6 +261,23 @@ private fun Paired(baseUrl: String, token: String) {
         showWanted = false
         tvRequest = sid to (season ?: 1)
         tab = Tab.Tv
+    }
+    // A film or a book the New tab asked to open (SKADI-T-0746).
+    var movieRequest by remember { mutableStateOf<String?>(null) }
+    var bookRequest by remember { mutableStateOf<String?>(null) }
+    val openImport: (String, String, Int?) -> Unit = { kind, id, season ->
+        when (kind) {
+            "series" -> openSeries(id, season)
+            "audiobook" -> { bookRequest = id; tab = Tab.Audiobooks }
+            else -> { movieRequest = id; tab = Tab.Movies }
+        }
+    }
+    // This week's new imports for the badge: polled while the app is open,
+    // and set again by the New tab each time it loads.
+    var newCount by remember { mutableStateOf(0) }
+    val countApi = remember(baseUrl, token) { SkadiApi(baseUrl, token) }
+    PollEffect(key = token, baseMs = 5 * 60 * 1000L) {
+        runCatching { countApi.newImportsCount() }.onSuccess { newCount = it }
     }
     // Video is a separate destination, not a mode of the audio player
     // (SKADI-T-0575): it wants a surface, landscape and its own ExoPlayer, none
@@ -381,7 +404,16 @@ private fun Paired(baseUrl: String, token: String) {
                         NavigationBarItem(
                             selected = selected,
                             onClick = { tab = t },
-                            icon = { Icon(if (selected) t.icon else t.outline, contentDescription = null) },
+                            icon = {
+                                val badge = if (t == Tab.New) com.skadi.core.newImportsBadge(newCount) else null
+                                if (badge != null) {
+                                    BadgedBox(badge = { Badge { Text(badge) } }) {
+                                        Icon(if (selected) t.icon else t.outline, contentDescription = "$badge new")
+                                    }
+                                } else {
+                                    Icon(if (selected) t.icon else t.outline, contentDescription = null)
+                                }
+                            },
                             // Five tabs: a label must not wrap ("Audiobook / s").
                             label = { Text(t.label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp) },
                             colors = NavigationBarItemDefaults.colors(
@@ -433,15 +465,25 @@ private fun Paired(baseUrl: String, token: String) {
                             onPlayBook = { playingFid = it },
                             onOpenSeries = { sid, season -> openSeries(sid, season) },
                         )
+                        Tab.New -> NewScreen(
+                            baseUrl = baseUrl,
+                            token = token,
+                            onOpen = openImport,
+                            onCount = { newCount = it },
+                        )
                         Tab.Audiobooks -> LibraryScreen(
                             baseUrl = baseUrl,
                             token = token,
                             onPlay = { playingFid = it },
+                            request = bookRequest,
+                            onRequestConsumed = { bookRequest = null },
                         )
                         Tab.Movies -> MoviesScreen(
                             baseUrl = baseUrl,
                             token = token,
                             onPlay = { url, title, key -> playingVideo = Triple(url, title, key) },
+                            request = movieRequest,
+                            onRequestConsumed = { movieRequest = null },
                         )
                         Tab.Tv -> TvScreen(
                             baseUrl = baseUrl,

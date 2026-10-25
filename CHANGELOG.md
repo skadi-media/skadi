@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - An `imported` history row now means a file new to the library. A resumed run that writes the same import again adds no second row. Library import of an upload (a file under `<library.root>/incoming`) writes a row; adopting an existing tree, and reconcile, write none (SKADI-T-0743).
 - The web Overview's admin-only "Recently imported" feed is replaced by the New imports widget.
 - The e2e harness registers the audiobooks library provider, as the daemon does.
+- CI: a BDD runner that hangs gets its thread backtraces dumped and is killed after 3 minutes, instead of holding the job to its 40-minute timeout (SKADI-T-0747).
 
 ## [0.1.11] - 2026-10-18
 

@@ -16,7 +16,7 @@ jobs:
         run: |
           mkdir -p /tmp/t/deps && cp /bin/sleep /tmp/t/deps/bdd-fake
           start=$(date +%s)
-          LIMIT=5 .github/scripts/bdd-hang-watch.sh /tmp/t/deps/bdd-fake 120 > out.log 2>&1; rc=$?
+          rc=0; LIMIT=5 .github/scripts/bdd-hang-watch.sh /tmp/t/deps/bdd-fake 120 > out.log 2>&1 || rc=$?
           took=$(( $(date +%s) - start ))
           cat out.log
           echo "rc=$rc took=${took}s"

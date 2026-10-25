@@ -310,7 +310,11 @@ fn new_imports_page_renders_its_filter_offline() {
     assert!(text.contains("Media"));
     let options = host.query_selector_all("select option").unwrap();
     assert_eq!(options.length(), 4, "All, Movies, TV, Audiobooks");
-    assert_eq!(count(&host, ".ni-sentinel"), 1, "the infinite-scroll sentinel");
+    assert_eq!(
+        count(&host, ".ni-sentinel"),
+        1,
+        "the infinite-scroll sentinel"
+    );
 }
 
 // --- System page (SKADI-T-0684) ---------------------------------------------

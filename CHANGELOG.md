@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-25
+
+### Added
+- New imports, on the web and in the Android app (COLLIERY-I-0653). The web Overview has a New imports widget for every role: the latest 15, this week's count, and See all. `/new` lists every new import, newest first, with a media filter, an Upgrade pill and infinite scroll; a row opens its item, and an episode opens its season. Both views refresh every 30 s while the tab is visible (SKADI-T-0745). The Android app has a New tab with this week's count as its badge (SKADI-T-0746).
+- `GET /new-imports?kind=&cursor=&limit=` and `GET /new-imports/count`: new imports filtered by the member's household policy, paged with a cursor, and the count of the last 7 days. Every role may read them (SKADI-T-0744).
+- `acquisition_history.upgrade`: an import that replaced a file the library held is marked (SKADI-T-0743).
+
+### Changed
+- An `imported` history row now means a file new to the library. A resumed run that writes the same import again adds no second row. Library import of an upload (a file under `<library.root>/incoming`) writes a row; adopting an existing tree, and reconcile, write none (SKADI-T-0743).
+- The web Overview's admin-only "Recently imported" feed is replaced by the New imports widget.
+- The e2e harness registers the audiobooks library provider, as the daemon does.
+- CI: a BDD runner that hangs gets its thread backtraces dumped and is killed after 3 minutes, instead of holding the job to its 40-minute timeout (SKADI-T-0747).
+
 ## [0.1.11] - 2026-10-18
 
 ### Fixed

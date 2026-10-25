@@ -192,8 +192,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # A BDD runner that hangs gets its thread backtraces dumped and is killed
+      # after 3 minutes instead of holding the job to its timeout
+      # (SKADI-T-0747).
+      - name: Install gdb (for the hang watcher)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+
       - name: Workspace BDD suites
-        run: cargo test --workspace --test bdd
+        run: .github/scripts/bdd-hang-watch.sh cargo test --workspace --test bdd
 
       # `df` after each build so a future disk failure reads as a disk failure
       # instead of as a jemalloc build-script backtrace three screens down.
@@ -201,7 +207,7 @@ jobs:
         run: df -h /
 
       - name: Worker BDD suite
-        run: cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml --test bdd
+        run: .github/scripts/bdd-hang-watch.sh cargo test --manifest-path crates/skadi-downloader-worker/Cargo.toml --test bdd
 
       - name: Disk after the worker build
         if: always()

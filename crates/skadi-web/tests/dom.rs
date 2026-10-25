@@ -285,7 +285,9 @@ fn dashboard_renders_overview_static_structure_offline() {
     let text = host.text_content().unwrap();
     assert!(text.contains("Overview"));
     assert!(text.contains("Active hunt"));
-    assert!(text.contains("Recently imported"));
+    // New imports for every role (SKADI-T-0745), with a link to the full page.
+    assert!(text.contains("New imports"));
+    assert_eq!(count(&host, "a[href=\"/new\"]"), 1, "See all links to /new");
     // The four metric cards render regardless of data.
     assert_eq!(
         count(&host, ".ov-metric"),
@@ -294,6 +296,25 @@ fn dashboard_renders_overview_static_structure_offline() {
     );
     // Offline → the active-hunt list shows its empty state.
     assert!(text.contains("No active transfers"));
+}
+
+#[wasm_bindgen_test]
+fn new_imports_page_renders_its_filter_offline() {
+    // SKADI-T-0745: the page's static structure, with no daemon to answer.
+    let host = host();
+    let _handle = mount_to(host.clone(), || {
+        view! { <Router><skadi_web::new_imports::NewImportsPage/></Router> }
+    });
+    let text = host.text_content().unwrap();
+    assert!(text.contains("New imports"));
+    assert!(text.contains("Media"));
+    let options = host.query_selector_all("select option").unwrap();
+    assert_eq!(options.length(), 4, "All, Movies, TV, Audiobooks");
+    assert_eq!(
+        count(&host, ".ni-sentinel"),
+        1,
+        "the infinite-scroll sentinel"
+    );
 }
 
 // --- System page (SKADI-T-0684) ---------------------------------------------

@@ -23,6 +23,7 @@ pub mod library_toolbar;
 pub mod live_poll;
 pub mod loading;
 pub mod movies;
+pub mod new_imports;
 pub mod tv;
 pub mod tv_import;
 pub mod ui;

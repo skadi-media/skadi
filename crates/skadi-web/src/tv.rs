@@ -9,7 +9,7 @@ use aurora_leptos::components::{Alert, Button, Empty, Pill};
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::hooks::{use_navigate, use_params_map};
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 use crate::api;
 use crate::confirm::{ConfirmSpec, confirm};
@@ -275,6 +275,20 @@ pub fn SeriesDetailPage() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
     let alive = RwSignal::new(true);
+    // `?season=N` opens that season: a new-imports row for an episode lands
+    // on it (SKADI-T-0745).
+    let query = use_query_map();
+    Effect::new(move |_| {
+        if let Some(n) = query
+            .read()
+            .get("season")
+            .and_then(|v| v.parse::<u16>().ok())
+        {
+            open_seasons.update(|o| {
+                o.insert(n);
+            });
+        }
+    });
 
     let load = move || {
         let id = params.read().get("id").unwrap_or_default();

@@ -45,6 +45,7 @@ const PAGES: [RegExp, string, string][] = [
   [/^\/add$/, "GET", "/movies/lookup"],
   [/^\/setup$/, "POST", "/settings/indexers"],
   [/^\/activity$/, "GET", "/activity"],
+  [/^\/new$/, "GET", "/new-imports"],
   [/^\/wanted$/, "GET", "/wanted"],
   [/^\/players$/, "GET", "/players"],
   [/^\/upload$/, "POST", "/uploads"],

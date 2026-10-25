@@ -2199,6 +2199,104 @@ pub async fn history(limit: u32) -> Result<Vec<HistoryRow>, ApiError> {
     Ok(resp.json::<Vec<HistoryRow>>().await?)
 }
 
+/// One new import (SKADI-T-0745; mirror of skadi-api `NewImportDto`): a file
+/// new to the library, with the item to show and link.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NewImport {
+    pub id: String,
+    /// RFC 3339 timestamp.
+    pub at: String,
+    /// `movie`, `series` or `audiobook`.
+    pub kind: String,
+    #[serde(default)]
+    pub quality: Option<String>,
+    /// The file replaced one the library already held.
+    #[serde(default)]
+    pub upgrade: bool,
+    /// The movie, series or book to open.
+    pub item_id: String,
+    pub title: String,
+    /// `S01E05` for an episode.
+    #[serde(default)]
+    pub episode: Option<String>,
+    #[serde(default)]
+    pub episode_title: Option<String>,
+    #[serde(default)]
+    pub year: Option<u16>,
+    #[serde(default)]
+    pub poster_url: Option<String>,
+}
+
+/// One page of `GET /new-imports`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct NewImportsPage {
+    pub items: Vec<NewImport>,
+    /// Pass back as `cursor` for the next page; `None` at the end.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct NewImportsCount {
+    count: usize,
+}
+
+/// Percent-encode a query value: everything but unreserved characters. Pure,
+/// so the host tests run it (`js_sys::encode_uri_component` needs a browser).
+#[must_use]
+pub fn query_escape(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    for b in v.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The URL of a `GET /new-imports` page. Pure.
+#[must_use]
+pub fn new_imports_url(kind: Option<&str>, cursor: Option<&str>, limit: u32) -> String {
+    let mut url = format!("{API_BASE}/new-imports?limit={limit}");
+    if let Some(k) = kind {
+        url.push_str(&format!("&kind={}", query_escape(k)));
+    }
+    if let Some(c) = cursor {
+        url.push_str(&format!("&cursor={}", query_escape(c)));
+    }
+    url
+}
+
+/// `GET /new-imports?kind=&cursor=&limit=` — new media, newest first, as this
+/// member may see it (SKADI-T-0744).
+pub async fn new_imports(
+    kind: Option<&str>,
+    cursor: Option<&str>,
+    limit: u32,
+) -> Result<NewImportsPage, ApiError> {
+    let resp = get(&new_imports_url(kind, cursor, limit))?.send().await?;
+    if !resp.ok() {
+        return Err(ApiError(format!("new-imports -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<NewImportsPage>().await?)
+}
+
+/// `GET /new-imports/count` — new imports of the last 7 days this member may see.
+pub async fn new_imports_count() -> Result<usize, ApiError> {
+    let resp = get(&format!("{API_BASE}/new-imports/count"))?
+        .send()
+        .await?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "new-imports/count -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<NewImportsCount>().await?.count)
+}
+
 /// `GET /history?acquirable=&limit=` — the timeline for ONE acquirable (item), newest
 /// first: its grabbed / imported / failed events, with failure reason codes (SKADI-T-0315).
 pub async fn item_history(acquirable_ref: &str, limit: u32) -> Result<Vec<HistoryRow>, ApiError> {

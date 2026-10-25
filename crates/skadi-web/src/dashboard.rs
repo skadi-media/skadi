@@ -11,9 +11,7 @@
 
 use std::collections::HashMap;
 
-use aurora_leptos::components::{
-    Button, Card, Empty, FeedList, FeedRow, PageHeader, Pill, StatTile,
-};
+use aurora_leptos::components::{Button, Card, Empty, PageHeader, Pill, StatTile};
 use aurora_leptos::tokens::token;
 use aurora_leptos::widgets::Meter;
 use leptos::prelude::*;
@@ -211,7 +209,6 @@ pub fn Dashboard() -> impl IntoView {
     let series = RwSignal::new(Vec::<api::Series>::new());
     let domains = RwSignal::new(Vec::<api::Domain>::new());
     let downloads = RwSignal::new(Vec::<api::Download>::new());
-    let history = RwSignal::new(Vec::<api::HistoryRow>::new());
     // acquirable-ref → (title, kind) so Active-hunt rows show a name + media tag.
     let titles = RwSignal::new(HashMap::<String, (String, &'static str)>::new());
 
@@ -283,11 +280,6 @@ pub fn Dashboard() -> impl IntoView {
                 downloads.set(d);
             }
         });
-        spawn_local(async move {
-            if is_admin && let Ok(h) = api::history(25).await {
-                history.set(h);
-            }
-        });
     });
 
     // Derived library tallies (client-side, cheap) for the metric row + rollups.
@@ -351,34 +343,6 @@ pub fn Dashboard() -> impl IntoView {
             })
             .collect_view()
             .into_any()
-    };
-
-    // Recently imported: the import feed (history), newest first, quality in gold.
-    let imported_rows = move || {
-        let imported: Vec<_> = history
-            .get()
-            .into_iter()
-            .filter(|h| h.event == "imported")
-            .take(8)
-            .collect();
-        if imported.is_empty() {
-            return view! { <Empty message="Nothing imported yet."/> }.into_any();
-        }
-        // Aurora's FeedList and FeedRow (SKADI-T-0719); the quality in gold.
-        let rows = imported
-            .into_iter()
-            .map(|h| {
-                view! {
-                    <FeedRow dot=token::OK>
-                        <span class="imp-row">
-                            <span class="imp-title">{h.label}</span>
-                            <span class="imp-meta mono">{h.detail.unwrap_or_default()}</span>
-                        </span>
-                    </FeedRow>
-                }
-            })
-            .collect_view();
-        view! { <FeedList label="Recently imported">{rows}</FeedList> }.into_any()
     };
 
     // Rollup cards (one per enabled domain) → that library.
@@ -549,14 +513,10 @@ pub fn Dashboard() -> impl IntoView {
                 <div class="rollups">{rollups}</div>
             </section>
 
+            // New imports for every role, filtered by the member's policy on
+            // the server (SKADI-T-0745). It was an admin-only history feed.
             <section class="ov-right">
-                <div class="ov-sec-head">
-                    <h3>"Recently imported"</h3>
-                    {move || is_admin_view().then(|| view! {
-                        <A href="/activity" attr:class="ov-sec-link mono">"View all"</A>
-                    })}
-                </div>
-                {imported_rows}
+                <crate::new_imports::NewImportsWidget/>
             </section>
         </div>
     }

@@ -73,7 +73,18 @@ async fn next_visibility_change() {
 /// Run `tick` every [`LIVE_POLL_MS`] while the tab is visible, and not at all
 /// while it is hidden, until `alive` returns false. The first tick runs at
 /// once; a tab that is shown again ticks at once too.
-pub async fn poll_while_visible<A, T, F>(alive: A, mut tick: T)
+pub async fn poll_while_visible<A, T, F>(alive: A, tick: T)
+where
+    A: Fn() -> bool,
+    T: FnMut() -> F,
+    F: Future<Output = ()>,
+{
+    poll_every_while_visible(LIVE_POLL_MS, alive, tick).await;
+}
+
+/// [`poll_while_visible`] at a cadence of `every_ms`, for a view whose data
+/// changes more slowly than Downloads (the new imports, SKADI-T-0745).
+pub async fn poll_every_while_visible<A, T, F>(every_ms: u32, alive: A, mut tick: T)
 where
     A: Fn() -> bool,
     T: FnMut() -> F,
@@ -85,7 +96,7 @@ where
             PollStep::WaitVisible => next_visibility_change().await,
             PollStep::Fetch => {
                 tick().await;
-                gloo_timers::future::TimeoutFuture::new(LIVE_POLL_MS).await;
+                gloo_timers::future::TimeoutFuture::new(every_ms).await;
             }
         }
     }

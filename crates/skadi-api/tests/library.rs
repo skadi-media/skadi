@@ -1247,3 +1247,113 @@ async fn a_manual_import_with_a_download_id_records_its_outcome_on_the_row() {
         "unchanged: {silent_row}"
     );
 }
+
+/// A movies domain that resolves every ref it is asked about (SKADI-T-0744).
+struct ImportsLib;
+
+#[async_trait]
+impl LibraryProvider for ImportsLib {
+    fn domain(&self) -> &str {
+        "movies"
+    }
+    fn kind(&self) -> MediaKind {
+        MediaKind::Movie
+    }
+    async fn items(&self, _monitored: Option<bool>) -> SkadiResult<Vec<LibraryItemDto>> {
+        Ok(Vec::new())
+    }
+    async fn resolve_imports(
+        &self,
+        _member: &skadi_api::household::Member,
+        refs: &[String],
+    ) -> SkadiResult<std::collections::HashMap<String, skadi_api::ImportedItemDto>> {
+        Ok(refs
+            .iter()
+            .map(|r| {
+                (
+                    r.clone(),
+                    skadi_api::ImportedItemDto {
+                        item_id: format!("movie-{r}"),
+                        title: format!("Film {r}"),
+                        episode: None,
+                        episode_title: None,
+                        year: Some(1999),
+                        poster_url: Some(format!("/p/{r}.jpg")),
+                    },
+                )
+            })
+            .collect())
+    }
+}
+
+/// `GET /new-imports` pages with a cursor and `/new-imports/count` counts the
+/// last week, through the real router (SKADI-T-0744).
+#[tokio::test]
+async fn new_imports_page_with_a_cursor_and_count_the_week() {
+    use skadi_store::{HistoryEntry, HistoryRepo};
+    let (state, db) = state_with(true, vec![Arc::new(ImportsLib)]).await;
+    let now = chrono::Utc::now();
+    for (id, hours, event, upgrade) in [
+        ("a", 24 * 9, "imported", false),
+        ("b", 3, "imported", false),
+        ("c", 2, "grabbed", false),
+        ("d", 1, "imported", true),
+    ] {
+        db.store
+            .record_history(&HistoryEntry {
+                id: id.into(),
+                at: now - chrono::Duration::hours(hours),
+                kind: "movie".into(),
+                acquirable_ref: format!("ed-{id}"),
+                label: id.into(),
+                event: event.into(),
+                detail: Some("Bluray-1080p".into()),
+                reason_code: None,
+                upgrade,
+            })
+            .await
+            .unwrap();
+    }
+
+    let (s, page) = call(&state, "/api/v1/new-imports?limit=2").await;
+    assert_eq!(s, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], "d");
+    assert_eq!(items[0]["kind"], "movie");
+    assert_eq!(items[0]["upgrade"], true);
+    assert_eq!(items[0]["item_id"], "movie-ed-d");
+    assert_eq!(items[0]["title"], "Film ed-d");
+    assert_eq!(items[0]["poster_url"], "/p/ed-d.jpg");
+    assert_eq!(items[0]["quality"], "Bluray-1080p");
+    assert_eq!(items[1]["id"], "b");
+    let cursor = page["next_cursor"].as_str().unwrap().to_string();
+
+    let (s, rest) = call(
+        &state,
+        &format!("/api/v1/new-imports?limit=2&cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{rest}");
+    assert_eq!(rest["items"].as_array().unwrap().len(), 1);
+    assert_eq!(rest["items"][0]["id"], "a");
+    assert!(rest["next_cursor"].is_null());
+
+    let (s, count) = call(&state, "/api/v1/new-imports/count").await;
+    assert_eq!(s, StatusCode::OK, "{count}");
+    assert_eq!(
+        count["count"], 2,
+        "the 9-day-old import is outside the week"
+    );
+
+    let (_, tv) = call(&state, "/api/v1/new-imports?kind=series").await;
+    assert!(
+        tv["items"].as_array().unwrap().is_empty(),
+        "no TV domain here"
+    );
+    let (s, _) = call(&state, "/api/v1/new-imports?kind=music").await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&state, "/api/v1/new-imports?cursor=garbage").await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let _ = db;
+}

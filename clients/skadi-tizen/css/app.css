@@ -8,20 +8,22 @@ html, body {
 body.playing { background: transparent; }
 #av { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 0; }
 #screen { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 1; }
-.view { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #0b1016; }
+.view { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #0b1016; overflow: hidden; }
 /* The TV shows the video plane through any part of the page that has no
    background of its own, even when nothing plays: the last frame of the last
    film stays there. So every view is opaque, except the player. */
 #player { background: transparent; }
 .view.on { display: block; }
 h1 { font-weight: 600; margin: 0; }
+.meta { color: #9fb0c0; }
+.backdrop { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background-size: cover; background-position: center; opacity: 0.2; }
 
 /* Sign in */
 #setup.on { display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
   -webkit-align-items: center; align-items: center; -webkit-justify-content: center; justify-content: center; }
 #setup h1 { font-size: 72px; margin-bottom: 50px; text-align: center; }
-.field[data-field="go"] { text-align: center; margin-top: 16px; }
 .field { width: 1100px; box-sizing: content-box; padding: 14px 20px; margin-bottom: 14px; border: 4px solid transparent; border-radius: 10px; }
+.field[data-field="go"] { text-align: center; margin-top: 16px; }
 .field.sel { border-color: #5fb4ff; background: #16212d; }
 .field label { display: inline-block; width: 260px; color: #9fb0c0; }
 .field input { width: 780px; font-size: 34px; padding: 10px 14px; border: 0; border-radius: 6px; background: #e8edf2; color: #0b1016; }
@@ -29,43 +31,109 @@ h1 { font-weight: 600; margin: 0; }
 .field.sel .btn { background: #2f7fcb; }
 .hint { color: #7d8fa0; font-size: 26px; margin-top: 30px; }
 
-/* Movies */
-#browse-head { height: 90px; line-height: 90px; padding: 0 60px; white-space: nowrap; overflow: hidden; }
-.brand { font-size: 40px; font-weight: 600; margin-right: 30px; }
-#browse-count { color: #7d8fa0; margin-right: 50px; }
-#browse-title { font-size: 34px; }
-#grid { position: absolute; left: 60px; top: 100px; width: 1820px; height: 980px; overflow: hidden; }
+/* The menu on the left */
+#rail { position: absolute; left: 0; top: 0; width: 210px; height: 1080px; background: #080c11; padding-top: 60px; box-sizing: border-box; }
+#rail .brand { font-size: 40px; font-weight: 600; padding: 0 0 50px 34px; }
+.rail-item { padding: 20px 0 20px 30px; margin-bottom: 6px; font-size: 32px; color: #7d8fa0; border-left: 6px solid transparent; }
+.rail-item.here { color: #e8edf2; border-left-color: #2f7fcb; }
+.rail-item.sel { color: #fff; background: #2f7fcb; border-left-color: #2f7fcb; }
+.pane { display: none; position: absolute; left: 210px; top: 0; width: 1710px; height: 1080px; }
+.pane.on { display: block; }
+
+/* A poster tile, used by the rows, the grid and the search results */
 .tile { float: left; width: 236px; height: 458px; margin: 0 22px 22px 0; }
 .tile .art { width: 228px; height: 342px; border: 4px solid transparent; border-radius: 10px; background: #18222d; overflow: hidden; }
 .tile img { width: 228px; height: 342px; display: block; }
 .tile .name { height: 76px; overflow: hidden; margin-top: 8px; font-size: 24px; line-height: 30px; color: #9fb0c0; text-align: center; }
+.tile .name small { display: block; font-size: 22px; color: #7d8fa0; }
 .tile.sel .art { border-color: #5fb4ff; }
 .tile.sel .name { color: #fff; }
 .tile .blank { padding: 20px 14px; font-size: 26px; line-height: 34px; color: #9fb0c0; }
+.empty { color: #7d8fa0; padding: 40px 0; }
+
+/* Home */
+#pane-home { padding: 44px 0 0 50px; box-sizing: border-box; }
+.row { height: 512px; overflow: hidden; }
+.row h2 { font-size: 34px; font-weight: 600; margin: 0 0 16px 4px; height: 44px; color: #c5d3e0; }
+.row.sel h2 { color: #fff; }
+.row .tiles { width: 1700px; height: 440px; overflow: hidden; }
+
+/* Movies and TV */
+#grid-head { height: 96px; line-height: 96px; padding-left: 54px; white-space: nowrap; overflow: hidden; }
+#grid-name { font-size: 40px; font-weight: 600; margin-right: 26px; }
+#grid-count { color: #7d8fa0; margin-right: 44px; }
+#grid-title { font-size: 34px; }
+#grid { position: absolute; left: 50px; top: 104px; width: 1560px; height: 976px; overflow: hidden; }
+#letters { position: absolute; left: 1620px; top: 100px; width: 70px; }
+.letter { height: 35px; line-height: 35px; text-align: center; font-size: 24px; color: #5d6e7e; border-radius: 6px; }
+.letter.has { color: #9fb0c0; }
+.letter.here { color: #fff; background: #25435f; }
+.letter.sel { color: #fff; background: #2f7fcb; }
+
+/* Search */
+#search-left { position: absolute; left: 50px; top: 50px; width: 580px; }
+#search-text { height: 76px; line-height: 76px; padding: 0 20px; margin-bottom: 26px; border-radius: 8px; background: #16212d; font-size: 36px; white-space: nowrap; overflow: hidden; }
+#search-text .ph { color: #5d6e7e; }
+.key { float: left; width: 84px; height: 84px; line-height: 84px; margin: 0 10px 10px 0; text-align: center; font-size: 34px; border: 3px solid transparent; border-radius: 8px; background: #141d27; box-sizing: border-box; }
+.key.wide { width: 178px; font-size: 26px; }
+.key.sel { border-color: #fff; background: #2f7fcb; }
+#search-right { position: absolute; left: 670px; top: 50px; width: 1040px; height: 1030px; overflow: hidden; }
+#search-head { height: 76px; line-height: 76px; margin-bottom: 26px; color: #9fb0c0; white-space: nowrap; overflow: hidden; }
+#search-results { width: 1040px; height: 940px; overflow: hidden; }
 
 /* Movie page */
-#detail-backdrop { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background-size: cover; background-position: center; opacity: 0.22; }
 #detail-body { position: absolute; left: 100px; top: 110px; width: 1720px; }
 #detail-poster { float: left; width: 400px; height: 600px; border-radius: 12px; background: #18222d; }
 #detail-text { margin-left: 460px; }
-#detail-title { font-size: 64px; line-height: 74px; }
-#detail-meta { color: #9fb0c0; margin: 18px 0 26px 0; }
+#detail-title { font-size: 64px; line-height: 74px; max-height: 148px; overflow: hidden; }
+#detail-meta { margin: 18px 0 26px 0; }
 #detail-overview { font-size: 30px; line-height: 42px; max-height: 336px; overflow: hidden; margin: 0 0 40px 0; }
 .action { display: inline-block; padding: 18px 40px; margin: 0 20px 20px 0; border: 4px solid transparent; border-radius: 10px; background: #1d2b3a; font-size: 34px; }
 .action.sel { border-color: #fff; background: #2f7fcb; }
 .action small { display: block; font-size: 22px; color: #c5d3e0; margin-top: 4px; }
 
-/* Player */
-#player-wait { position: absolute; left: 0; top: 480px; width: 1920px; text-align: center; font-size: 44px; text-shadow: 0 2px 8px #000; }
-#bar { position: absolute; left: 0; bottom: 0; width: 1920px; padding: 120px 80px 50px 80px; box-sizing: border-box;
-  background: -webkit-linear-gradient(top, rgba(0,0,0,0), rgba(0,0,0,0.85)); background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.85)); }
-#bar.off { display: none; }
-#bar-title { font-size: 38px; margin-bottom: 18px; text-shadow: 0 2px 6px #000; white-space: nowrap; overflow: hidden; }
-#bar-track { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.25); margin-bottom: 24px; }
-#bar-fill { height: 10px; width: 0; border-radius: 5px; background: #5fb4ff; }
-#bar-time { float: right; line-height: 76px; font-size: 34px; }
-.pb { display: inline-block; padding: 14px 28px; margin-right: 14px; border: 4px solid transparent; border-radius: 10px; background: rgba(20,30,40,0.8); font-size: 32px; }
-.pb.sel { border-color: #fff; background: #2f7fcb; }
+/* Series page */
+#series-poster { position: absolute; left: 90px; top: 90px; width: 320px; height: 480px; border-radius: 12px; background: #18222d; }
+#series-text { position: absolute; left: 460px; top: 84px; width: 1370px; }
+#series-title { font-size: 58px; line-height: 68px; height: 68px; overflow: hidden; white-space: nowrap; }
+#series-meta { margin: 10px 0 14px 0; }
+#series-overview { font-size: 26px; line-height: 36px; height: 72px; overflow: hidden; margin: 0 0 24px 0; color: #c5d3e0; }
+#series-seasons { height: 70px; white-space: nowrap; overflow: hidden; margin-bottom: 18px; }
+.season { display: inline-block; padding: 10px 26px; margin-right: 10px; border: 3px solid transparent; border-radius: 30px; background: #141d27; font-size: 28px; color: #9fb0c0; }
+.season.here { color: #fff; background: #25435f; }
+.season.sel { color: #fff; border-color: #fff; background: #2f7fcb; }
+#series-episodes { height: 650px; overflow: hidden; }
+.ep { height: 78px; line-height: 78px; padding: 0 24px; margin-bottom: 8px; border: 3px solid transparent; border-radius: 10px; background: rgba(20,29,39,0.85); white-space: nowrap; overflow: hidden; }
+.ep .num { display: inline-block; width: 70px; color: #7d8fa0; }
+.ep .info { float: right; font-size: 24px; color: #7d8fa0; }
+.ep.none { color: #5d6e7e; background: transparent; }
+.ep.sel { border-color: #fff; background: #2f7fcb; }
+.ep.sel .num, .ep.sel .info { color: #dbe9f6; }
+.ep.none.sel { color: #dbe9f6; background: #25435f; }
+
+/* Player: a title at the top, one scrub line at the bottom */
+#player-top { position: absolute; left: 0; top: 0; width: 1920px; height: 260px; padding: 56px 80px 0 80px; box-sizing: border-box;
+  background: -webkit-linear-gradient(top, rgba(0,0,0,0.8), rgba(0,0,0,0)); background: linear-gradient(to bottom, rgba(0,0,0,0.8), rgba(0,0,0,0)); }
+#pt-title { font-size: 46px; font-weight: 600; white-space: nowrap; overflow: hidden; text-shadow: 0 2px 8px #000; }
+#pt-sub { font-size: 30px; color: #d5dfe8; margin-top: 8px; white-space: nowrap; overflow: hidden; text-shadow: 0 2px 8px #000; }
+#player-state { position: absolute; left: 860px; top: 440px; width: 200px; height: 200px; line-height: 200px; border-radius: 100px;
+  text-align: center; font-size: 90px; background: rgba(0,0,0,0.55); display: none; }
+#player-state.on { display: block; }
+#player-state.text { left: 660px; width: 600px; font-size: 40px; border-radius: 20px; height: 120px; line-height: 120px; top: 480px; }
+#player-bottom { position: absolute; left: 0; bottom: 0; width: 1920px; height: 300px; padding: 130px 80px 0 80px; box-sizing: border-box;
+  background: -webkit-linear-gradient(top, rgba(0,0,0,0), rgba(0,0,0,0.88)); background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.88)); }
+#player.idle #player-top, #player.idle #player-bottom { display: none; }
+#pb-line { height: 50px; line-height: 50px; }
+#pb-cur { float: left; width: 190px; font-size: 32px; }
+#pb-total { float: right; width: 190px; text-align: right; font-size: 32px; color: #c5d3e0; }
+#pb-track { position: relative; margin: 20px 200px 0 200px; height: 10px; border-radius: 5px; background: rgba(255,255,255,0.28); }
+#pb-fill { position: absolute; left: 0; top: 0; height: 10px; width: 0; border-radius: 5px; background: #5fb4ff; }
+#pb-knob { position: absolute; top: -9px; left: 0; width: 28px; height: 28px; margin-left: -14px; border-radius: 14px; background: #fff; }
+#player.opts #pb-knob { background: #9fb0c0; }
+#pb-opts { margin-top: 24px; height: 64px; }
+.opt { display: inline-block; padding: 8px 24px; margin-right: 14px; border: 3px solid transparent; border-radius: 28px; background: rgba(20,30,40,0.8); font-size: 26px; color: #c5d3e0; }
+.opt.sel { border-color: #fff; background: #2f7fcb; color: #fff; }
+.opt-hint { float: right; line-height: 56px; font-size: 24px; color: #9fb0c0; }
 
 #toast { display: none; position: absolute; left: 360px; top: 40px; width: 1200px; padding: 20px 30px; box-sizing: border-box;
   border-radius: 10px; background: #7a2630; text-align: center; font-size: 30px; z-index: 5; }

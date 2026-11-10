@@ -38,9 +38,19 @@
 
   // The server stores TMDB's full-size image URL. A grid of those would pull
   // megabytes per poster; TMDB serves fixed smaller widths from the same path.
+  // TVDB (series art) has one small size: the same name with `_t` before the
+  // extension. Any other host's URL is used as it is.
   function sizedImage(url, width) {
     if (!url) return '';
-    return String(url).replace('/t/p/original/', '/t/p/' + width + '/');
+    var u = String(url);
+    if (u.indexOf('/t/p/original/') >= 0) return u.replace('/t/p/original/', '/t/p/' + width + '/');
+    if (u.indexOf('//artworks.thetvdb.com/') >= 0 && !/_t\.[a-z]+$/i.test(u)) return u.replace(/(\.[a-z]+)$/i, '_t$1');
+    return u;
+  }
+
+  function episodeVideoUrl(server, seriesId, episodeId, token) {
+    return apiUrl(server, '/series/' + seriesId + '/episodes/' + episodeId + '/video') +
+      '?apikey=' + encodeURIComponent(token);
   }
 
   function pad2(n) {
@@ -173,6 +183,133 @@
     return next;
   }
 
+  // ---- Finding a title ----------------------------------------------------
+
+  // The key a title sorts and jumps by. The server sends `sort_title`
+  // (lowercase, article dropped); the title is the fallback.
+  function sortKey(item) {
+    return String((item && (item.sort_title || item.title)) || '').toLowerCase();
+  }
+  function byTitle(a, b) {
+    var x = sortKey(a), y = sortKey(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  // 'A'..'Z', or '#' for a digit, a symbol or nothing.
+  function letterOf(item) {
+    var c = sortKey(item).charAt(0).toUpperCase();
+    return c >= 'A' && c <= 'Z' ? c : '#';
+  }
+  var LETTERS = '#ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  // For a list sorted by title: the position of the first item under each
+  // letter. A letter with no titles is absent.
+  function letterIndex(items) {
+    var out = {};
+    for (var i = 0; i < items.length; i++) {
+      var l = letterOf(items[i]);
+      if (!(l in out)) out[l] = i;
+    }
+    return out;
+  }
+  // The nearest letter that has titles, looking from `from` in direction
+  // `step` (1 or -1). Returns `from` when there is none that way.
+  function nextLetter(index, from, step) {
+    var i = LETTERS.indexOf(from);
+    for (i += step; i >= 0 && i < LETTERS.length; i += step) if (LETTERS[i] in index) return LETTERS[i];
+    return from;
+  }
+
+  function plain(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/^ +| +$/g, '');
+  }
+  // Titles that match what was typed on the TV's letter grid. Every typed
+  // word must begin a word of the title, in any order, so "st wa" finds
+  // "Star Wars". Titles that begin with the query come first.
+  function search(items, query, limit) {
+    var q = plain(query), first = [], rest = [], i, j;
+    if (!q) return [];
+    var words = q.split(' ');
+    for (i = 0; i < items.length; i++) {
+      var t = ' ' + plain(items[i].title), ok = true;
+      for (j = 0; j < words.length && ok; j++) ok = t.indexOf(' ' + words[j]) >= 0;
+      if (!ok) continue;
+      (t.indexOf(' ' + q) === 0 ? first : rest).push(items[i]);
+    }
+    var out = first.concat(rest);
+    return limit ? out.slice(0, limit) : out;
+  }
+
+  // ---- Recently added ------------------------------------------------------
+
+  // The new-imports feed has one row per file, so a season that arrived
+  // tonight is twenty rows. Keep the first row of each movie or series, in
+  // feed order (newest first), and leave upgrades of older files out.
+  function recent(rows, limit) {
+    var seen = {}, out = [];
+    for (var i = 0; i < (rows || []).length; i++) {
+      var r = rows[i], key = r.kind + ':' + r.item_id;
+      if (r.upgrade || seen[key]) continue;
+      seen[key] = true;
+      out.push(r);
+      if (limit && out.length >= limit) break;
+    }
+    return out;
+  }
+
+  // ---- Series --------------------------------------------------------------
+
+  function pad2n(n) { return (n < 10 ? '0' : '') + n; }
+  function episodeCode(ep) {
+    return 'S' + pad2n(ep.season) + 'E' + pad2n(ep.number);
+  }
+  // Season numbers that have at least one file, in order, specials (0) last.
+  function seasons(series) {
+    var have = {}, out = [], eps = (series && series.episodes) || [];
+    for (var i = 0; i < eps.length; i++) if (eps[i].file && !have[eps[i].season]) { have[eps[i].season] = true; out.push(eps[i].season); }
+    out.sort(function (a, b) { return (a === 0) - (b === 0) || a - b; });
+    return out;
+  }
+  // The episodes of a season in order. Ones with no file stay in the list
+  // (the page shows them greyed), so a gap in a season is visible.
+  function episodesOf(series, season) {
+    var out = [], eps = (series && series.episodes) || [];
+    for (var i = 0; i < eps.length; i++) if (eps[i].season === season) out.push(eps[i]);
+    out.sort(function (a, b) { return a.number - b.number; });
+    return out;
+  }
+  // The next episode with a file after `ep`: later in its season, then the
+  // first of a later season. Specials are never "next". null at the end.
+  function nextEpisode(series, ep) {
+    var all = [], eps = (series && series.episodes) || [];
+    for (var i = 0; i < eps.length; i++) if (eps[i].file && eps[i].season > 0) all.push(eps[i]);
+    all.sort(function (a, b) { return a.season - b.season || a.number - b.number; });
+    for (i = 0; i < all.length; i++) {
+      if (all[i].season > ep.season || (all[i].season === ep.season && all[i].number > ep.number)) return all[i];
+    }
+    return null;
+  }
+  // How many episodes of a summary-view series have a file.
+  function importedCount(series) {
+    var n = 0, eps = (series && series.episodes) || [];
+    for (var i = 0; i < eps.length; i++) if (eps[i].status === 'Imported' || eps[i].file) n++;
+    return n;
+  }
+
+  // ---- Skipping with the arrows --------------------------------------------
+
+  // How far one more press of Left or Right skips. A held key repeats: the
+  // step grows so a long hold crosses a film in seconds, not minutes.
+  function skipStep(repeats) {
+    return repeats < 6 ? 10000 : repeats < 16 ? 30000 : 60000;
+  }
+
+  // A horizontal row draws `visible` tiles. Return the first tile to draw so
+  // the selected one shows, moving as little as possible.
+  function rowLeft(selected, visible, left) {
+    if (selected < left) return selected;
+    if (selected >= left + visible) return selected - visible + 1;
+    return left;
+  }
+
   function escapeHtml(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -183,6 +320,10 @@
     fmtTime: fmtTime, fmtRuntime: fmtRuntime, seekTarget: seekTarget,
     canDecodeAudio: canDecodeAudio, langMatches: langMatches, audioTracks: audioTracks,
     pickAudio: pickAudio, audioLabel: audioLabel, playable: playable, mediaSummary: mediaSummary,
-    gridTop: gridTop, gridMove: gridMove, escapeHtml: escapeHtml
+    gridTop: gridTop, gridMove: gridMove, escapeHtml: escapeHtml,
+    episodeVideoUrl: episodeVideoUrl, sortKey: sortKey, byTitle: byTitle, letterOf: letterOf, LETTERS: LETTERS,
+    letterIndex: letterIndex, nextLetter: nextLetter, search: search, recent: recent,
+    episodeCode: episodeCode, seasons: seasons, episodesOf: episodesOf, nextEpisode: nextEpisode,
+    importedCount: importedCount, skipStep: skipStep, rowLeft: rowLeft
   };
 });

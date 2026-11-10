@@ -7,3 +7,4 @@ signature1.xml
 .buildResult/
 # A developer's own server address and hooks. Never committed.
 /js/dev.local.js
+/node_modules/

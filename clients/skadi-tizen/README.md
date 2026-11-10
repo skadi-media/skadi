@@ -24,14 +24,27 @@ Built and tested on a 2017 set (Tizen 3.0). That sets the rules for the code:
 | `js/core.js` | Pure logic, shared by the TV and the tests. |
 | `js/app.js` | Views, remote keys, the player. |
 | `test/` | Unit tests for `core.js`. |
-| `tools/build.sh` | Packages `build/Skadi.wgt`. |
+| `tools/build.sh` | Packages `build/wgt/Skadi.wgt`. |
+| `tools/shots.mjs` | Screenshot harness: the app in desktop Chrome with a fake server and player. |
 | `tools/sdb-relay.py` | Workaround for `sdb connect` failing on macOS. |
 
 ## Tests
 
 ```sh
-node --test test/
+npm test
 ```
+
+## Screenshots without a TV
+
+```sh
+npm install     # once
+npm run shots   # pictures in build/shots/, plus a few flow checks
+```
+
+The harness serves the app to desktop Chrome with a made-up library and a fake
+Samsung player, presses remote keys and saves a picture of each view. It is for
+layout and flow. Desktop Chrome is years newer than the TV's engine, so it does
+not prove a page works on the TV.
 
 ## Toolchain
 
@@ -68,8 +81,8 @@ node --test test/
 ## Build, install, run
 
 ```sh
-tools/build.sh                       # build/Skadi.wgt, signed with profile `skadidev`
-tizen install -n Skadi.wgt -t <target> -- build
+tools/build.sh                       # build/wgt/Skadi.wgt, signed with profile `skadidev`
+tizen install -n Skadi.wgt -t <target> -- build/wgt
 tizen run -p SkadiTizen.Skadi -t <target>
 ```
 

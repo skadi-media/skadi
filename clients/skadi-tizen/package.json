@@ -1,0 +1,12 @@
+{
+  "name": "skadi-tizen",
+  "private": true,
+  "description": "Skadi for Samsung TV. The app itself has no dependencies; these are for the tests and the screenshot harness.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "shots": "node tools/shots.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.50.0"
+  }
+}

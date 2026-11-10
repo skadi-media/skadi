@@ -85,16 +85,13 @@ pub fn ShortcutsHost() -> impl IntoView {
             .is_some();
         let allowed = !dialog_open && crate::a11y::shortcut_event(&ev);
         match shortcut_for(&ev.key(), allowed) {
-            Some(Shortcut::FocusSearch) => {
-                if focus_search() {
-                    ev.prevent_default();
-                }
-            }
+            Some(Shortcut::FocusSearch) if focus_search() => ev.prevent_default(),
             Some(Shortcut::Help) => {
                 ev.prevent_default();
                 open.set(true);
             }
-            None => {}
+            // No search box on this page to focus: leave the key alone.
+            Some(Shortcut::FocusSearch) | None => {}
         }
     });
     on_cleanup(move || keys.remove());

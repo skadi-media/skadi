@@ -21,10 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -79,10 +79,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -102,10 +102,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -142,10 +142,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -185,10 +185,10 @@ jobs:
                       /opt/hostedtoolcache/CodeQL
           df -h / | tail -1
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -234,10 +234,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -274,10 +274,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
           components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
@@ -314,10 +314,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -336,10 +336,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.93
+      - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.95"
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2

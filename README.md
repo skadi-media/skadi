@@ -8,7 +8,7 @@ This project uses [angreal](https://github.com/angreal/angreal) for task automat
 
 ### Prerequisites
 
-- Rust 1.93+
+- Rust 1.95+
 - [angreal](https://github.com/angreal/angreal) (`pip install angreal`)
 - [pre-commit](https://pre-commit.com/) (`pip install pre-commit`)
 

@@ -522,7 +522,7 @@ async fn list_sessions(
         let received = received_bytes(&dir).await;
         out.push(view_of(&m, received));
     }
-    out.sort_by(|a, b| a.opened_at.cmp(&b.opened_at));
+    out.sort_by_key(|a| a.opened_at);
     Ok(Json(out))
 }
 

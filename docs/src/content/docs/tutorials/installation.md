@@ -13,4 +13,4 @@ cargo install --path crates/skadi-cli
 
 ## Prerequisites
 
-- Rust 1.93+
+- Rust 1.95+

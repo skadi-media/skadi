@@ -150,13 +150,182 @@ pub async fn serve_with_schemas(
     tracing::info!("skadi-api listening on {addr}");
     crate::appdist::advertise_mdns(addr.port());
 
-    let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async move { cancel.cancelled().await })
-        .await
-        .map_err(|e| AppError::Internal(format!("axum server error: {e}")));
+    let result = serve_listener(listener, app, cancel).await;
     // Send mDNS goodbye packets so clients drop us immediately (SKADI-T-0346).
     tokio::task::spawn_blocking(crate::appdist::shutdown_mdns)
         .await
         .ok();
     result
+}
+
+/// Serve `app` on `listener` until `cancel` fires, then wait for the open
+/// connections to finish.
+///
+/// This is the loop `axum::serve` runs, written out for one reason
+/// (SKADI-T-0756): HTTP/1.1 response header names go out in Title-Case
+/// (`Content-Range`, not `content-range`). Header names are case-insensitive
+/// and every ordinary client treats them so, but the HTTP client in Samsung's
+/// TV player does not: given lowercase names it plays a file and silently
+/// refuses every seek, because it never learns the server takes ranges.
+/// `axum::serve` has no way to set the hyper option that fixes this.
+pub async fn serve_listener(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder;
+    use hyper_util::server::graceful::GracefulShutdown;
+    use hyper_util::service::TowerToHyperService;
+
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder.http1().title_case_headers(true);
+    let graceful = GracefulShutdown::new();
+
+    loop {
+        let stream = tokio::select! {
+            () = cancel.cancelled() => break,
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _peer)) => stream,
+                Err(e) => {
+                    // A peer that went away between SYN and accept is its
+                    // problem, not ours. Anything else (out of file
+                    // descriptors, most likely) will not clear by retrying at
+                    // once: wait, so the loop does not spin a core.
+                    if !matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    ) {
+                        tracing::error!("accept error: {e}");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    continue;
+                }
+            },
+        };
+        let conn = builder
+            .serve_connection_with_upgrades(
+                TokioIo::new(stream),
+                TowerToHyperService::new(app.clone()),
+            )
+            .into_owned();
+        let conn = graceful.watch(conn);
+        tokio::spawn(async move {
+            // A connection error is a client that hung up or sent garbage;
+            // the access log already has every request that got as far as one.
+            let _ = conn.await;
+        });
+    }
+
+    // Stop accepting, then let requests in flight finish, as `axum::serve`
+    // with a graceful shutdown did.
+    drop(listener);
+    graceful.shutdown().await;
+    Ok(())
+}
+
+#[cfg(test)]
+mod serve_listener_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn start() -> (
+        std::net::SocketAddr,
+        tokio_util::sync::CancellationToken,
+        tokio::task::JoinHandle<Result<()>>,
+    ) {
+        // A fallback, not a route: the OpenAPI drift test reads every route
+        // in this crate's source and would ask for this one to be documented.
+        let app = Router::new().fallback(|| async {
+            (
+                axum::http::StatusCode::PARTIAL_CONTENT,
+                [
+                    (axum::http::header::ACCEPT_RANGES, "bytes"),
+                    (axum::http::header::CONTENT_RANGE, "bytes 0-3/4"),
+                    (axum::http::header::CONTENT_TYPE, "video/mp4"),
+                ],
+                "data",
+            )
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let task = tokio::spawn(serve_listener(listener, app, cancel.clone()));
+        (addr, cancel, task)
+    }
+
+    /// The names as they are on the wire. A client library would hide the
+    /// case, which is the whole subject, so this reads the socket.
+    #[tokio::test]
+    async fn response_header_names_are_title_case_on_the_wire() {
+        let (addr, cancel, task) = start().await;
+        let mut sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+        sock.write_all(
+            b"GET /file HTTP/1.1\r\nHost: x\r\nRange: bytes=0-\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut raw = Vec::new();
+        sock.read_to_end(&mut raw).await.unwrap();
+        let raw = String::from_utf8_lossy(&raw);
+        let head = raw.split("\r\n\r\n").next().unwrap();
+
+        assert!(head.starts_with("HTTP/1.1 206"), "{head}");
+        for name in [
+            "Accept-Ranges",
+            "Content-Range",
+            "Content-Length",
+            "Content-Type",
+        ] {
+            assert!(
+                head.lines().any(|l| l.starts_with(&format!("{name}: "))),
+                "no `{name}` header in:\n{head}"
+            );
+        }
+        assert!(
+            !head
+                .lines()
+                .skip(1)
+                .any(|l| l.starts_with(char::is_lowercase)),
+            "a lowercase header name in:\n{head}"
+        );
+
+        cancel.cancel();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_ends_the_server_and_frees_the_port() {
+        let (addr, cancel, task) = start().await;
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the server did not stop")
+            .unwrap()
+            .unwrap();
+        assert!(tokio::net::TcpStream::connect(addr).await.is_err());
+    }
+
+    /// Graceful shutdown closes idle keep-alive connections; it does not wait
+    /// for the client to hang up.
+    #[tokio::test]
+    async fn an_idle_keep_alive_connection_does_not_block_shutdown() {
+        let (addr, cancel, task) = start().await;
+        let mut sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+        sock.write_all(b"GET /file HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 512];
+        let n = sock.read(&mut buf).await.unwrap();
+        assert!(n > 0);
+        // The connection is still open and idle. Shutdown must not wait on it.
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("an idle connection held the server open")
+            .unwrap()
+            .unwrap();
+    }
 }

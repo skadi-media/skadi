@@ -72,6 +72,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }
+# The connection loop behind `skadi_api::serve` (SKADI-T-0756): `axum::serve`
+# does not expose hyper's HTTP/1 options, and one of them is needed.
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio", "http1"] }
 
 # Credential encryption
 chacha20poly1305 = "0.10"

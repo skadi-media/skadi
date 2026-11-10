@@ -39,6 +39,7 @@ tokio-util = { workspace = true }
 reqwest = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+hyper-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Redaction patterns for text the API serves (SKADI-T-0685).

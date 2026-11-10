@@ -1,0 +1,185 @@
+/* The TV's engine is Chromium M47: flexbox yes, CSS grid no, custom
+   properties no. Sizes are for the 1920x1080 page the TV gives a web app. */
+html, body {
+  margin: 0; width: 1920px; height: 1080px; overflow: hidden;
+  background: #0b1016; color: #e8edf2;
+  font-family: "SamsungOne", "Samsung Sharp Sans", Arial, sans-serif; font-size: 30px;
+}
+body.playing { background: transparent; }
+#av { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 0; }
+#screen { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 1; }
+.view { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #0b1016; overflow: hidden; }
+/* The TV shows the video plane through any part of the page that has no
+   background of its own, even when nothing plays: the last frame of the last
+   film stays there. So every view is opaque, except the player. */
+#player { background: transparent; }
+.view.on { display: block; }
+h1 { font-weight: 600; margin: 0; }
+.meta { color: #9fb0c0; }
+.backdrop { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background-size: cover; background-position: center; opacity: 0.2; }
+
+/* Sign in */
+#setup.on { display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
+  -webkit-align-items: center; align-items: center; -webkit-justify-content: center; justify-content: center; }
+#setup h1 { font-size: 72px; margin-bottom: 50px; text-align: center; }
+#setup h1 svg { width: 76px; height: 76px; vertical-align: middle; margin-right: 22px; fill: none; stroke: #5fb4ff; stroke-width: 2; stroke-linecap: round; }
+#setup h1 span { vertical-align: middle; }
+.field { width: 1100px; box-sizing: content-box; padding: 14px 20px; margin-bottom: 14px; border: 4px solid transparent; border-radius: 10px; }
+.field[data-field="go"] { text-align: center; margin-top: 16px; }
+.field.sel { border-color: #5fb4ff; background: #16212d; }
+.field label { display: inline-block; width: 260px; color: #9fb0c0; }
+.field input { width: 780px; font-size: 34px; padding: 10px 14px; border: 0; border-radius: 6px; background: #e8edf2; color: #0b1016; }
+.btn { display: inline-block; padding: 14px 44px; border-radius: 8px; background: #25435f; font-size: 34px; }
+.field.sel .btn { background: #2f7fcb; }
+.hint { color: #7d8fa0; font-size: 26px; margin-top: 30px; }
+
+/* The menu on the left: a strip of icons, opening over the page when it has the focus */
+#shell { background: #08090b; }
+#rail { position: absolute; left: 0; top: 0; width: 100px; height: 1080px; padding-top: 50px; box-sizing: border-box; z-index: 3; overflow: hidden; background: #08090b; }
+#rail.open { width: 420px; background: -webkit-linear-gradient(left, #08090b 62%, rgba(8,9,11,0)); background: linear-gradient(to right, #08090b 62%, rgba(8,9,11,0)); }
+#shell.menu .pane { opacity: 0.3; }
+#rail .brand { height: 60px; line-height: 60px; font-size: 44px; font-weight: 700; color: #5fb4ff; padding-left: 24px; margin-bottom: 70px; white-space: nowrap; }
+#rail .brand svg { width: 52px; height: 52px; vertical-align: middle; margin-right: 18px; fill: none; stroke: #5fb4ff; stroke-width: 2; stroke-linecap: round; }
+#rail .brand span { vertical-align: middle; }
+#rail:not(.open) .brand span { display: none; }
+.rail-item { height: 76px; line-height: 76px; margin: 0 0 14px 14px; padding-left: 20px; width: 220px; border-radius: 10px; font-size: 32px; color: #7d8fa0; white-space: nowrap; box-sizing: border-box; }
+.rail-item svg { width: 34px; height: 34px; vertical-align: middle; margin-right: 26px; fill: none; stroke: #7d8fa0; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.rail-item span { vertical-align: middle; }
+#rail:not(.open) .rail-item { width: 72px; }
+#rail:not(.open) .rail-item span { display: none; }
+.rail-item.here { color: #fff; }
+.rail-item.here svg { stroke: #fff; }
+.rail-item.sel { color: #fff; background: #2f7fcb; }
+.rail-item.sel svg { stroke: #fff; }
+.pane { display: none; position: absolute; left: 100px; top: 0; width: 1820px; height: 1080px; overflow: hidden; }
+.pane.on { display: block; }
+
+/* A poster tile. Rows and grids show the poster alone; the band names it. */
+.tile { float: left; width: 190px; height: 285px; margin: 0 16px 16px 0; }
+.tile .art { position: relative; width: 190px; height: 285px; border: 4px solid transparent; border-radius: 8px; background: #18222d; overflow: hidden; box-sizing: border-box; opacity: 0.82; }
+.tile img { width: 100%; height: 100%; display: block; }
+.tile.sel .art { border-color: #fff; opacity: 1; }
+.tile .blank { padding: 18px 12px; font-size: 24px; line-height: 32px; color: #9fb0c0; }
+/* With its name underneath, for search. */
+.tile.cap { height: 372px; }
+.tile .name { height: 66px; overflow: hidden; margin-top: 8px; font-size: 22px; line-height: 28px; color: #9fb0c0; text-align: center; }
+.tile .name small { display: block; font-size: 20px; color: #7d8fa0; }
+.tile.sel .name { color: #fff; }
+/* How much of it has been watched, along the bottom of the poster. */
+.tile .seen { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 7px; border-radius: 4px; background: rgba(0,0,0,0.7); }
+.tile .seen div { height: 7px; border-radius: 4px; background: #5fb4ff; }
+.tile .tick, .seen-tick { color: #7ddc8a; }
+.tile .tick { position: absolute; right: 6px; top: 6px; width: 40px; height: 40px; line-height: 40px; border-radius: 20px; text-align: center; font-size: 26px; background: rgba(0,0,0,0.7); }
+.seen-tick { margin-left: 18px; }
+.ep.sel .seen-tick { color: #fff; }
+/* The two buttons of a Continue watching tile, over its poster. */
+.tile .menu { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(8,9,11,0.84); }
+.tile .menu div { height: 70px; line-height: 70px; margin: 48px 10px 0 10px; border: 3px solid transparent; border-radius: 10px; text-align: center; font-size: 24px; background: #1d2b3a; color: #c5d3e0; }
+.tile .menu div + div { margin-top: 18px; }
+.tile .menu .sel { border-color: #fff; background: #2f7fcb; color: #fff; }
+.empty { color: #7d8fa0; padding: 40px 60px; }
+
+/* The band: the selected title, large, over its backdrop */
+.band { position: relative; width: 1820px; height: 560px; overflow: hidden; }
+.band-art { position: absolute; right: 0; top: 0; width: 1240px; height: 560px; background-size: cover; background-position: center top; }
+.band-shade { position: absolute; left: 0; top: 0; width: 1820px; height: 560px;
+  background: -webkit-linear-gradient(left, #08090b 32%, rgba(8,9,11,0.55) 58%, rgba(8,9,11,0) 85%); background: linear-gradient(to right, #08090b 32%, rgba(8,9,11,0.55) 58%, rgba(8,9,11,0) 85%); }
+.band-fade { position: absolute; left: 0; bottom: 0; width: 1820px; height: 200px;
+  background: -webkit-linear-gradient(top, rgba(8,9,11,0), #08090b); background: linear-gradient(to bottom, rgba(8,9,11,0), #08090b); }
+.band-text { position: absolute; left: 60px; top: 84px; width: 900px; }
+.band-tag { height: 40px; font-size: 26px; font-weight: 600; color: #5fb4ff; margin-bottom: 10px; white-space: nowrap; overflow: hidden; }
+.band h1 { font-size: 66px; line-height: 76px; max-height: 152px; overflow: hidden; }
+.band .meta { margin: 14px 0 18px 0; font-size: 28px; white-space: nowrap; overflow: hidden; }
+.band p { margin: 0; font-size: 28px; line-height: 40px; max-height: 120px; overflow: hidden; color: #d5dfe8; }
+.band.small, .band.small .band-art, .band.small .band-shade { height: 320px; }
+.band.small .band-fade { height: 120px; }
+.band.small .band-text { top: 34px; }
+.band.small h1 { font-size: 52px; line-height: 62px; max-height: 62px; white-space: nowrap; }
+.band.small .meta { margin: 6px 0 10px 0; }
+.band.small p { max-height: 80px; }
+
+/* Home */
+#rows { position: absolute; left: 60px; top: 548px; width: 1760px; }
+.row { height: 392px; overflow: hidden; }
+.row h2 { font-size: 32px; font-weight: 600; margin: 0 0 14px 4px; height: 44px; line-height: 44px; color: #9fb0c0; white-space: nowrap; }
+.row.sel h2 { color: #fff; }
+.row h2 small { font-size: 24px; font-weight: 400; color: #9fb0c0; margin-left: 26px; }
+.row .tiles { width: 1900px; height: 301px; overflow: hidden; }
+
+/* Movies and TV */
+#grid { position: absolute; left: 60px; top: 326px; width: 1660px; height: 760px; overflow: hidden; }
+#letters { position: absolute; left: 1732px; top: 330px; width: 64px; }
+.letter { height: 27px; line-height: 27px; text-align: center; font-size: 21px; color: #4c5b69; border-radius: 6px; }
+.letter.has { color: #9fb0c0; }
+.letter.here { color: #fff; background: #25435f; }
+.letter.sel { color: #fff; background: #2f7fcb; }
+
+/* Search */
+#search-left { position: absolute; left: 60px; top: 60px; width: 580px; }
+#search-text { height: 76px; line-height: 76px; padding: 0 20px; margin-bottom: 26px; border-radius: 8px; background: #16212d; font-size: 36px; white-space: nowrap; overflow: hidden; }
+#search-text .ph { color: #5d6e7e; }
+.key { float: left; width: 84px; height: 84px; line-height: 84px; margin: 0 10px 10px 0; text-align: center; font-size: 34px; border: 3px solid transparent; border-radius: 8px; background: #141d27; box-sizing: border-box; }
+.key.wide { width: 178px; font-size: 26px; }
+.key.sel { border-color: #fff; background: #2f7fcb; }
+#search-right { position: absolute; left: 700px; top: 60px; width: 1040px; height: 1020px; overflow: hidden; }
+#search-head { height: 76px; line-height: 76px; margin-bottom: 26px; color: #9fb0c0; white-space: nowrap; overflow: hidden; }
+#search-results { width: 1040px; height: 920px; overflow: hidden; }
+
+/* Movie page */
+#detail-body { position: absolute; left: 100px; top: 110px; width: 1720px; }
+#detail-poster { float: left; width: 400px; height: 600px; border-radius: 12px; background: #18222d; }
+#detail-text { margin-left: 460px; }
+#detail-title { font-size: 64px; line-height: 74px; max-height: 148px; overflow: hidden; }
+#detail-meta { margin: 18px 0 26px 0; }
+#detail-overview { font-size: 30px; line-height: 42px; max-height: 336px; overflow: hidden; margin: 0 0 40px 0; }
+.action { display: inline-block; padding: 18px 40px; margin: 0 20px 20px 0; border: 4px solid transparent; border-radius: 10px; background: #1d2b3a; font-size: 34px; }
+.action.sel { border-color: #fff; background: #2f7fcb; }
+.action small { display: block; font-size: 22px; color: #c5d3e0; margin-top: 4px; }
+
+/* Series page */
+#series-poster { position: absolute; left: 90px; top: 90px; width: 320px; height: 480px; border-radius: 12px; background: #18222d; }
+#series-text { position: absolute; left: 460px; top: 84px; width: 1370px; }
+#series-title { font-size: 58px; line-height: 68px; height: 68px; overflow: hidden; white-space: nowrap; }
+#series-meta { margin: 10px 0 14px 0; }
+#series-overview { font-size: 26px; line-height: 36px; height: 72px; overflow: hidden; margin: 0 0 24px 0; color: #c5d3e0; }
+#series-seasons { height: 70px; white-space: nowrap; overflow: hidden; margin-bottom: 18px; }
+.season { display: inline-block; padding: 10px 26px; margin-right: 10px; border: 3px solid transparent; border-radius: 30px; background: #141d27; font-size: 28px; color: #9fb0c0; }
+.season.here { color: #fff; background: #25435f; }
+.season.sel { color: #fff; border-color: #fff; background: #2f7fcb; }
+#series-episodes { height: 650px; overflow: hidden; }
+.ep { height: 78px; line-height: 78px; padding: 0 24px; margin-bottom: 8px; border: 3px solid transparent; border-radius: 10px; background: rgba(20,29,39,0.85); white-space: nowrap; overflow: hidden; }
+.ep .num { display: inline-block; width: 70px; color: #7d8fa0; }
+.ep .info { float: right; font-size: 24px; color: #7d8fa0; }
+.ep.none { color: #5d6e7e; background: transparent; }
+.ep.sel { border-color: #fff; background: #2f7fcb; }
+.ep.sel .num, .ep.sel .info { color: #dbe9f6; }
+.ep.none.sel { color: #dbe9f6; background: #25435f; }
+
+/* Player: a title at the top, one scrub line at the bottom */
+#player-top { position: absolute; left: 0; top: 0; width: 1920px; height: 260px; padding: 56px 80px 0 80px; box-sizing: border-box;
+  background: -webkit-linear-gradient(top, rgba(0,0,0,0.8), rgba(0,0,0,0)); background: linear-gradient(to bottom, rgba(0,0,0,0.8), rgba(0,0,0,0)); }
+#pt-title { font-size: 46px; font-weight: 600; white-space: nowrap; overflow: hidden; text-shadow: 0 2px 8px #000; }
+#pt-sub { font-size: 30px; color: #d5dfe8; margin-top: 8px; white-space: nowrap; overflow: hidden; text-shadow: 0 2px 8px #000; }
+#player-state { position: absolute; left: 860px; top: 440px; width: 200px; height: 200px; line-height: 200px; border-radius: 100px;
+  text-align: center; font-size: 90px; background: rgba(0,0,0,0.55); display: none; }
+#player-state.on { display: block; }
+#player-state.text { left: 660px; width: 600px; font-size: 40px; border-radius: 20px; height: 120px; line-height: 120px; top: 480px; }
+#player-bottom { position: absolute; left: 0; bottom: 0; width: 1920px; height: 300px; padding: 130px 80px 0 80px; box-sizing: border-box;
+  background: -webkit-linear-gradient(top, rgba(0,0,0,0), rgba(0,0,0,0.88)); background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.88)); }
+#player.idle #player-top, #player.idle #player-bottom { display: none; }
+#pb-line { height: 50px; line-height: 50px; }
+#pb-cur { float: left; width: 190px; font-size: 32px; }
+#pb-total { float: right; width: 190px; text-align: right; font-size: 32px; color: #c5d3e0; }
+#pb-track { position: relative; margin: 20px 200px 0 200px; height: 10px; border-radius: 5px; background: rgba(255,255,255,0.28); }
+#pb-fill { position: absolute; left: 0; top: 0; height: 10px; width: 0; border-radius: 5px; background: #5fb4ff; }
+#pb-knob { position: absolute; top: -9px; left: 0; width: 28px; height: 28px; margin-left: -14px; border-radius: 14px; background: #fff; }
+#player.opts #pb-knob { background: #9fb0c0; }
+#pb-opts { margin-top: 24px; height: 64px; }
+.opt { display: inline-block; padding: 8px 24px; margin-right: 14px; border: 3px solid transparent; border-radius: 28px; background: rgba(20,30,40,0.8); font-size: 26px; color: #c5d3e0; }
+.opt.sel { border-color: #fff; background: #2f7fcb; color: #fff; }
+.opt-hint { float: right; line-height: 56px; font-size: 24px; color: #9fb0c0; }
+
+#toast { display: none; position: absolute; left: 360px; top: 40px; width: 1200px; padding: 20px 30px; box-sizing: border-box;
+  border-radius: 10px; background: #7a2630; text-align: center; font-size: 30px; z-index: 5; }
+#toast.on { display: block; }
+#toast.info { background: #1d3a57; }

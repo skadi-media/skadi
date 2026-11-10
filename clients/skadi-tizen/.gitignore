@@ -1,0 +1,10 @@
+# Build output and signing by-products of the `tizen` CLI.
+/build/
+*.wgt
+author-signature.xml
+signature1.xml
+.manifest.tmp
+.buildResult/
+# A developer's own server address and hooks. Never committed.
+/js/dev.local.js
+/node_modules/

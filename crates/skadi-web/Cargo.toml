@@ -24,7 +24,11 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 gloo-net = { version = "0.6", features = ["http"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-wasm-bindgen = "0.2"
+# Pinned exactly (SKADI-T-0759). trunk downloads the prebuilt wasm-bindgen CLI
+# of this version when the image is built, and the arm64 binary of 0.2.130
+# needs glibc 2.38; the builder image is Debian bookworm, glibc 2.36. Raise
+# this together with the builder's base image.
+wasm-bindgen = "=0.2.129"
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [

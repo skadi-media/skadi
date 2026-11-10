@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-11-10
+
+0.1.13 was tagged but has no `skadi` image: use this release.
+
+### Fixed
+- The arm64 `skadi` image did not build. The web UI's lock file held wasm-bindgen 0.2.130, whose prebuilt arm64 tool needs a newer glibc than the image builder has. It is pinned to 0.2.129, the version 0.1.12 was built with (SKADI-T-0759).
+
 ## [0.1.13] - 2026-11-10
 
 ### Added

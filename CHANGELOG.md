@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - A Samsung TV could play a file but not skip through it. Its HTTP client reads response header names case-sensitively and did not see `accept-ranges` and `content-range`. HTTP/1.1 responses now carry Title-Case header names (SKADI-T-0756).
+- The arm64 `skadi` image did not build. The web UI's lock file held wasm-bindgen 0.2.130, whose prebuilt arm64 tool needs a newer glibc than the image builder has. It is pinned to 0.2.129, the version 0.1.12 was built with (SKADI-T-0759).
 
 ### Changed
 - Rust 1.95. `Cargo.lock` is committed, for the workspace and for the web and worker crates, so a new release of a dependency can no longer break CI on its own (SKADI-T-0757).

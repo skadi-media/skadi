@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-11-10
+
+### Added
+- Skadi for Samsung TV: a Tizen app in `clients/skadi-tizen` (COLLIERY-I-0673, SKADI-T-0758). Sign in once; Home with Continue watching, recently added and rows by genre; Movies and TV grids with a letter strip; search; a series page; a player that uses the TV's own decoder. It is installed in the TV's developer mode and is not part of the images.
+
+### Fixed
+- A Samsung TV could play a file but not skip through it. Its HTTP client reads response header names case-sensitively and did not see `accept-ranges` and `content-range`. HTTP/1.1 responses now carry Title-Case header names (SKADI-T-0756).
+
+### Changed
+- Rust 1.95. `Cargo.lock` is committed, for the workspace and for the web and worker crates, so a new release of a dependency can no longer break CI on its own (SKADI-T-0757).
+
 ## [0.1.12] - 2026-10-25
 
 ### Added

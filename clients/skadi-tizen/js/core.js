@@ -325,6 +325,21 @@
     if (!worthSaving(entry.pos)) return (list || []).slice();
     return [entry].concat(withoutProgress(list, entry.key)).slice(0, PROGRESS_MAX);
   }
+  // Put `entry` at the front whatever its position: the next episode of a
+  // series, waiting at its start after the one before it was finished.
+  function queueNext(list, entry) {
+    return [entry].concat(withoutProgress(list, entry.key)).slice(0, PROGRESS_MAX);
+  }
+  // What the Continue watching tile says under the title.
+  function progressLabel(entry) {
+    var where = entry.pos > 0 ? leftLabel(entry.pos, entry.dur) : 'Up next';
+    return entry.kind === 'episode' ? entry.sub + '  \u00b7  ' + where : where;
+  }
+  // Watched things are remembered by one key each: a movie by its id, an
+  // episode by its own id (not its series).
+  function watchedKey(kind, id, part) {
+    return kind === 'movie' ? 'movie:' + id : 'episode:' + part;
+  }
   function findProgress(list, key, part) {
     for (var i = 0; i < (list || []).length; i++) {
       if (list[i].key === key && (part === undefined || list[i].part === part)) return list[i];
@@ -343,7 +358,7 @@
     if (!raw || !raw.length) return out;
     for (var i = 0; i < raw.length; i++) {
       var e = raw[i];
-      if (e && e.key && e.id && e.part && (e.kind === 'movie' || e.kind === 'episode') && e.pos > 0 && e.dur > 0) out.push(e);
+      if (e && e.key && e.id && e.part && (e.kind === 'movie' || e.kind === 'episode') && e.pos >= 0 && e.dur >= 0) out.push(e);
     }
     return out;
   }
@@ -380,6 +395,7 @@
     episodeCode: episodeCode, seasons: seasons, episodesOf: episodesOf, nextEpisode: nextEpisode,
     importedCount: importedCount, skipStep: skipStep, rowLeft: rowLeft,
     progressKey: progressKey, worthSaving: worthSaving, isFinished: isFinished, saveProgress: saveProgress,
-    withoutProgress: withoutProgress, findProgress: findProgress, leftLabel: leftLabel, readProgress: readProgress
+    withoutProgress: withoutProgress, findProgress: findProgress, leftLabel: leftLabel, readProgress: readProgress,
+    queueNext: queueNext, progressLabel: progressLabel, watchedKey: watchedKey
   };
 });

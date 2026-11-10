@@ -296,3 +296,21 @@ test('readProgress survives missing, broken and foreign storage', () => {
   const good = entry('movie', 'm1', 'e1', 600000);
   assert.deepEqual(C.readProgress(JSON.stringify([good, { key: 'x' }, null, 7])), [good]);
 });
+
+test('queueNext puts the next episode first, at its start, in place of the last', () => {
+  const list = [entry('movie', 'm1', 'e1', 600000), entry('episode', 's1', 'ep1', 2000000)];
+  const out = C.queueNext(list, { ...entry('episode', 's1', 'ep2', 0, 0), sub: 'S01E02' });
+  assert.deepEqual(out.map((e) => [e.part, e.pos]), [['ep2', 0], ['e1', 600000]]);
+  assert.deepEqual(C.readProgress(JSON.stringify(out)).length, 2); // a waiting episode survives storage
+});
+
+test('progressLabel', () => {
+  assert.equal(C.progressLabel({ kind: 'movie', pos: 600000, dur: 4920000 }), '1 h 12 min left');
+  assert.equal(C.progressLabel({ kind: 'episode', sub: 'S01E02', pos: 0, dur: 0 }), 'S01E02  \u00b7  Up next');
+  assert.equal(C.progressLabel({ kind: 'episode', sub: 'S01E02', pos: 600000, dur: 2400000 }), 'S01E02  \u00b7  30 min left');
+});
+
+test('watchedKey: a movie by its id, an episode by its own id', () => {
+  assert.equal(C.watchedKey('movie', 'm1', 'e1'), 'movie:m1');
+  assert.equal(C.watchedKey('episode', 's1', 'ep7'), 'episode:ep7');
+});

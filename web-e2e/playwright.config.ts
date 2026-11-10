@@ -29,8 +29,11 @@ export default defineConfig({
     command: "bash run-harness.sh",
     cwd: __dirname,
     url: BASE_URL,
-    // First run compiles the web (wasm) + the harness — allow plenty of time.
-    timeout: 300_000,
+    // A cold run compiles the web UI (wasm) and then the harness. On a CI
+    // runner with no build cache that is over five minutes, and the cache is
+    // cold whenever the web UI's dependencies change, which is exactly when a
+    // release is being fixed (SKADI-T-0759). The job has its own time limit.
+    timeout: 900_000,
     reuseExistingServer: !process.env.CI,
     stdout: "pipe",
     stderr: "pipe",

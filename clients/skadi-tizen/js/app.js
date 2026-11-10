@@ -217,9 +217,11 @@
     ['tv', 'TV', '<path d="M3 6 H29 V23 H3 Z M11 28 H21 M16 23 V28"/>'],
     ['search', 'Search', '<path d="M14 4 A10 10 0 1 0 14 24 A10 10 0 1 0 14 4 M21 21 L29 29"/>']
   ];
+  // The Skadi mark: the six-point snowflake of the web UI (three crossing strokes).
+  var MARK = '<svg viewBox="0 0 24 24"><path d="M12 3 V21 M4.2 7.5 L19.8 16.5 M19.8 7.5 L4.2 16.5"/></svg>';
   var shell = { pane: 'home', rail: 0, inRail: false };
   function drawRail() {
-    var html = '<div class="brand">' + (shell.inRail ? 'Skadi' : 'S') + '</div>';
+    var html = '<div class="brand">' + MARK + '<span>Skadi</span></div>';
     for (var i = 0; i < RAIL.length; i++) {
       html += '<div class="rail-item' + (shell.inRail && i === shell.rail ? ' sel' : RAIL[i][0] === shell.pane ? ' here' : '') + '">' +
         '<svg viewBox="0 0 32 32">' + RAIL[i][2] + '</svg><span>' + RAIL[i][1] + '</span></div>';

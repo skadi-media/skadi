@@ -22,6 +22,8 @@ h1 { font-weight: 600; margin: 0; }
 #setup.on { display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
   -webkit-align-items: center; align-items: center; -webkit-justify-content: center; justify-content: center; }
 #setup h1 { font-size: 72px; margin-bottom: 50px; text-align: center; }
+#setup h1 svg { width: 76px; height: 76px; vertical-align: middle; margin-right: 22px; fill: none; stroke: #5fb4ff; stroke-width: 2; stroke-linecap: round; }
+#setup h1 span { vertical-align: middle; }
 .field { width: 1100px; box-sizing: content-box; padding: 14px 20px; margin-bottom: 14px; border: 4px solid transparent; border-radius: 10px; }
 .field[data-field="go"] { text-align: center; margin-top: 16px; }
 .field.sel { border-color: #5fb4ff; background: #16212d; }
@@ -36,7 +38,10 @@ h1 { font-weight: 600; margin: 0; }
 #rail { position: absolute; left: 0; top: 0; width: 100px; height: 1080px; padding-top: 50px; box-sizing: border-box; z-index: 3; overflow: hidden; background: #08090b; }
 #rail.open { width: 420px; background: -webkit-linear-gradient(left, #08090b 62%, rgba(8,9,11,0)); background: linear-gradient(to right, #08090b 62%, rgba(8,9,11,0)); }
 #shell.menu .pane { opacity: 0.3; }
-#rail .brand { height: 60px; line-height: 60px; font-size: 44px; font-weight: 700; color: #5fb4ff; padding-left: 34px; margin-bottom: 70px; }
+#rail .brand { height: 60px; line-height: 60px; font-size: 44px; font-weight: 700; color: #5fb4ff; padding-left: 24px; margin-bottom: 70px; white-space: nowrap; }
+#rail .brand svg { width: 52px; height: 52px; vertical-align: middle; margin-right: 18px; fill: none; stroke: #5fb4ff; stroke-width: 2; stroke-linecap: round; }
+#rail .brand span { vertical-align: middle; }
+#rail:not(.open) .brand span { display: none; }
 .rail-item { height: 76px; line-height: 76px; margin: 0 0 14px 14px; padding-left: 20px; width: 220px; border-radius: 10px; font-size: 32px; color: #7d8fa0; white-space: nowrap; box-sizing: border-box; }
 .rail-item svg { width: 34px; height: 34px; vertical-align: middle; margin-right: 26px; fill: none; stroke: #7d8fa0; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
 .rail-item span { vertical-align: middle; }

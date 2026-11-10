@@ -294,6 +294,60 @@
     return n;
   }
 
+  // ---- Continue watching ---------------------------------------------------
+  //
+  // Where each started film and episode was left, kept on the TV. An entry is
+  // { key, kind: 'movie'|'episode', id, part, title, sub, poster_url, pos, dur, at }:
+  // `id` is the movie or the series, `part` the edition or the episode, `pos`
+  // and `dur` are milliseconds, `at` is when it was saved. The list is newest
+  // first and holds one entry per movie and one per series: the row is for
+  // picking up what you were watching, and that is one episode of a series.
+
+  var PROGRESS_MAX = 30;
+  function progressKey(kind, id) { return kind + ':' + id; }
+  // Too early to be worth remembering: someone looked and left.
+  function worthSaving(pos) { return pos >= 30000; }
+  // The credits. Finished things leave the row.
+  function isFinished(pos, dur) {
+    if (!dur) return false;
+    return pos >= dur * 0.95 || dur - pos < 60000;
+  }
+  function withoutProgress(list, key) {
+    var out = [];
+    for (var i = 0; i < (list || []).length; i++) if (list[i].key !== key) out.push(list[i]);
+    return out;
+  }
+  // The list after saving `entry`: it goes to the front, replacing the same
+  // movie or series. A finished one is removed; one barely started is left
+  // as it was (an earlier position survives a quick look).
+  function saveProgress(list, entry) {
+    if (isFinished(entry.pos, entry.dur)) return withoutProgress(list, entry.key);
+    if (!worthSaving(entry.pos)) return (list || []).slice();
+    return [entry].concat(withoutProgress(list, entry.key)).slice(0, PROGRESS_MAX);
+  }
+  function findProgress(list, key, part) {
+    for (var i = 0; i < (list || []).length; i++) {
+      if (list[i].key === key && (part === undefined || list[i].part === part)) return list[i];
+    }
+    return null;
+  }
+  // "1 h 12 min left", "8 min left"
+  function leftLabel(pos, dur) {
+    var mins = Math.max(1, Math.round((dur - pos) / 60000));
+    return fmtRuntime(mins) + ' left';
+  }
+  // What survives a trip through storage: an array of well-formed entries.
+  function readProgress(text) {
+    var out = [], raw;
+    try { raw = JSON.parse(text); } catch (e) { return out; }
+    if (!raw || !raw.length) return out;
+    for (var i = 0; i < raw.length; i++) {
+      var e = raw[i];
+      if (e && e.key && e.id && e.part && (e.kind === 'movie' || e.kind === 'episode') && e.pos > 0 && e.dur > 0) out.push(e);
+    }
+    return out;
+  }
+
   // ---- Skipping with the arrows --------------------------------------------
 
   // How far one more press of Left or Right skips. A held key repeats: the
@@ -324,6 +378,8 @@
     episodeVideoUrl: episodeVideoUrl, sortKey: sortKey, byTitle: byTitle, letterOf: letterOf, LETTERS: LETTERS,
     letterIndex: letterIndex, nextLetter: nextLetter, search: search, recent: recent,
     episodeCode: episodeCode, seasons: seasons, episodesOf: episodesOf, nextEpisode: nextEpisode,
-    importedCount: importedCount, skipStep: skipStep, rowLeft: rowLeft
+    importedCount: importedCount, skipStep: skipStep, rowLeft: rowLeft,
+    progressKey: progressKey, worthSaving: worthSaving, isFinished: isFinished, saveProgress: saveProgress,
+    withoutProgress: withoutProgress, findProgress: findProgress, leftLabel: leftLabel, readProgress: readProgress
   };
 });

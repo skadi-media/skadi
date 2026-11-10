@@ -236,3 +236,63 @@ test('rowLeft scrolls a row only as far as needed', () => {
   assert.equal(C.rowLeft(6, 6, 0), 1);
   assert.equal(C.rowLeft(2, 6, 4), 2);
 });
+
+const entry = (kind, id, part, pos, dur = 6000000) => ({ key: C.progressKey(kind, id), kind, id, part, pos, dur, at: 1 });
+
+test('saveProgress puts the newest first and keeps one entry per movie or series', () => {
+  let list = [];
+  list = C.saveProgress(list, entry('movie', 'm1', 'e1', 600000));
+  list = C.saveProgress(list, entry('episode', 's1', 'ep1', 600000));
+  list = C.saveProgress(list, entry('movie', 'm1', 'e1', 900000));
+  assert.deepEqual(list.map((e) => [e.key, e.pos]), [['movie:m1', 900000], ['episode:s1', 600000]]);
+  // A later episode of the same series replaces the earlier one.
+  list = C.saveProgress(list, entry('episode', 's1', 'ep2', 300000));
+  assert.deepEqual(list.map((e) => e.part), ['ep2', 'e1']);
+});
+
+test('saveProgress drops a finished title and ignores a quick look', () => {
+  const list = [entry('movie', 'm1', 'e1', 600000)];
+  assert.deepEqual(C.saveProgress(list, entry('movie', 'm1', 'e1', 5900000)), []);
+  assert.deepEqual(C.saveProgress(list, entry('movie', 'm1', 'e1', 5000)).map((e) => e.pos), [600000]);
+  assert.deepEqual(C.saveProgress([], entry('movie', 'm2', 'e1', 5000)), []);
+});
+
+test('saveProgress keeps at most thirty', () => {
+  let list = [];
+  for (let i = 0; i < 40; i++) list = C.saveProgress(list, entry('movie', 'm' + i, 'e', 600000));
+  assert.equal(list.length, 30);
+  assert.equal(list[0].id, 'm39');
+});
+
+test('isFinished: the last twentieth, or the last minute of a short file', () => {
+  assert.equal(C.isFinished(5700000, 6000000), true);
+  assert.equal(C.isFinished(5000000, 6000000), false);
+  assert.equal(C.isFinished(250000, 300000), true);
+  assert.equal(C.isFinished(100, 0), false);
+});
+
+test('findProgress by title, and by the exact file', () => {
+  const list = [entry('episode', 's1', 'ep2', 300000)];
+  assert.equal(C.findProgress(list, 'episode:s1').part, 'ep2');
+  assert.equal(C.findProgress(list, 'episode:s1', 'ep1'), null);
+  assert.equal(C.findProgress(list, 'movie:s1'), null);
+});
+
+test('withoutProgress removes one title', () => {
+  const list = [entry('movie', 'a', 'e', 600000), entry('movie', 'b', 'e', 600000)];
+  assert.deepEqual(C.withoutProgress(list, 'movie:a').map((e) => e.id), ['b']);
+});
+
+test('leftLabel', () => {
+  assert.equal(C.leftLabel(600000, 4920000), '1 h 12 min left');
+  assert.equal(C.leftLabel(2000000, 2500000), '8 min left');
+  assert.equal(C.leftLabel(2499000, 2500000), '1 min left');
+});
+
+test('readProgress survives missing, broken and foreign storage', () => {
+  assert.deepEqual(C.readProgress(null), []);
+  assert.deepEqual(C.readProgress('{not json'), []);
+  assert.deepEqual(C.readProgress('{"a":1}'), []);
+  const good = entry('movie', 'm1', 'e1', 600000);
+  assert.deepEqual(C.readProgress(JSON.stringify([good, { key: 'x' }, null, 7])), [good]);
+});

@@ -325,6 +325,37 @@ await many(KEY.DOWN, 6);
 await shot('search-wide-keys');
 await press(KEY.RIGHT, KEY.RIGHT, KEY.ENTER);
 check('Clear empties the search', (await html('#search-text')) === 'Search movies and TV');
+
+// Continue watching: the film that was left part-way is on Home.
+await press(KEY.BACK, KEY.UP, KEY.UP, KEY.UP, KEY.RIGHT);
+await page.waitForTimeout(300);
+check('Home stays on the row it was left on when a new row appears above', (await html('#pane-home .row.sel h2')) === 'Recently added TV');
+await press(KEY.UP, KEY.UP);
+await shot('home-continue-watching');
+check('a film left part-way is first on Home, under Continue watching', (await html('#pane-home .row:nth-child(1) h2')).startsWith('Continue watching') && (await page.evaluate(() => document.querySelectorAll('#pane-home .row')[0].querySelectorAll('.tile').length)) === 1);
+check('an episode watched for a second is not remembered', !(await page.evaluate(() => localStorage.getItem('progress'))).includes('episode'));
+const left = await page.evaluate(() => JSON.parse(localStorage.getItem('progress'))[0].pos);
+await press(KEY.ENTER);
+await page.waitForTimeout(800);
+await shot('player-resumed');
+check('Enter resumes it where it was left', Math.abs((await facts()).pos - left) < 3000 && left > 15 * 60000);
+await press(KEY.BACK);
+check('Back from a resumed film returns to Home', (await view()) === 'shell' && (await html('#pane-home .row:nth-child(1) h2')).startsWith('Continue watching'));
+await press(KEY.UP);
+await shot('home-remove');
+await press(KEY.DOWN);
+check('Down leaves the Remove button without removing', (await page.evaluate(() => JSON.parse(localStorage.getItem('progress')).length)) === 1);
+await press(KEY.UP, KEY.ENTER);
+check('Up then Enter removes it, and the row goes', (await page.evaluate(() => localStorage.getItem('progress'))) === '[]' && (await html('#pane-home .row:nth-child(1) h2')) === 'Recently added movies');
+// The movie page offers Resume when a film was left part-way.
+await press(KEY.ENTER, KEY.ENTER);
+await page.waitForTimeout(500);
+await many(KEY.RIGHT, 12);
+await page.waitForTimeout(900);
+await press(KEY.BACK);
+await page.waitForTimeout(200);
+await shot('movie-page-resume');
+check('the movie page offers Resume and From the start', (await html('#detail-actions')).includes('Resume') && (await html('#detail-actions')).includes('From the start'));
 check('no JavaScript errors', errors.length === 0);
 
 await browser.close();

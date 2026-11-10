@@ -21,8 +21,14 @@
     view: 'setup',
     server: localStorage.getItem('server') || DEV.server || '',
     token: localStorage.getItem('token') || '',
-    movies: [], shows: [], recentMovies: [], recentShows: []
+    movies: [], shows: [], recentMovies: [], recentShows: [],
+    // Where started films and episodes were left. Kept on this TV.
+    progress: C.readProgress(localStorage.getItem('progress'))
   };
+  function storeProgress(list) {
+    S.progress = list;
+    try { localStorage.setItem('progress', JSON.stringify(list)); } catch (e) { log('progress not stored: ' + errText(e)); }
+  }
 
   function $(id) { return document.getElementById(id); }
   function log(msg) {
@@ -70,11 +76,14 @@
     x.send(body ? JSON.stringify(body) : null);
   }
 
-  // One poster tile. `sub` is a second caption line (an episode code).
-  function tile(item, selected, sub) {
-    var img = C.sizedImage(item.poster_url, 'w342');
+  // One poster tile. `sub` is a second caption line. `opts.pct` draws a
+  // progress line on the poster; `opts.remove` draws the Remove button over it.
+  function tile(item, selected, sub, opts) {
+    var img = C.sizedImage(item.poster_url, 'w342'), o = opts || {};
     return '<div class="tile' + (selected ? ' sel' : '') + '"><div class="art">' +
       (img ? '<img src="' + esc(img) + '" alt="">' : '<div class="blank">' + esc(item.title) + '</div>') +
+      (o.pct !== undefined ? '<div class="seen"><div style="width:' + Math.round(o.pct) + '%"></div></div>' : '') +
+      (o.remove ? '<div class="remove">\u2715 Remove</div>' : '') +
       '</div><div class="name">' + esc(item.title) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div></div>';
   }
   function byId(list, id) {
@@ -220,24 +229,39 @@
 
   // ---- Home: rows of recently added --------------------------------------
 
-  var ROW_VISIBLE = 6;
-  var home = { row: 0, sel: [0, 0], left: [0, 0] };
+  var ROW_VISIBLE = 6, HOME_ROWS = 2;
+  // `sel` and `left` are kept per row kind, since the rows come and go: the
+  // first one is there only while something is part-watched.
+  // The selected row is remembered by kind too, or a row appearing above it
+  // would move the selection to a different row.
+  var home = { kind: '', top: 0, sel: {}, left: {}, removing: false };
+  function homeRow(rows) {
+    for (var i = 0; i < rows.length; i++) if (rows[i].kind === home.kind) return i;
+    return 0;
+  }
   function homeRows() {
     var rows = [];
+    if (S.progress.length) rows.push({ title: 'Continue watching', kind: 'resume', items: S.progress });
     if (S.recentMovies.length) rows.push({ title: 'Recently added movies', kind: 'movie', items: S.recentMovies });
     if (S.recentShows.length) rows.push({ title: 'Recently added TV', kind: 'series', items: S.recentShows });
     return rows;
   }
   function drawHome() {
-    var rows = homeRows(), html = '';
-    if (home.row >= rows.length) home.row = 0;
-    for (var r = 0; r < rows.length; r++) {
-      var it = rows[r].items, active = !shell.inRail && r === home.row;
-      home.sel[r] = Math.min(home.sel[r] || 0, it.length - 1);
-      home.left[r] = C.rowLeft(home.sel[r], ROW_VISIBLE, home.left[r] || 0);
-      html += '<div class="row' + (active ? ' sel' : '') + '"><h2>' + rows[r].title + '</h2><div class="tiles">';
-      for (var i = home.left[r]; i < Math.min(it.length, home.left[r] + ROW_VISIBLE + 1); i++) {
-        html += tile(it[i], active && i === home.sel[r], rows[r].kind === 'series' ? it[i].episode : '');
+    var rows = homeRows(), html = '', row = homeRow(rows);
+    home.top = C.rowLeft(row, HOME_ROWS, home.top);
+    for (var r = home.top; r < Math.min(rows.length, home.top + HOME_ROWS + 1); r++) {
+      var kind = rows[r].kind, it = rows[r].items, active = !shell.inRail && r === row;
+      var sel = home.sel[kind] = Math.min(home.sel[kind] || 0, it.length - 1);
+      var left = home.left[kind] = C.rowLeft(sel, ROW_VISIBLE, home.left[kind] || 0);
+      html += '<div class="row' + (active ? ' sel' : '') + '"><h2>' + rows[r].title +
+        (active && kind === 'resume' ? '<small>' + (home.removing ? 'Enter removes it from this row' : '\u25b2 remove from this row') + '</small>' : '') +
+        '</h2><div class="tiles">';
+      for (var i = left; i < Math.min(it.length, left + ROW_VISIBLE + 1); i++) {
+        var on = active && i === sel;
+        if (kind === 'resume') {
+          html += tile(it[i], on, it[i].kind === 'episode' ? it[i].sub : C.leftLabel(it[i].pos, it[i].dur),
+            { pct: it[i].pos * 100 / it[i].dur, remove: on && home.removing });
+        } else html += tile(it[i], on, kind === 'series' ? it[i].episode : '');
       }
       html += '</div></div>';
     }
@@ -246,14 +270,51 @@
   function keyHome(k) {
     var rows = homeRows();
     if (!rows.length) return k === KEY.LEFT ? 'rail' : null;
-    var r = home.row, n = rows[r].items.length;
-    if (k === KEY.LEFT) { if (home.sel[r] === 0) return 'rail'; home.sel[r]--; }
-    else if (k === KEY.RIGHT) home.sel[r] = Math.min(n - 1, home.sel[r] + 1);
-    else if (k === KEY.UP) home.row = Math.max(0, r - 1);
-    else if (k === KEY.DOWN) home.row = Math.min(rows.length - 1, r + 1);
-    else if (k === KEY.ENTER) { openItem(rows[r].kind, rows[r].items[home.sel[r]]); return null; }
+    var r = homeRow(rows), kind = rows[r].kind, n = rows[r].items.length;
+    if (home.removing) {
+      // The Remove button sits over the tile: Enter presses it, anything else leaves it.
+      home.removing = false;
+      if (k === KEY.ENTER) {
+        var gone = rows[r].items[home.sel[kind]];
+        storeProgress(C.withoutProgress(S.progress, gone.key));
+        log('removed from continue watching: ' + gone.title);
+        drawHome();
+        return null;
+      }
+      if (k === KEY.DOWN || k === KEY.UP) { drawHome(); return null; }
+    }
+    if (k === KEY.LEFT) { if (home.sel[kind] === 0) return 'rail'; home.sel[kind]--; }
+    else if (k === KEY.RIGHT) home.sel[kind] = Math.min(n - 1, home.sel[kind] + 1);
+    else if (k === KEY.UP) { if (kind === 'resume') home.removing = true; else home.kind = rows[Math.max(0, r - 1)].kind; }
+    else if (k === KEY.DOWN) home.kind = rows[Math.min(rows.length - 1, r + 1)].kind;
+    else if (k === KEY.ENTER) {
+      var item = rows[r].items[home.sel[kind]];
+      if (kind === 'resume') resume(item); else openItem(kind, item);
+      return null;
+    }
     drawHome();
     return null;
+  }
+  // Pick up a film or an episode where it was left, straight from Home.
+  function resume(entry) {
+    if (entry.kind === 'movie') {
+      var movie = byId(S.movies, entry.id), edition = movie ? byId(C.playable(movie), entry.part) : null;
+      if (!edition) { storeProgress(C.withoutProgress(S.progress, entry.key)); toast('That film is no longer in the library'); drawHome(); return; }
+      playMovie(movie, edition, entry.pos, 'shell');
+      return;
+    }
+    toast('Loading…', true);
+    api('GET', '/series/' + entry.id, null, function (status, series) {
+      var ep = status === 200 && series ? byId(series.episodes || [], entry.part) : null;
+      if (!ep || !ep.file) {
+        if (status === 200 || status === 404) storeProgress(C.withoutProgress(S.progress, entry.key));
+        toast(status === 200 || status === 404 ? 'That episode is no longer in the library' : 'Could not load this series (' + status + ')');
+        drawHome();
+        return;
+      }
+      untoast();
+      playEpisode(series, ep, entry.pos, 'shell');
+    });
   }
 
   // ---- Movies and TV: a grid with a letter strip --------------------------
@@ -368,7 +429,7 @@
 
   // ---- Movie page --------------------------------------------------------
 
-  var D = { movie: null, editions: [], action: 0 };
+  var D = { movie: null, actions: [], action: 0 };
   function setBackdrop(id, url) {
     var bg = C.sizedImage(url, 'w1280');
     $(id).style.backgroundImage = bg ? 'url("' + bg.replace(/"/g, '%22') + '")' : 'none';
@@ -381,8 +442,19 @@
     if (item.genres && item.genres.length) meta.push(item.genres.slice(0, 3).join(', '));
     return meta.join('  ·  ');
   }
+  // One Play button per file; a part-watched file gets Resume first.
+  function movieActions(movie) {
+    var out = [], eds = C.playable(movie);
+    for (var i = 0; i < eds.length; i++) {
+      var p = C.findProgress(S.progress, C.progressKey('movie', movie.id), eds[i].id);
+      var what = C.mediaSummary(eds[i]) || 'File ' + (i + 1);
+      if (p) out.push({ label: '\u25b6 Resume', small: 'from ' + C.fmtTime(p.pos) + '  \u00b7  ' + what, edition: eds[i], pos: p.pos });
+      out.push({ label: p ? 'From the start' : '\u25b6 Play', small: what, edition: eds[i], pos: 0 });
+    }
+    return out;
+  }
   function openDetail(movie) {
-    D.movie = movie; D.editions = C.playable(movie); D.action = 0;
+    D.movie = movie; D.actions = movieActions(movie); D.action = 0;
     $('detail-title').textContent = movie.title;
     $('detail-meta').textContent = metaLine(movie, C.fmtRuntime(movie.runtime_minutes));
     $('detail-overview').textContent = movie.overview || '';
@@ -392,16 +464,15 @@
   }
   function drawActions() {
     var html = '';
-    for (var i = 0; i < D.editions.length; i++) {
-      html += '<span class="action' + (i === D.action ? ' sel' : '') + '">▶ Play<small>' +
-        esc(C.mediaSummary(D.editions[i]) || 'File ' + (i + 1)) + '</small></span>';
+    for (var i = 0; i < D.actions.length; i++) {
+      html += '<span class="action' + (i === D.action ? ' sel' : '') + '">' + D.actions[i].label + '<small>' + esc(D.actions[i].small) + '</small></span>';
     }
     $('detail-actions').innerHTML = html;
   }
   function keyDetail(k) {
     if (k === KEY.LEFT) D.action = Math.max(0, D.action - 1);
-    else if (k === KEY.RIGHT) D.action = Math.min(D.editions.length - 1, D.action + 1);
-    else if (k === KEY.ENTER || k === KEY.PLAY || k === KEY.PLAYPAUSE) { playMovie(D.movie, D.editions[D.action]); return; }
+    else if (k === KEY.RIGHT) D.action = Math.min(D.actions.length - 1, D.action + 1);
+    else if (k === KEY.ENTER || k === KEY.PLAY || k === KEY.PLAYPAUSE) { playMovie(D.movie, D.actions[D.action].edition, D.actions[D.action].pos, 'detail'); return; }
     else if (k === KEY.BACK) { show('shell'); drawPane(); return; }
     drawActions();
   }
@@ -423,6 +494,12 @@
       $('series-poster').src = C.sizedImage(series.poster_url, 'w500');
       setBackdrop('series-backdrop', series.backdrop_url);
       pickSeason(0);
+      // Open on the episode that was being watched, if there is one.
+      var was = C.findProgress(S.progress, C.progressKey('episode', series.id)), wasEp = was ? byId(series.episodes || [], was.part) : null;
+      if (wasEp && R.seasons.indexOf(wasEp.season) >= 0) {
+        pickSeason(R.seasons.indexOf(wasEp.season));
+        for (var i = 0; i < R.eps.length; i++) if (R.eps[i].id === wasEp.id) R.sel = i;
+      }
       show('series'); drawSeries();
     });
   }
@@ -432,6 +509,7 @@
     // Land on the first episode there is a file for.
     for (var i = 0; i < R.eps.length; i++) if (R.eps[i].file) { R.sel = i; break; }
   }
+  function epProgress(ep) { return C.findProgress(S.progress, C.progressKey('episode', R.series.id), ep.id); }
   function seasonName(n) { return n === 0 ? 'Specials' : 'Season ' + n; }
   function drawSeries() {
     var html = '', i;
@@ -444,6 +522,8 @@
     for (i = R.top; i < Math.min(R.eps.length, R.top + EP_VISIBLE); i++) {
       var ep = R.eps[i], info = ep.file ? C.mediaSummary(ep) : 'Not in the library';
       var mins = ep.media_info && ep.media_info.duration_secs ? Math.round(ep.media_info.duration_secs / 60) + ' min' : '';
+      var left = epProgress(ep);
+      if (left) mins = 'Resume at ' + C.fmtTime(left.pos);
       html += '<div class="ep' + (ep.file ? '' : ' none') + (!R.inSeasons && i === R.sel ? ' sel' : '') + '">' +
         '<span class="info">' + esc([mins, info].filter(Boolean).join('  ·  ')) + '</span>' +
         '<span class="num">' + ep.number + '</span>' + esc(ep.title || 'Episode ' + ep.number) + '</div>';
@@ -462,7 +542,7 @@
     else if (k === KEY.RIGHT && R.si < R.seasons.length - 1) pickSeason(R.si + 1);
     else if (k === KEY.ENTER || k === KEY.PLAY || k === KEY.PLAYPAUSE) {
       var ep = R.eps[R.sel];
-      if (ep && ep.file) { playEpisode(R.series, ep); return; }
+      if (ep && ep.file) { var was = epProgress(ep); playEpisode(R.series, ep, was ? was.pos : 0, 'series'); return; }
       if (ep) toast('This episode is not in the library', true);
     }
     drawSeries();
@@ -476,7 +556,7 @@
 
   var HIDE_MS = 4000, COMMIT_MS = 600, SEEK_TIMEOUT_MS = 10000;
   var P = {
-    ready: false, from: 'detail', series: null, episode: null,
+    ready: false, from: 'detail', series: null, episode: null, ctx: null, ticks: 0,
     tracks: [], track: -1, inOpts: false,
     seeking: false, seekTo: 0, pend: null, commit: null, seekTimer: null,
     tick: null, hide: null, flash: null
@@ -484,28 +564,43 @@
   function av() { return window.webapis && window.webapis.avplay; }
   function avState() { try { return av().getState(); } catch (e) { return 'NONE'; } }
 
-  function playMovie(movie, edition) {
+  function playMovie(movie, edition, pos, from) {
     var info = edition.media_info || {};
     var url = DEV.videoUrl ? DEV.videoUrl(S.server, movie.id, edition.id, S.token, info.container || '')
       : C.videoUrl(S.server, movie.id, edition.id, S.token);
     P.series = null; P.episode = null;
-    start(url, 'detail', movie.title, metaLine(movie, ''));
+    P.ctx = { key: C.progressKey('movie', movie.id), kind: 'movie', id: movie.id, part: edition.id, title: movie.title, sub: '', poster_url: movie.poster_url };
+    start(url, from, movie.title, metaLine(movie, ''), pos);
   }
-  function playEpisode(series, ep) {
+  function playEpisode(series, ep, pos, from) {
     var info = ep.media_info || {};
     var url = DEV.episodeUrl ? DEV.episodeUrl(S.server, series.id, ep.id, S.token, info.container || '')
       : C.episodeVideoUrl(S.server, series.id, ep.id, S.token);
     P.series = series; P.episode = ep;
-    start(url, 'series', series.title, C.episodeCode(ep) + (ep.title ? '  ·  ' + ep.title : ''));
+    P.ctx = { key: C.progressKey('episode', series.id), kind: 'episode', id: series.id, part: ep.id, title: series.title, sub: C.episodeCode(ep), poster_url: series.poster_url };
+    start(url, from, series.title, C.episodeCode(ep) + (ep.title ? '  \u00b7  ' + ep.title : ''), pos);
   }
-  function start(url, from, title, sub) {
+  function start(url, from, title, sub, pos) {
     if (!av()) { toast('This device has no Samsung player'); return; }
     clearPlayerTimers();
     P.ready = false; P.from = from; P.tracks = []; P.track = -1; P.inOpts = false;
-    P.seeking = false; P.pend = null;
+    P.seeking = false; P.pend = null; P.ticks = 0;
     $('pt-title').textContent = title; $('pt-sub').textContent = sub || '';
     show('player'); flash('Loading…', true); wake();
-    log('play ' + title + ' ' + (sub || ''));
+    log('play ' + title + ' ' + (sub || '') + (pos ? ' from ' + C.fmtTime(pos) : ''));
+    function go() {
+      if (S.view !== 'player' || P.ready) return;
+      P.ready = true;
+      unflash();
+      try { av().play(); } catch (e) { log('play failed ' + errText(e)); }
+      chooseAudio();
+      P.tick = setInterval(function () {
+        // Every ten seconds, so a power cut loses little.
+        if (++P.ticks % 10 === 0) saveNow();
+        drawPlayer();
+      }, 1000);
+      wake();
+    }
     try {
       try { av().close(); } catch (e0) {}
       av().open(url);
@@ -519,12 +614,13 @@
       });
       av().prepareAsync(function () {
         if (S.view !== 'player') return; // Back was pressed while it loaded
-        P.ready = true;
-        unflash();
-        av().play();
-        chooseAudio();
-        P.tick = setInterval(drawPlayer, 1000);
-        wake();
+        if (!pos) { go(); return; }
+        // Resume: move first, then play, so the start of the film never
+        // flashes by. The player allows no other call until the seek answers;
+        // if it never does, play from the start instead of hanging.
+        var fallback = setTimeout(function () { log('resume seek: no answer'); go(); }, 8000);
+        function then(why) { clearTimeout(fallback); if (why) log('resume seek failed: ' + why); go(); }
+        try { av().seekTo(pos, function () { then(); }, function (e) { then(errText(e)); }); } catch (e) { then(errText(e)); }
       }, function (e) {
         log('prepare failed ' + errText(e));
         toast('The TV could not open this file');
@@ -535,6 +631,18 @@
       toast('The TV could not open this file');
       stop();
     }
+  }
+  // Remember where this is, for Continue watching.
+  function saveNow() {
+    if (!P.ready || !P.ctx) return;
+    var cur, dur;
+    try { cur = av().getCurrentTime(); dur = av().getDuration(); } catch (e) { return; }
+    if (!dur) return;
+    var c = P.ctx;
+    storeProgress(C.saveProgress(S.progress, {
+      key: c.key, kind: c.kind, id: c.id, part: c.part, title: c.title, sub: c.sub, poster_url: c.poster_url,
+      pos: P.pend ? P.pend.target : P.seeking ? P.seekTo : cur, dur: dur, at: Date.now()
+    }));
   }
 
   // The first track is not always the right one. Pick by language and by
@@ -560,25 +668,34 @@
     for (var i = 0; i < names.length; i++) if (P[names[i]]) { clearTimeout(P[names[i]]); clearInterval(P[names[i]]); P[names[i]] = null; }
   }
   function stop() {
+    saveNow();
     clearPlayerTimers();
     P.ready = false; P.seeking = false; P.pend = null;
     try { av().stop(); } catch (e) {}
     try { av().close(); } catch (e2) {}
     unflash();
     if (S.view !== 'player') return;
-    if (P.from === 'series') { show('series'); drawSeries(); } else { show('detail'); drawActions(); }
+    if (P.from === 'series') { show('series'); drawSeries(); }
+    else if (P.from === 'shell') { show('shell'); drawPane(); }
+    else { D.actions = movieActions(D.movie); D.action = 0; show('detail'); drawActions(); }
   }
   // The end of the file. A series goes on to its next episode.
   function ended() {
+    // Finished: it leaves Continue watching. A next episode comes back into
+    // the row by itself once it has played for a while.
+    if (P.ctx) storeProgress(C.withoutProgress(S.progress, P.ctx.key));
     var next = P.series && P.episode ? C.nextEpisode(P.series, P.episode) : null;
+    P.ready = false; // nothing more to save for the file that ended
     if (!next) { stop(); return; }
-    var series = P.series;
+    var series = P.series, from = P.from;
     // Keep the series page on the episode now playing, for when Back is pressed.
-    var si = R.seasons.indexOf(next.season);
-    if (si >= 0) { pickSeason(si); for (var i = 0; i < R.eps.length; i++) if (R.eps[i].id === next.id) R.sel = i; }
+    if (from === 'series' && R.series && R.series.id === series.id) {
+      var si = R.seasons.indexOf(next.season);
+      if (si >= 0) { pickSeason(si); for (var i = 0; i < R.eps.length; i++) if (R.eps[i].id === next.id) R.sel = i; }
+    }
     clearPlayerTimers();
     try { av().stop(); } catch (e) {}
-    playEpisode(series, next);
+    playEpisode(series, next, 0, from);
   }
 
   // Skipping. Each press moves a target, shown on the scrub line at once; the

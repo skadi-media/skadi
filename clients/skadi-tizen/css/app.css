@@ -49,6 +49,11 @@ h1 { font-weight: 600; margin: 0; }
 .tile.sel .art { border-color: #5fb4ff; }
 .tile.sel .name { color: #fff; }
 .tile .blank { padding: 20px 14px; font-size: 26px; line-height: 34px; color: #9fb0c0; }
+.tile .art { position: relative; }
+/* How much of it has been watched, along the bottom of the poster. */
+.tile .seen { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.65); }
+.tile .seen div { height: 8px; border-radius: 4px; background: #5fb4ff; }
+.tile .remove { position: absolute; left: 0; top: 0; width: 228px; height: 342px; line-height: 342px; text-align: center; font-size: 30px; color: #fff; background: rgba(122,38,48,0.92); }
 .empty { color: #7d8fa0; padding: 40px 0; }
 
 /* Home */
@@ -56,6 +61,7 @@ h1 { font-weight: 600; margin: 0; }
 .row { height: 512px; overflow: hidden; }
 .row h2 { font-size: 34px; font-weight: 600; margin: 0 0 16px 4px; height: 44px; color: #c5d3e0; }
 .row.sel h2 { color: #fff; }
+.row h2 small { font-size: 24px; font-weight: 400; color: #9fb0c0; margin-left: 26px; }
 .row .tiles { width: 1700px; height: 440px; overflow: hidden; }
 
 /* Movies and TV */

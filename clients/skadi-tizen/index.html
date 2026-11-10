@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Skadi</title>
+  <link rel="stylesheet" href="css/app.css">
+  <!-- Samsung's player API. `$WEBAPIS` is resolved by the TV. -->
+  <script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+  <!-- The video plane. The page is drawn over it, so the page background
+       goes transparent while a film plays (body.playing). -->
+  <object id="av" type="application/avplayer"></object>
+
+  <div id="screen">
+    <div id="setup" class="view">
+      <h1>Skadi</h1>
+      <div class="field" data-field="server"><label>Server</label><input id="f-server" type="text" placeholder="192.0.2.10:8090"></div>
+      <div class="field" data-field="user"><label>Username</label><input id="f-user" type="text"></div>
+      <div class="field" data-field="pass"><label>Password</label><input id="f-pass" type="password"></div>
+      <div class="field" data-field="go"><span class="btn">Sign in</span></div>
+      <p class="hint">Up and Down choose a line. Enter opens the keyboard.</p>
+    </div>
+
+    <div id="browse" class="view">
+      <div id="browse-head"><span class="brand">Skadi</span><span id="browse-count"></span><span id="browse-title"></span></div>
+      <div id="grid"></div>
+    </div>
+
+    <div id="detail" class="view">
+      <div id="detail-backdrop"></div>
+      <div id="detail-body">
+        <img id="detail-poster" alt="">
+        <div id="detail-text">
+          <h1 id="detail-title"></h1>
+          <div id="detail-meta"></div>
+          <p id="detail-overview"></p>
+          <div id="detail-actions"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="player" class="view">
+      <div id="player-wait">Loading…</div>
+      <div id="bar">
+        <div id="bar-title"></div>
+        <div id="bar-track"><div id="bar-fill"></div></div>
+        <div id="bar-row"><span id="bar-buttons"></span><span id="bar-time"></span></div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+  </div>
+
+  <script src="js/core.js"></script>
+  <!-- Optional, never committed: a developer's own defaults. See the README. -->
+  <script src="js/dev.local.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

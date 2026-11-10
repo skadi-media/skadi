@@ -1,0 +1,67 @@
+/* The TV's engine is Chromium M47: flexbox yes, CSS grid no, custom
+   properties no. Sizes are for the 1920x1080 page the TV gives a web app. */
+html, body {
+  margin: 0; width: 1920px; height: 1080px; overflow: hidden;
+  background: #0b1016; color: #e8edf2;
+  font-family: "SamsungOne", "Samsung Sharp Sans", Arial, sans-serif; font-size: 30px;
+}
+body.playing { background: transparent; }
+#av { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 0; }
+#screen { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 1; }
+.view { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+.view.on { display: block; }
+h1 { font-weight: 600; margin: 0; }
+
+/* Sign in */
+#setup { padding: 110px 160px; box-sizing: border-box; }
+#setup h1 { font-size: 72px; margin-bottom: 50px; }
+.field { width: 1100px; padding: 14px 20px; margin-bottom: 14px; border: 4px solid transparent; border-radius: 10px; }
+.field.sel { border-color: #5fb4ff; background: #16212d; }
+.field label { display: inline-block; width: 260px; color: #9fb0c0; }
+.field input { width: 780px; font-size: 34px; padding: 10px 14px; border: 0; border-radius: 6px; background: #e8edf2; color: #0b1016; }
+.btn { display: inline-block; padding: 14px 44px; border-radius: 8px; background: #25435f; font-size: 34px; }
+.field.sel .btn { background: #2f7fcb; }
+.hint { color: #7d8fa0; font-size: 26px; margin-top: 30px; }
+
+/* Movies */
+#browse-head { height: 90px; line-height: 90px; padding: 0 60px; white-space: nowrap; overflow: hidden; }
+.brand { font-size: 40px; font-weight: 600; margin-right: 30px; }
+#browse-count { color: #7d8fa0; margin-right: 50px; }
+#browse-title { font-size: 34px; }
+#grid { position: absolute; left: 60px; top: 100px; width: 1820px; height: 980px; overflow: hidden; }
+.tile { float: left; width: 236px; height: 458px; margin: 0 22px 22px 0; }
+.tile .art { width: 228px; height: 342px; border: 4px solid transparent; border-radius: 10px; background: #18222d; overflow: hidden; }
+.tile img { width: 228px; height: 342px; display: block; }
+.tile .name { height: 76px; overflow: hidden; margin-top: 8px; font-size: 24px; line-height: 30px; color: #9fb0c0; text-align: center; }
+.tile.sel .art { border-color: #5fb4ff; }
+.tile.sel .name { color: #fff; }
+.tile .blank { padding: 20px 14px; font-size: 26px; line-height: 34px; color: #9fb0c0; }
+
+/* Movie page */
+#detail-backdrop { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background-size: cover; background-position: center; opacity: 0.22; }
+#detail-body { position: absolute; left: 100px; top: 110px; width: 1720px; }
+#detail-poster { float: left; width: 400px; height: 600px; border-radius: 12px; background: #18222d; }
+#detail-text { margin-left: 460px; }
+#detail-title { font-size: 64px; line-height: 74px; }
+#detail-meta { color: #9fb0c0; margin: 18px 0 26px 0; }
+#detail-overview { font-size: 30px; line-height: 42px; max-height: 336px; overflow: hidden; margin: 0 0 40px 0; }
+.action { display: inline-block; padding: 18px 40px; margin: 0 20px 20px 0; border: 4px solid transparent; border-radius: 10px; background: #1d2b3a; font-size: 34px; }
+.action.sel { border-color: #fff; background: #2f7fcb; }
+.action small { display: block; font-size: 22px; color: #c5d3e0; margin-top: 4px; }
+
+/* Player */
+#player-wait { position: absolute; left: 0; top: 480px; width: 1920px; text-align: center; font-size: 44px; text-shadow: 0 2px 8px #000; }
+#bar { position: absolute; left: 0; bottom: 0; width: 1920px; padding: 120px 80px 50px 80px; box-sizing: border-box;
+  background: -webkit-linear-gradient(top, rgba(0,0,0,0), rgba(0,0,0,0.85)); background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.85)); }
+#bar.off { display: none; }
+#bar-title { font-size: 38px; margin-bottom: 18px; text-shadow: 0 2px 6px #000; white-space: nowrap; overflow: hidden; }
+#bar-track { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.25); margin-bottom: 24px; }
+#bar-fill { height: 10px; width: 0; border-radius: 5px; background: #5fb4ff; }
+#bar-time { float: right; line-height: 76px; font-size: 34px; }
+.pb { display: inline-block; padding: 14px 28px; margin-right: 14px; border: 4px solid transparent; border-radius: 10px; background: rgba(20,30,40,0.8); font-size: 32px; }
+.pb.sel { border-color: #fff; background: #2f7fcb; }
+
+#toast { display: none; position: absolute; left: 360px; top: 40px; width: 1200px; padding: 20px 30px; box-sizing: border-box;
+  border-radius: 10px; background: #7a2630; text-align: center; font-size: 30px; z-index: 5; }
+#toast.on { display: block; }
+#toast.info { background: #1d3a57; }

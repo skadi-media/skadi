@@ -3699,7 +3699,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-config"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3707,7 +3707,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-downloader-worker"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3745,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-store"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "chacha20poly1305",

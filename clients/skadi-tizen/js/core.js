@@ -238,6 +238,26 @@
     return limit ? out.slice(0, limit) : out;
   }
 
+  // ---- Rows by genre ----------------------------------------------------------
+
+  // The `n` genres with the most titles, most first; ties by name.
+  function topGenres(items, n) {
+    var count = {}, names = [], i, j;
+    for (i = 0; i < items.length; i++) {
+      var g = items[i].genres || [];
+      for (j = 0; j < g.length; j++) { if (!count[g[j]]) { count[g[j]] = 0; names.push(g[j]); } count[g[j]]++; }
+    }
+    names.sort(function (a, b) { return count[b] - count[a] || (a < b ? -1 : a > b ? 1 : 0); });
+    return names.slice(0, n);
+  }
+  // The titles of one genre, the newest in the library first.
+  function newestIn(items, genre, limit) {
+    var out = [];
+    for (var i = 0; i < items.length; i++) if ((items[i].genres || []).indexOf(genre) >= 0) out.push(items[i]);
+    out.sort(function (a, b) { var x = a.added_at || '', y = b.added_at || ''; return x < y ? 1 : x > y ? -1 : 0; });
+    return out.slice(0, limit);
+  }
+
   // ---- Recently added ------------------------------------------------------
 
   // The new-imports feed has one row per file, so a season that arrived
@@ -396,6 +416,7 @@
     importedCount: importedCount, skipStep: skipStep, rowLeft: rowLeft,
     progressKey: progressKey, worthSaving: worthSaving, isFinished: isFinished, saveProgress: saveProgress,
     withoutProgress: withoutProgress, findProgress: findProgress, leftLabel: leftLabel, readProgress: readProgress,
-    queueNext: queueNext, progressLabel: progressLabel, watchedKey: watchedKey
+    queueNext: queueNext, progressLabel: progressLabel, watchedKey: watchedKey,
+    topGenres: topGenres, newestIn: newestIn
   };
 });

@@ -314,3 +314,20 @@ test('watchedKey: a movie by its id, an episode by its own id', () => {
   assert.equal(C.watchedKey('movie', 'm1', 'e1'), 'movie:m1');
   assert.equal(C.watchedKey('episode', 's1', 'ep7'), 'episode:ep7');
 });
+
+test('topGenres: most titles first, ties by name', () => {
+  const items = [{ genres: ['Drama', 'Action'] }, { genres: ['Drama'] }, { genres: ['Comedy'] }, {}];
+  assert.deepEqual(C.topGenres(items, 2), ['Drama', 'Action']);
+  assert.deepEqual(C.topGenres(items, 9), ['Drama', 'Action', 'Comedy']);
+});
+
+test('newestIn: one genre, newest in the library first', () => {
+  const items = [
+    { id: 'a', genres: ['Drama'], added_at: '2026-01-01T00:00:00Z' },
+    { id: 'b', genres: ['Drama', 'Action'], added_at: '2026-03-01T00:00:00Z' },
+    { id: 'c', genres: ['Action'], added_at: '2026-02-01T00:00:00Z' },
+    { id: 'd', genres: ['Drama'] },
+  ];
+  assert.deepEqual(C.newestIn(items, 'Drama', 9).map((i) => i.id), ['b', 'a', 'd']);
+  assert.deepEqual(C.newestIn(items, 'Drama', 1).map((i) => i.id), ['b']);
+});

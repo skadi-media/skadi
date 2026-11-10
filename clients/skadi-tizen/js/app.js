@@ -84,17 +84,31 @@
     x.send(body ? JSON.stringify(body) : null);
   }
 
-  // One poster tile. `sub` is a second caption line. `opts.pct` draws a
-  // progress line on the poster, `opts.watched` a tick, and `opts.menu` the
-  // two buttons of a Continue watching tile (1: Watched, 2: Remove).
-  function tile(item, selected, sub, opts) {
+  // One poster tile. The rows and grids show the poster alone, since the
+  // band at the top names the selected title; `opts.caption` adds the name
+  // underneath, for search, which has no band. `opts.sub` is a second caption
+  // line, `opts.pct` a progress line on the poster, `opts.watched` a tick, and
+  // `opts.menu` the two buttons of a Continue watching tile (1: Watched, 2: Remove).
+  function tile(item, selected, opts) {
     var img = C.sizedImage(item.poster_url, 'w342'), o = opts || {};
-    return '<div class="tile' + (selected ? ' sel' : '') + '"><div class="art">' +
+    return '<div class="tile' + (selected ? ' sel' : '') + (o.caption ? ' cap' : '') + '"><div class="art">' +
       (img ? '<img src="' + esc(img) + '" alt="">' : '<div class="blank">' + esc(item.title) + '</div>') +
       (o.pct !== undefined ? '<div class="seen"><div style="width:' + Math.round(o.pct) + '%"></div></div>' : '') +
       (o.watched ? '<div class="tick">\u2713</div>' : '') +
       (o.menu ? '<div class="menu"><div class="' + (o.menu === 2 ? 'sel' : '') + '">\u2715 Remove</div><div class="' + (o.menu === 1 ? 'sel' : '') + '">\u2713 Watched</div></div>' : '') +
-      '</div><div class="name">' + esc(item.title) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div></div>';
+      '</div>' + (o.caption ? '<div class="name">' + esc(item.title) + (o.sub ? '<small>' + esc(o.sub) + '</small>' : '') + '</div>' : '') + '</div>';
+  }
+  // The band across the top of Home and the grids: the selected title, large,
+  // over its backdrop. `card` is { title, meta, overview, backdrop_url, tag }.
+  function band(card, small) {
+    if (!card) return '';
+    var bg = C.sizedImage(card.backdrop_url, 'w1280');
+    return '<div class="band' + (small ? ' small' : '') + '">' +
+      (bg ? '<div class="band-art" style="background-image:url(&quot;' + esc(bg) + '&quot;)"></div>' : '') +
+      '<div class="band-shade"></div><div class="band-fade"></div><div class="band-text">' +
+      (card.tag ? '<div class="band-tag">' + esc(card.tag) + '</div>' : '') +
+      '<h1>' + esc(card.title) + '</h1><div class="meta">' + esc(card.meta || '') + '</div>' +
+      '<p>' + esc(card.overview || '') + '</p></div></div>';
   }
   function byId(list, id) {
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
@@ -185,6 +199,7 @@
             S.recentShows = C.recent((ns && ns.items) || [], 20);
             untoast();
             G.movies = { sel: 0, top: 0 }; G.tv = { sel: 0, top: 0 };
+            buildGenreRows();
             openPane('home'); show('shell'); focusContent();
           });
         });
@@ -194,14 +209,25 @@
 
   // ---- The shell: menu and panes -----------------------------------------
 
-  var RAIL = [['home', 'Home'], ['movies', 'Movies'], ['tv', 'TV'], ['search', 'Search']];
+  // The menu is a strip of icons until it has the focus, then it opens with
+  // its names over the page.
+  var RAIL = [
+    ['home', 'Home', '<path d="M4 13 L16 3 L28 13 V28 H19 V19 H13 V28 H4 Z"/>'],
+    ['movies', 'Movies', '<path d="M3 6 H29 V26 H3 Z M3 11 H29 M3 21 H29 M9 6 V11 M16 6 V11 M23 6 V11 M9 21 V26 M16 21 V26 M23 21 V26"/>'],
+    ['tv', 'TV', '<path d="M3 6 H29 V23 H3 Z M11 28 H21 M16 23 V28"/>'],
+    ['search', 'Search', '<path d="M14 4 A10 10 0 1 0 14 24 A10 10 0 1 0 14 4 M21 21 L29 29"/>']
+  ];
   var shell = { pane: 'home', rail: 0, inRail: false };
   function drawRail() {
-    var html = '<div class="brand">Skadi</div>';
+    var html = '<div class="brand">' + (shell.inRail ? 'Skadi' : 'S') + '</div>';
     for (var i = 0; i < RAIL.length; i++) {
-      html += '<div class="rail-item' + (shell.inRail && i === shell.rail ? ' sel' : RAIL[i][0] === shell.pane ? ' here' : '') + '">' + RAIL[i][1] + '</div>';
+      html += '<div class="rail-item' + (shell.inRail && i === shell.rail ? ' sel' : RAIL[i][0] === shell.pane ? ' here' : '') + '">' +
+        '<svg viewBox="0 0 32 32">' + RAIL[i][2] + '</svg><span>' + RAIL[i][1] + '</span></div>';
     }
     $('rail').innerHTML = html;
+    $('rail').className = shell.inRail ? 'open' : '';
+    // The page dims behind the open menu, so its names are not read against the page's own text.
+    if (S.view === 'shell') $('shell').className = 'view on' + (shell.inRail ? ' menu' : '');
   }
   function openPane(name) {
     shell.pane = name;
@@ -232,79 +258,114 @@
     if (leave === 'rail') focusRail();
   }
   function openItem(kind, item) {
-    // A row of the recently-added feed names its series in `item_id`; its own
-    // `id` is the id of the feed row.
-    if (kind === 'movie') openDetail(item); else openSeries(item.item_id || item.id);
+    if (kind === 'movie') openDetail(item); else openSeries(item.id);
+  }
+  // What the band says about a movie or a series.
+  function cardOf(kind, item, tag) {
+    return {
+      title: item.title, overview: item.overview, backdrop_url: item.backdrop_url, tag: tag || '',
+      meta: metaLine(item, kind === 'movie' ? C.fmtRuntime(item.runtime_minutes) : item.network) +
+        (kind === 'movie' && isWatched('movie', item.id) ? '  \u00b7  \u2713 Watched' : '')
+    };
   }
 
-  // ---- Home: rows of recently added --------------------------------------
+  // ---- Home: a band for the selected title, rows of posters under it -------
+  //
+  // The selected row is always the one under the band; the rows above it
+  // scroll away and the next one shows its top. A row's tiles are
+  // { kind: 'movie'|'series', item, entry?, tag? }: `item` is the movie or the
+  // series, `entry` a Continue watching entry.
 
-  var ROW_VISIBLE = 6, HOME_ROWS = 2;
-  // `sel` and `left` are kept per row kind, since the rows come and go: the
-  // first one is there only while something is part-watched.
-  // The selected row is remembered by kind too, or a row appearing above it
-  // would move the selection to a different row.
-  // `menu`: 0, or which button over a Continue watching tile is chosen
-  // (1: Watched, the nearer one; 2: Remove, above it).
-  var home = { kind: '', top: 0, sel: {}, left: {}, menu: 0 };
-  function homeRow(rows) {
-    for (var i = 0; i < rows.length; i++) if (rows[i].kind === home.kind) return i;
-    return 0;
+  var ROW_VISIBLE = 8, GENRE_ROWS = 6, ROW_MAX = 24;
+  // The selected row is remembered by key, or a row appearing above it would
+  // move the selection to a different row. `menu`: 0, or which button over a
+  // Continue watching tile is chosen (1: Watched, the nearer one; 2: Remove).
+  var home = { key: '', sel: {}, left: {}, menu: 0, genres: [] };
+  function buildGenreRows() {
+    var rows = [], i, g;
+    var mg = C.topGenres(S.movies, GENRE_ROWS), sg = C.topGenres(S.shows, GENRE_ROWS);
+    // Movies and TV alternate, so neither is a long scroll away.
+    for (i = 0; i < GENRE_ROWS; i++) {
+      if ((g = mg[i])) rows.push({ key: 'gm:' + g, title: g + ' movies', tiles: wrap('movie', C.newestIn(S.movies, g, ROW_MAX)) });
+      if ((g = sg[i])) rows.push({ key: 'gs:' + g, title: g + ' TV', tiles: wrap('series', C.newestIn(S.shows, g, ROW_MAX)) });
+    }
+    home.genres = rows;
+  }
+  function wrap(kind, items) {
+    var out = [];
+    for (var i = 0; i < items.length; i++) out.push({ kind: kind, item: items[i] });
+    return out;
   }
   function homeRows() {
-    var rows = [];
-    if (S.progress.length) rows.push({ title: 'Continue watching', kind: 'resume', items: S.progress });
-    if (S.recentMovies.length) rows.push({ title: 'Recently added movies', kind: 'movie', items: S.recentMovies });
-    if (S.recentShows.length) rows.push({ title: 'Recently added TV', kind: 'series', items: S.recentShows });
-    return rows;
+    var rows = [], tiles = [], i;
+    for (i = 0; i < S.progress.length; i++) {
+      var e = S.progress[i], movie = e.kind === 'movie';
+      // The library's own record gives the band its backdrop and description;
+      // the saved entry is enough to draw the tile if the title has gone.
+      tiles.push({ kind: movie ? 'movie' : 'series', item: byId(movie ? S.movies : S.shows, e.id) || e, entry: e });
+    }
+    if (tiles.length) rows.push({ key: 'resume', title: 'Continue watching', tiles: tiles });
+    if (S.recentMovies.length) rows.push({ key: 'movie', title: 'Recently added movies', tiles: wrap('movie', S.recentMovies) });
+    tiles = [];
+    for (i = 0; i < S.recentShows.length; i++) {
+      var feed = S.recentShows[i], show = byId(S.shows, feed.item_id);
+      if (show) tiles.push({ kind: 'series', item: show, tag: 'New episode  \u00b7  ' + feed.episode });
+    }
+    if (tiles.length) rows.push({ key: 'series', title: 'Recently added TV', tiles: tiles });
+    return rows.concat(home.genres);
+  }
+  function homeRow(rows) {
+    for (var i = 0; i < rows.length; i++) if (rows[i].key === home.key) return i;
+    return 0;
   }
   function drawHome() {
-    var rows = homeRows(), html = '', row = homeRow(rows);
-    home.top = C.rowLeft(row, HOME_ROWS, home.top);
-    for (var r = home.top; r < Math.min(rows.length, home.top + HOME_ROWS + 1); r++) {
-      var kind = rows[r].kind, it = rows[r].items, active = !shell.inRail && r === row;
-      var sel = home.sel[kind] = Math.min(home.sel[kind] || 0, it.length - 1);
-      var left = home.left[kind] = C.rowLeft(sel, ROW_VISIBLE, home.left[kind] || 0);
-      html += '<div class="row' + (active ? ' sel' : '') + '"><h2>' + rows[r].title +
-        (active && kind === 'resume' ? '<small>' + (home.menu ? '' : '\u25b2 mark watched or remove') + '</small>' : '') +
-        '</h2><div class="tiles">';
+    var rows = homeRows(), row = homeRow(rows), html = '', card = null;
+    for (var r = row; r < Math.min(rows.length, row + 2); r++) {
+      var key = rows[r].key, it = rows[r].tiles, active = !shell.inRail && r === row;
+      var sel = home.sel[key] = Math.max(0, Math.min(home.sel[key] || 0, it.length - 1));
+      var left = home.left[key] = C.rowLeft(sel, ROW_VISIBLE, home.left[key] || 0);
+      if (r === row) {
+        var t = it[sel];
+        card = cardOf(t.kind, t.item, t.entry ? C.progressLabel(t.entry) : t.tag);
+      }
+      html += '<div class="row' + (r === row ? ' sel' : '') + '"><h2>' + esc(rows[r].title) +
+        (active && key === 'resume' && !home.menu ? '<small>\u25b2 mark watched or remove</small>' : '') + '</h2><div class="tiles">';
       for (var i = left; i < Math.min(it.length, left + ROW_VISIBLE + 1); i++) {
-        var on = active && i === sel;
-        if (kind === 'resume') {
-          html += tile(it[i], on, C.progressLabel(it[i]), { pct: it[i].dur ? it[i].pos * 100 / it[i].dur : 0, menu: on ? home.menu : 0 });
-        } else html += tile(it[i], on, kind === 'series' ? it[i].episode : '', { watched: kind === 'movie' && isWatched('movie', it[i].id) });
+        var on = active && i === sel, e = it[i].entry;
+        html += tile(it[i].item, on, e ? { pct: e.dur ? e.pos * 100 / e.dur : 0, menu: on ? home.menu : 0 }
+          : { watched: it[i].kind === 'movie' && isWatched('movie', it[i].item.id) });
       }
       html += '</div></div>';
     }
-    $('pane-home').innerHTML = html || '<div class="empty">Nothing has been added yet. Movies and TV are in the menu.</div>';
+    $('pane-home').innerHTML = rows.length ? band(card) + '<div id="rows">' + html + '</div>'
+      : '<div class="empty">Nothing has been added yet. Movies and TV are in the menu.</div>';
   }
   function keyHome(k) {
     var rows = homeRows();
     if (!rows.length) return k === KEY.LEFT ? 'rail' : null;
-    var r = homeRow(rows), kind = rows[r].kind, n = rows[r].items.length;
+    var r = homeRow(rows), key = rows[r].key, n = rows[r].tiles.length, t = rows[r].tiles[home.sel[key] || 0];
     if (home.menu) {
       // Two buttons sit over the tile: Watched, and Remove above it.
-      var entry = rows[r].items[home.sel[kind]], was = home.menu;
+      var was = home.menu;
       if (k === KEY.UP) { home.menu = 2; drawHome(); return null; }
       if (k === KEY.DOWN && was === 2) { home.menu = 1; drawHome(); return null; }
       home.menu = 0;
       if (k === KEY.ENTER) {
         if (was === 2) {
-          storeProgress(C.withoutProgress(S.progress, entry.key));
-          log('removed from continue watching: ' + entry.title);
-        } else finish(entry);
+          storeProgress(C.withoutProgress(S.progress, t.entry.key));
+          log('removed from continue watching: ' + t.entry.title);
+        } else finish(t.entry);
         drawHome();
         return null;
       }
       if (k === KEY.DOWN) { drawHome(); return null; }
     }
-    if (k === KEY.LEFT) { if (home.sel[kind] === 0) return 'rail'; home.sel[kind]--; }
-    else if (k === KEY.RIGHT) home.sel[kind] = Math.min(n - 1, home.sel[kind] + 1);
-    else if (k === KEY.UP) { if (kind === 'resume') home.menu = 1; else home.kind = rows[Math.max(0, r - 1)].kind; }
-    else if (k === KEY.DOWN) home.kind = rows[Math.min(rows.length - 1, r + 1)].kind;
+    if (k === KEY.LEFT) { if (!home.sel[key]) return 'rail'; home.sel[key]--; }
+    else if (k === KEY.RIGHT) home.sel[key] = Math.min(n - 1, (home.sel[key] || 0) + 1);
+    else if (k === KEY.UP) { if (key === 'resume') home.menu = 1; else home.key = rows[Math.max(0, r - 1)].key; }
+    else if (k === KEY.DOWN) home.key = rows[Math.min(rows.length - 1, r + 1)].key;
     else if (k === KEY.ENTER) {
-      var item = rows[r].items[home.sel[kind]];
-      if (kind === 'resume') resume(item); else openItem(kind, item);
+      if (t.entry) resume(t.entry); else openItem(t.kind, t.item);
       return null;
     }
     drawHome();
@@ -350,22 +411,22 @@
     });
   }
 
-  // ---- Movies and TV: a grid with a letter strip --------------------------
+  // ---- Movies and TV: the same band, over a grid with a letter strip -------
 
-  var COLS = 6, ROWS = 2;
+  var COLS = 8, ROWS = 2;
   var G = { movies: { sel: 0, top: 0 }, tv: { sel: 0, top: 0 }, inLetters: false, letter: '#' };
   function gridItems() { return shell.pane === 'tv' ? S.shows : S.movies; }
   function gridState() { return shell.pane === 'tv' ? G.tv : G.movies; }
   function drawGrid() {
-    var items = gridItems(), st = gridState(), html = '', i;
+    var items = gridItems(), st = gridState(), html = '', i, tv = shell.pane === 'tv';
     st.top = C.gridTop(st.sel, COLS, ROWS, st.top);
     var first = st.top * COLS, last = Math.min(items.length, first + COLS * (ROWS + 1));
-    for (i = first; i < last; i++) html += tile(items[i], !shell.inRail && !G.inLetters && i === st.sel, '', { watched: shell.pane !== 'tv' && isWatched('movie', items[i].id) });
+    for (i = first; i < last; i++) {
+      html += tile(items[i], !shell.inRail && !G.inLetters && i === st.sel, { watched: !tv && isWatched('movie', items[i].id) });
+    }
     $('grid').innerHTML = html || '<div class="empty">Nothing here yet.</div>';
     var cur = items[st.sel];
-    $('grid-name').textContent = shell.pane === 'tv' ? 'TV' : 'Movies';
-    $('grid-count').textContent = items.length ? (st.sel + 1) + ' of ' + items.length : '';
-    $('grid-title').textContent = cur ? cur.title + (cur.year ? ' (' + cur.year + ')' : '') : '';
+    $('grid-band').innerHTML = cur ? band(cardOf(tv ? 'series' : 'movie', cur, (tv ? 'TV' : 'Movies') + '  \u00b7  ' + (st.sel + 1) + ' of ' + items.length), true) : '';
     var index = C.letterIndex(items), here = cur ? C.letterOf(cur) : '';
     html = '';
     for (i = 0; i < C.LETTERS.length; i++) {
@@ -400,7 +461,7 @@
 
   // ---- Search: a letter grid, results as you type --------------------------
 
-  var KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''), KCOLS = 6, RCOLS = 4;
+  var KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''), KCOLS = 6, RCOLS = 5;
   var WIDE = ['Space', 'Delete', 'Clear'];
   var Q = { text: '', key: 0, results: [], sel: 0, top: 0, inResults: false };
   function runSearch() {
@@ -420,7 +481,8 @@
     Q.top = C.gridTop(Q.sel, RCOLS, 2, Q.top);
     html = '';
     for (i = Q.top * RCOLS; i < Math.min(Q.results.length, Q.top * RCOLS + RCOLS * 3); i++) {
-      html += tile(Q.results[i], !shell.inRail && Q.inResults && i === Q.sel, isShow(Q.results[i]) ? 'TV' : '', { watched: !isShow(Q.results[i]) && isWatched('movie', Q.results[i].id) });
+      html += tile(Q.results[i], !shell.inRail && Q.inResults && i === Q.sel,
+        { caption: true, sub: isShow(Q.results[i]) ? 'TV' : '', watched: !isShow(Q.results[i]) && isWatched('movie', Q.results[i].id) });
     }
     $('search-results').innerHTML = html;
     $('search-head').textContent = !Q.text ? 'Type a few letters of a title' :

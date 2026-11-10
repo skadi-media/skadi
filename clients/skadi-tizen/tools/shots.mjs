@@ -41,7 +41,8 @@ function movies() {
     if (i === 0) editions.push({ id: 'e0b', file: { path: '/library/0b.mp4' }, media_info: { container: 'mp4', video: { width: 1920, height: 1080, codec: 'h264' }, audio: { codec: 'aac', channels: 2 } } });
     out.push({
       id: `m${i}`, title, year: 1980 + (i * 3) % 45, runtime_minutes: 88 + (i * 5) % 70,
-      content_rating: ['PG', 'PG-13', 'R', 'G'][i % 4], genres: ['Drama', 'Adventure', 'Mystery'].slice(0, 1 + (i % 3)),
+      content_rating: ['PG', 'PG-13', 'R', 'G'][i % 4], genres: [['Drama', 'Adventure', 'Mystery'], ['Comedy', 'Family'], ['Action', 'Thriller', 'Drama'], ['Science Fiction']][i % 4],
+      added_at: new Date(Date.UTC(2026, 0, 1 + ((i * 37) % 300))).toISOString(),
       overview: 'A made-up film for the screenshot harness. '.repeat(2 + (i % 5)) + 'It stands in for a real description, which runs to a few sentences and has to wrap inside the page without pushing the buttons off the screen.',
       // i === 7 has no poster, to show the fallback tile.
       poster_url: i === 7 ? null : `/fixture/poster/${i}.svg`, backdrop_url: `/fixture/backdrop/${i}.svg`,
@@ -73,7 +74,7 @@ function shows() {
     out.push({
       id: `show${i}`, title: `${WORDS[(i * 3) % WORDS.length]} ${NOUNS[(i + 4) % NOUNS.length]}${i % 5 === 0 ? ' Files' : ''}`,
       sort_title: null, year: 1995 + i, network: ['Channel One', 'Northstar', 'Meridian TV'][i % 3], content_rating: ['TV-14', 'TV-PG', 'TV-MA'][i % 3],
-      genres: ['Drama', 'Mystery'], overview: 'A made-up series for the screenshot harness, with a description long enough to need clipping when it runs past the two lines the page gives it. '.repeat(2),
+      genres: [['Drama', 'Mystery'], ['Comedy'], ['Animation', 'Family']][i % 3], added_at: new Date(Date.UTC(2026, 0, 1 + ((i * 53) % 300))).toISOString(), overview: 'A made-up series for the screenshot harness, with a description long enough to need clipping when it runs past the two lines the page gives it. '.repeat(2),
       poster_url: `/fixture/poster/${100 + i}.svg`, backdrop_url: `/fixture/backdrop/${100 + i}.svg`, episodes,
     });
   }
@@ -86,7 +87,7 @@ function newImports(kind) {
   const items = [];
   if (kind === 'movie') {
     // m9 arrives twice (an upgrade first): it must show once.
-    for (const i of [9, 9, 31, 2, 44, 17, 58, 23, 5, 40]) items.push({ id: `h${items.length}`, kind: 'movie', item_id: `m${i}`, upgrade: items.length === 0, title: 'x', poster_url: null });
+    for (const i of [9, 9, 31, 2, 44]) items.push({ id: `h${items.length}`, kind: 'movie', item_id: `m${i}`, upgrade: items.length === 0, title: 'x', poster_url: null });
   } else {
     // A whole season of show3 landed at once: one tile, not ten.
     for (let n = 10; n >= 1; n--) items.push({ id: `t${n}`, kind: 'series', item_id: 'show3', title: shows()[3].title, episode: `S01E${String(n).padStart(2, '0')}`, poster_url: '/fixture/poster/103.svg' });
@@ -218,27 +219,34 @@ await page.waitForTimeout(500);
 
 // Home
 await shot('home');
-check('a movie that arrived twice shows once in Recently added', (await page.evaluate(() => document.querySelectorAll('#pane-home .row')[0].querySelectorAll('.tile').length)) === 7);
-check('a season that arrived at once is one tile, with its newest episode', (await html('#pane-home .row:nth-child(2) .tile .name small')) === 'S01E10');
+check('a movie that arrived twice shows once in Recently added', (await page.evaluate(() => document.querySelectorAll('#pane-home .row')[0].querySelectorAll('.tile').length)) === 4);
+check('the band names the selected title', (await html('#pane-home .band h1')).length > 3 && (await html('#pane-home .band .meta')).includes('PG'));
 await many(KEY.RIGHT, 7);
 await press(KEY.DOWN);
 await page.waitForTimeout(300);
 await shot('home-second-row');
+check('a season that arrived at once is one tile, with its newest episode', (await html('#pane-home .band-tag')).includes('S01E10') && (await page.evaluate(() => document.querySelectorAll('#pane-home .row')[0].querySelectorAll('.tile').length)) === 8);
+await many(KEY.DOWN, 3);
+await many(KEY.RIGHT, 9);
+await page.waitForTimeout(300);
+await shot('home-genre-row');
+check('rows by genre follow, and a long row scrolls sideways', / (movies|TV)$/.test(await html('#pane-home .row.sel h2')) && (await page.evaluate(() => document.querySelectorAll('#pane-home .row.sel .tile').length)) >= 8);
+await many(KEY.UP, 3);
 
 // The menu, then Movies
 await press(KEY.BACK);
 await shot('menu-focused');
 await press(KEY.DOWN);
-check('the menu opens Movies', (await html('#grid-name')) === 'Movies');
+check('the menu opens Movies', (await html('#grid-band .band-tag')).startsWith('Movies'));
 await press(KEY.RIGHT);
 await page.waitForTimeout(400);
 await shot('movies');
-check('the movie with no file is not listed', (await html('#grid-count')) === '1 of 60');
-await many(KEY.RIGHT, 6);
+check('the movie with no file is not listed', (await html('#grid-band .band-tag')).endsWith('1 of 60'));
+await many(KEY.RIGHT, 8);
 await press(KEY.DOWN, KEY.DOWN, KEY.DOWN);
 await page.waitForTimeout(300);
 await shot('movies-letter-strip');
-const jumped = await html('#grid-title');
+const jumped = await html('#grid-band h1');
 check('the letter strip jumps the grid to another letter', (await html('#letters .sel')) !== '#' && jumped.length > 0);
 await press(KEY.LEFT, KEY.ENTER);
 await page.waitForTimeout(400);
@@ -281,7 +289,7 @@ check('Back from the movie page returns to the grid', (await view()) === 'shell'
 await press(KEY.BACK, KEY.DOWN, KEY.RIGHT);
 await page.waitForTimeout(400);
 await shot('tv');
-check('the series with nothing downloaded is not listed', (await html('#grid-count')) === '1 of 30');
+check('the series with nothing downloaded is not listed', (await html('#grid-band .band-tag')).endsWith('1 of 30'));
 await press(KEY.RIGHT, KEY.ENTER);
 await page.waitForSelector('#series.on');
 await page.waitForTimeout(400);
@@ -334,9 +342,10 @@ check('Home stays on the row it was left on when a new row appears above', (awai
 await press(KEY.UP, KEY.UP);
 await shot('home-continue-watching');
 check('Continue watching is first on Home, with the film and the series', (await html('#pane-home .row:nth-child(1) h2')).startsWith('Continue watching') && (await page.evaluate(() => document.querySelectorAll('#pane-home .row')[0].querySelectorAll('.tile').length)) === 2);
-check('the episode after the one that ended waits there, as Up next', (await html('#pane-home .row:nth-child(1) .tile .name small')).includes('Up next') && (await stored('progress'))[0].part.endsWith('e2x3'));
+check('the episode after the one that ended waits there, as Up next', (await html('#pane-home .band-tag')).includes('Up next') && (await stored('progress'))[0].part.endsWith('e2x3'));
 check('the episode that played to its end is marked watched', Object.keys(await stored('watched')).some((k) => k.endsWith('e2x2')));
-const left = (await stored('progress')).find((e) => e.kind === 'movie').pos;
+const film = (await stored('progress')).find((e) => e.kind === 'movie');
+const left = film.pos;
 await press(KEY.RIGHT, KEY.ENTER);
 await page.waitForTimeout(800);
 await shot('player-resumed');
@@ -349,7 +358,7 @@ await shot('home-tile-buttons');
 await press(KEY.DOWN);
 check('Down leaves the buttons without changing anything', (await stored('progress')).length === 2 && !(await html('#pane-home')).includes('Remove'));
 await press(KEY.UP, KEY.ENTER);
-check('Up then Enter marks a film watched, and it leaves the row', (await stored('progress')).length === 1 && (await stored('watched'))['movie:m0'] === 1);
+check('Up then Enter marks a film watched, and it leaves the row', (await stored('progress')).length === 1 && (await stored('watched'))['movie:' + film.id] === 1);
 await press(KEY.UP, KEY.ENTER);
 await page.waitForTimeout(400);
 check('marking an episode watched moves the series on to the next one', (await stored('progress'))[0].part.endsWith('e2x4') && (await stored('progress'))[0].pos === 0);

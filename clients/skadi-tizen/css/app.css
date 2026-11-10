@@ -31,69 +31,94 @@ h1 { font-weight: 600; margin: 0; }
 .field.sel .btn { background: #2f7fcb; }
 .hint { color: #7d8fa0; font-size: 26px; margin-top: 30px; }
 
-/* The menu on the left */
-#rail { position: absolute; left: 0; top: 0; width: 210px; height: 1080px; background: #080c11; padding-top: 60px; box-sizing: border-box; }
-#rail .brand { font-size: 40px; font-weight: 600; padding: 0 0 50px 34px; }
-.rail-item { padding: 20px 0 20px 30px; margin-bottom: 6px; font-size: 32px; color: #7d8fa0; border-left: 6px solid transparent; }
-.rail-item.here { color: #e8edf2; border-left-color: #2f7fcb; }
-.rail-item.sel { color: #fff; background: #2f7fcb; border-left-color: #2f7fcb; }
-.pane { display: none; position: absolute; left: 210px; top: 0; width: 1710px; height: 1080px; }
+/* The menu on the left: a strip of icons, opening over the page when it has the focus */
+#shell { background: #08090b; }
+#rail { position: absolute; left: 0; top: 0; width: 100px; height: 1080px; padding-top: 50px; box-sizing: border-box; z-index: 3; overflow: hidden; background: #08090b; }
+#rail.open { width: 420px; background: -webkit-linear-gradient(left, #08090b 62%, rgba(8,9,11,0)); background: linear-gradient(to right, #08090b 62%, rgba(8,9,11,0)); }
+#shell.menu .pane { opacity: 0.3; }
+#rail .brand { height: 60px; line-height: 60px; font-size: 44px; font-weight: 700; color: #5fb4ff; padding-left: 34px; margin-bottom: 70px; }
+.rail-item { height: 76px; line-height: 76px; margin: 0 0 14px 14px; padding-left: 20px; width: 220px; border-radius: 10px; font-size: 32px; color: #7d8fa0; white-space: nowrap; box-sizing: border-box; }
+.rail-item svg { width: 34px; height: 34px; vertical-align: middle; margin-right: 26px; fill: none; stroke: #7d8fa0; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.rail-item span { vertical-align: middle; }
+#rail:not(.open) .rail-item { width: 72px; }
+#rail:not(.open) .rail-item span { display: none; }
+.rail-item.here { color: #fff; }
+.rail-item.here svg { stroke: #fff; }
+.rail-item.sel { color: #fff; background: #2f7fcb; }
+.rail-item.sel svg { stroke: #fff; }
+.pane { display: none; position: absolute; left: 100px; top: 0; width: 1820px; height: 1080px; overflow: hidden; }
 .pane.on { display: block; }
 
-/* A poster tile, used by the rows, the grid and the search results */
-.tile { float: left; width: 236px; height: 458px; margin: 0 22px 22px 0; }
-.tile .art { width: 228px; height: 342px; border: 4px solid transparent; border-radius: 10px; background: #18222d; overflow: hidden; }
-.tile img { width: 228px; height: 342px; display: block; }
-.tile .name { height: 76px; overflow: hidden; margin-top: 8px; font-size: 24px; line-height: 30px; color: #9fb0c0; text-align: center; }
-.tile .name small { display: block; font-size: 22px; color: #7d8fa0; }
-.tile.sel .art { border-color: #5fb4ff; }
+/* A poster tile. Rows and grids show the poster alone; the band names it. */
+.tile { float: left; width: 190px; height: 285px; margin: 0 16px 16px 0; }
+.tile .art { position: relative; width: 190px; height: 285px; border: 4px solid transparent; border-radius: 8px; background: #18222d; overflow: hidden; box-sizing: border-box; opacity: 0.82; }
+.tile img { width: 100%; height: 100%; display: block; }
+.tile.sel .art { border-color: #fff; opacity: 1; }
+.tile .blank { padding: 18px 12px; font-size: 24px; line-height: 32px; color: #9fb0c0; }
+/* With its name underneath, for search. */
+.tile.cap { height: 372px; }
+.tile .name { height: 66px; overflow: hidden; margin-top: 8px; font-size: 22px; line-height: 28px; color: #9fb0c0; text-align: center; }
+.tile .name small { display: block; font-size: 20px; color: #7d8fa0; }
 .tile.sel .name { color: #fff; }
-.tile .blank { padding: 20px 14px; font-size: 26px; line-height: 34px; color: #9fb0c0; }
-.tile .art { position: relative; }
 /* How much of it has been watched, along the bottom of the poster. */
-.tile .seen { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.65); }
-.tile .seen div { height: 8px; border-radius: 4px; background: #5fb4ff; }
+.tile .seen { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 7px; border-radius: 4px; background: rgba(0,0,0,0.7); }
+.tile .seen div { height: 7px; border-radius: 4px; background: #5fb4ff; }
 .tile .tick, .seen-tick { color: #7ddc8a; }
-.tile .tick { position: absolute; right: 8px; top: 8px; width: 44px; height: 44px; line-height: 44px; border-radius: 22px; text-align: center; font-size: 28px; background: rgba(0,0,0,0.7); }
+.tile .tick { position: absolute; right: 6px; top: 6px; width: 40px; height: 40px; line-height: 40px; border-radius: 20px; text-align: center; font-size: 26px; background: rgba(0,0,0,0.7); }
 .seen-tick { margin-left: 18px; }
 .ep.sel .seen-tick { color: #fff; }
 /* The two buttons of a Continue watching tile, over its poster. */
-.tile .menu { position: absolute; left: 0; top: 0; width: 228px; height: 342px; background: rgba(8,12,17,0.82); }
-.tile .menu div { height: 80px; line-height: 80px; margin: 60px 16px 0 16px; border: 3px solid transparent; border-radius: 10px; text-align: center; font-size: 28px; background: #1d2b3a; color: #c5d3e0; }
-.tile .menu div + div { margin-top: 22px; }
+.tile .menu { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(8,9,11,0.84); }
+.tile .menu div { height: 70px; line-height: 70px; margin: 48px 10px 0 10px; border: 3px solid transparent; border-radius: 10px; text-align: center; font-size: 24px; background: #1d2b3a; color: #c5d3e0; }
+.tile .menu div + div { margin-top: 18px; }
 .tile .menu .sel { border-color: #fff; background: #2f7fcb; color: #fff; }
-.empty { color: #7d8fa0; padding: 40px 0; }
+.empty { color: #7d8fa0; padding: 40px 60px; }
+
+/* The band: the selected title, large, over its backdrop */
+.band { position: relative; width: 1820px; height: 560px; overflow: hidden; }
+.band-art { position: absolute; right: 0; top: 0; width: 1240px; height: 560px; background-size: cover; background-position: center top; }
+.band-shade { position: absolute; left: 0; top: 0; width: 1820px; height: 560px;
+  background: -webkit-linear-gradient(left, #08090b 32%, rgba(8,9,11,0.55) 58%, rgba(8,9,11,0) 85%); background: linear-gradient(to right, #08090b 32%, rgba(8,9,11,0.55) 58%, rgba(8,9,11,0) 85%); }
+.band-fade { position: absolute; left: 0; bottom: 0; width: 1820px; height: 200px;
+  background: -webkit-linear-gradient(top, rgba(8,9,11,0), #08090b); background: linear-gradient(to bottom, rgba(8,9,11,0), #08090b); }
+.band-text { position: absolute; left: 60px; top: 84px; width: 900px; }
+.band-tag { height: 40px; font-size: 26px; font-weight: 600; color: #5fb4ff; margin-bottom: 10px; white-space: nowrap; overflow: hidden; }
+.band h1 { font-size: 66px; line-height: 76px; max-height: 152px; overflow: hidden; }
+.band .meta { margin: 14px 0 18px 0; font-size: 28px; white-space: nowrap; overflow: hidden; }
+.band p { margin: 0; font-size: 28px; line-height: 40px; max-height: 120px; overflow: hidden; color: #d5dfe8; }
+.band.small, .band.small .band-art, .band.small .band-shade { height: 320px; }
+.band.small .band-fade { height: 120px; }
+.band.small .band-text { top: 34px; }
+.band.small h1 { font-size: 52px; line-height: 62px; max-height: 62px; white-space: nowrap; }
+.band.small .meta { margin: 6px 0 10px 0; }
+.band.small p { max-height: 80px; }
 
 /* Home */
-#pane-home { padding: 44px 0 0 50px; box-sizing: border-box; }
-.row { height: 512px; overflow: hidden; }
-.row h2 { font-size: 34px; font-weight: 600; margin: 0 0 16px 4px; height: 44px; color: #c5d3e0; }
+#rows { position: absolute; left: 60px; top: 548px; width: 1760px; }
+.row { height: 392px; overflow: hidden; }
+.row h2 { font-size: 32px; font-weight: 600; margin: 0 0 14px 4px; height: 44px; line-height: 44px; color: #9fb0c0; white-space: nowrap; }
 .row.sel h2 { color: #fff; }
 .row h2 small { font-size: 24px; font-weight: 400; color: #9fb0c0; margin-left: 26px; }
-.row .tiles { width: 1700px; height: 440px; overflow: hidden; }
+.row .tiles { width: 1900px; height: 301px; overflow: hidden; }
 
 /* Movies and TV */
-#grid-head { height: 96px; line-height: 96px; padding-left: 54px; white-space: nowrap; overflow: hidden; }
-#grid-name { font-size: 40px; font-weight: 600; margin-right: 26px; }
-#grid-count { color: #7d8fa0; margin-right: 44px; }
-#grid-title { font-size: 34px; }
-#grid { position: absolute; left: 50px; top: 104px; width: 1560px; height: 976px; overflow: hidden; }
-#letters { position: absolute; left: 1620px; top: 100px; width: 70px; }
-.letter { height: 35px; line-height: 35px; text-align: center; font-size: 24px; color: #5d6e7e; border-radius: 6px; }
+#grid { position: absolute; left: 60px; top: 326px; width: 1660px; height: 760px; overflow: hidden; }
+#letters { position: absolute; left: 1732px; top: 330px; width: 64px; }
+.letter { height: 27px; line-height: 27px; text-align: center; font-size: 21px; color: #4c5b69; border-radius: 6px; }
 .letter.has { color: #9fb0c0; }
 .letter.here { color: #fff; background: #25435f; }
 .letter.sel { color: #fff; background: #2f7fcb; }
 
 /* Search */
-#search-left { position: absolute; left: 50px; top: 50px; width: 580px; }
+#search-left { position: absolute; left: 60px; top: 60px; width: 580px; }
 #search-text { height: 76px; line-height: 76px; padding: 0 20px; margin-bottom: 26px; border-radius: 8px; background: #16212d; font-size: 36px; white-space: nowrap; overflow: hidden; }
 #search-text .ph { color: #5d6e7e; }
 .key { float: left; width: 84px; height: 84px; line-height: 84px; margin: 0 10px 10px 0; text-align: center; font-size: 34px; border: 3px solid transparent; border-radius: 8px; background: #141d27; box-sizing: border-box; }
 .key.wide { width: 178px; font-size: 26px; }
 .key.sel { border-color: #fff; background: #2f7fcb; }
-#search-right { position: absolute; left: 670px; top: 50px; width: 1040px; height: 1030px; overflow: hidden; }
+#search-right { position: absolute; left: 700px; top: 60px; width: 1040px; height: 1020px; overflow: hidden; }
 #search-head { height: 76px; line-height: 76px; margin-bottom: 26px; color: #9fb0c0; white-space: nowrap; overflow: hidden; }
-#search-results { width: 1040px; height: 940px; overflow: hidden; }
+#search-results { width: 1040px; height: 920px; overflow: hidden; }
 
 /* Movie page */
 #detail-body { position: absolute; left: 100px; top: 110px; width: 1720px; }

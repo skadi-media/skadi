@@ -141,7 +141,7 @@ fn browse(requested: Option<String>, roots: &[PathBuf]) -> Result<FsListing, App
         })
         .filter(|e| !e.name.starts_with('.')) // hide dotdirs
         .collect();
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|a| a.name.to_lowercase());
     Ok(FsListing {
         path: target.to_string_lossy().into_owned(),
         parent,

@@ -6,7 +6,7 @@
 name = "skadi-aurora-css"
 version = "0.1.12"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 authors = ["Dylan Storey"]
 description = "Writes the Aurora stylesheets for the skadi-web build"

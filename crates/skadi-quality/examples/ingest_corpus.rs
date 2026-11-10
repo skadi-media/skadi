@@ -134,11 +134,7 @@ fn main() {
         eprintln!(
             "  {:<40} {grand_parsed:>4}/{grand_total:<4} ({}%)",
             "TOTAL",
-            if grand_total > 0 {
-                grand_parsed * 100 / grand_total
-            } else {
-                0
-            }
+            (grand_parsed * 100).checked_div(grand_total).unwrap_or(0)
         );
     }
 }

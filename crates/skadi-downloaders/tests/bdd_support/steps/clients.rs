@@ -373,11 +373,23 @@ fn test_fails(w: &mut World, needle: String) {
     }
 }
 
+#[then("the status is waiting for a worker")]
+fn is_waiting(w: &mut World) {
+    assert!(
+        matches!(status_of(w), DownloadStatus::Waiting),
+        "{:?}",
+        w.status
+    );
+}
+
 #[then(regex = r"^the download is (still|no longer) in flight from the hunter's view$")]
 fn in_flight(w: &mut World, yes: String) {
     let in_flight = matches!(
         status_of(w),
-        DownloadStatus::Queued | DownloadStatus::Downloading { .. } | DownloadStatus::Paused { .. }
+        DownloadStatus::Queued
+            | DownloadStatus::Waiting
+            | DownloadStatus::Downloading { .. }
+            | DownloadStatus::Paused { .. }
     );
     assert_eq!(in_flight, yes == "still", "{:?}", w.status);
 }

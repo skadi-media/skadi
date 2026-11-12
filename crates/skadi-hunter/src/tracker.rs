@@ -141,6 +141,20 @@ pub struct TransferWatch {
     pub paused_secs: i64,
 }
 
+impl TransferWatch {
+    /// End a hold (a pause, or a wait for a worker) at `now`: the time held is
+    /// credited back against the lifetime cap and the stall clock starts
+    /// again from here. Returns whether there was a hold to end.
+    pub fn end_hold(&mut self, now: DateTime<Utc>) -> bool {
+        let Some(held_at) = self.paused_at.take() else {
+            return false;
+        };
+        self.paused_secs += (now - held_at).num_seconds().max(0);
+        self.progress_at = now;
+        true
+    }
+}
+
 /// Who the tracked run for an acquirable belongs to, as seen from a workflow
 /// step entering a stage — see [`InFlightTracker::adopt`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -397,12 +411,11 @@ impl InFlightTracker {
                     w.best_progress = progress;
                     w.progress_at = now;
                 }
-                if live && let Some(paused_at) = w.paused_at.take() {
+                if live {
                     // Resumed: the pause does not count against the lifetime
                     // cap, and the stall clock starts again from here
                     // (SKADI-T-0710).
-                    w.paused_secs += (now - paused_at).num_seconds().max(0);
-                    w.progress_at = now;
+                    w.end_hold(now);
                 }
                 if live && w.live_since.is_none() {
                     // First time the client reports it running: this is when the
@@ -462,6 +475,27 @@ impl InFlightTracker {
             watch,
             flush: false,
         })
+    }
+
+    /// The client has the transfer and is preparing it — hash check, magnet
+    /// metadata — so it is no longer held (SKADI-T-0761). A transfer that
+    /// waited for a worker comes through here when one takes it: the wait is
+    /// credited back, and from now the lifetime cap runs, which is what still
+    /// ends a transfer that never gets past its metadata. The stall clock stays
+    /// off until the client reports it live. A sign of life for the run.
+    pub fn observe_queued(&self, acquirable_ref: &str) {
+        let Ok(mut runs) = self.runs.write() else {
+            return;
+        };
+        let Some(meta) = runs.get_mut(acquirable_ref) else {
+            return;
+        };
+        let now = Utc::now();
+        meta.last_seen = now;
+        if let Some(mut w) = meta.transfer {
+            w.end_hold(now);
+            meta.transfer = Some(w);
+        }
     }
 
     /// The transfer watch for `acquirable_ref`, if it's tracked and `monitor`
@@ -945,6 +979,48 @@ mod tests {
         assert_eq!(dropped, vec!["adopted-dead".to_string()]);
         assert!(t.is_active("owned"), "owned runs never expire");
         assert!(t.is_active("adopted-live"), "touched runs survive");
+    }
+
+    /// SKADI-T-0761: a transfer that waited for a worker and is then taken
+    /// stops being held, though it is not live yet.
+    #[test]
+    fn a_wait_for_a_worker_ends_when_the_client_takes_the_transfer() {
+        let t = InFlightTracker::default();
+        t.adopt(MediaKind::Series, "r", "downloading", None);
+        t.observe_queued("r"); // nothing watched yet: no effect, no panic
+        assert!(t.transfer_watch("r").is_none());
+
+        let waiting = t.observe_paused("r").unwrap();
+        assert!(waiting.watch.paused_at.is_some());
+        assert!(waiting.watch.live_since.is_none());
+
+        t.observe_queued("r");
+        let taken = t.transfer_watch("r").unwrap();
+        assert!(taken.paused_at.is_none(), "no longer held");
+        assert!(taken.live_since.is_none(), "but not live either");
+        assert_eq!(taken.since, waiting.watch.since);
+    }
+
+    #[test]
+    fn end_hold_credits_the_time_held_and_restarts_the_stall_clock() {
+        let since = Utc::now();
+        let mut w = TransferWatch {
+            since,
+            best_progress: 0.0,
+            progress_at: since,
+            live_since: None,
+            paused_at: Some(since),
+            paused_secs: 60,
+        };
+        let later = since + chrono::Duration::hours(19);
+        assert!(w.end_hold(later));
+        assert_eq!(w.paused_at, None);
+        assert_eq!(
+            w.paused_secs,
+            60 + chrono::Duration::hours(19).num_seconds()
+        );
+        assert_eq!(w.progress_at, later);
+        assert!(!w.end_hold(later), "nothing held the second time");
     }
 
     /// SKADI-T-0710: a pause stops the clocks, a resume restarts the stall

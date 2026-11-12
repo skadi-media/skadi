@@ -1099,6 +1099,11 @@ impl pipeline::ProgressSink for LiveProgress {
         // The clock stops; paused time is credited back on resume (SKADI-T-0710).
         let _ = crate::tracker::tracker().observe_paused(&self.acquirable.0);
     }
+
+    async fn queued(&self) {
+        // A worker has it now: a wait for a slot is over (SKADI-T-0761).
+        crate::tracker::tracker().observe_queued(&self.acquirable.0);
+    }
 }
 
 /// `monitor`: poll the downloader **once**, reporting live progress; while the
@@ -1802,6 +1807,72 @@ mod tests {
                 after.num_hours()
             );
         }
+    }
+
+    /// SKADI-T-0761: a transfer that has only ever waited for a worker is
+    /// never given up on. On 2026-11-11, with five slots and a few hundred
+    /// queued, 280 releases were blocklisted for "still at 0% after 18h"
+    /// without having been tried.
+    #[test]
+    fn a_transfer_waiting_for_a_worker_is_never_given_up_on() {
+        let since = chrono::Utc::now();
+        // As `observe_paused` leaves a transfer first seen waiting.
+        let waiting = TransferWatch {
+            since,
+            best_progress: 0.0,
+            progress_at: since,
+            live_since: None,
+            paused_at: Some(since),
+            paused_secs: 0,
+        };
+        for after in [
+            MONITOR_MAX_LIFETIME + chrono::Duration::hours(1),
+            chrono::Duration::days(30),
+        ] {
+            assert_eq!(
+                stall_verdict(&waiting, since + after, StallPolicy::default()),
+                None,
+                "waited {}h",
+                after.num_hours()
+            );
+        }
+    }
+
+    /// SKADI-T-0761: the wait is credited back when a worker takes the
+    /// transfer, so the lifetime cap counts from there — and still ends one
+    /// that then never gets past its metadata.
+    #[test]
+    fn the_lifetime_cap_counts_from_when_a_worker_took_the_transfer() {
+        let since = chrono::Utc::now();
+        let waited = chrono::Duration::hours(40);
+        let mut watch = TransferWatch {
+            since,
+            best_progress: 0.0,
+            progress_at: since,
+            live_since: None,
+            paused_at: Some(since),
+            paused_secs: 0,
+        };
+        let taken = since + waited;
+        assert!(watch.end_hold(taken));
+        assert_eq!(
+            stall_verdict(
+                &watch,
+                taken + MONITOR_MAX_LIFETIME - chrono::Duration::hours(1),
+                StallPolicy::default()
+            ),
+            None,
+            "young since it was taken, however long it waited"
+        );
+        assert!(
+            stall_verdict(
+                &watch,
+                taken + MONITOR_MAX_LIFETIME + chrono::Duration::minutes(1),
+                StallPolicy::default()
+            )
+            .is_some(),
+            "a transfer that never starts is still ended"
+        );
     }
 
     /// SKADI-T-0710: on resume the clock starts again from the resume, so a

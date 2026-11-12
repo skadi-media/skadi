@@ -115,7 +115,14 @@ impl Downloader for DbDownloader {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("no download job {}", handle.native_id)))?;
         Ok(match job.status {
-            DownloadJobStatus::Queued => DownloadStatus::Queued,
+            // A row no worker has claimed is waiting for a slot, not started
+            // (SKADI-T-0761). It used to be reported as `Queued`, the same as
+            // a claimed transfer stuck initializing, so the hunter's lifetime
+            // cap ran on it: with `worker.max_active` at 5 and a few hundred
+            // downloads queued, 280 releases were blocklisted in three hours
+            // on 2026-11-11 for "still at 0% after 18h" without one of them
+            // ever having been tried.
+            DownloadJobStatus::Queued => DownloadStatus::Waiting,
             // A paused transfer is still in-flight from the hunter's view (it keeps
             // monitoring); the operator can resume it (SKADI-T-0168). A `stalled`
             // transfer is likewise still in-flight — just not making progress
@@ -226,9 +233,10 @@ mod tests {
             .unwrap();
         assert!(!handle.native_id.is_empty());
         assert_eq!(handle.category, "2000");
+        // No worker has it yet: waiting, not a started transfer (SKADI-T-0761).
         assert!(matches!(
             dl.status(&handle).await.unwrap(),
-            DownloadStatus::Queued
+            DownloadStatus::Waiting
         ));
         // The configured download dirs are written into the job row.
         let row = store

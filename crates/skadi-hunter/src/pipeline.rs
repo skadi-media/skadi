@@ -2018,9 +2018,13 @@ async fn try_snatch(
 #[async_trait::async_trait]
 pub trait ProgressSink: Send + Sync {
     async fn report(&self, progress: f32);
-    /// The client holds the transfer paused (SKADI-T-0710). Nothing to write
-    /// for the item; the hunter's watch stops its stall clock.
+    /// The transfer is held: paused (SKADI-T-0710), or not yet taken by any
+    /// worker (SKADI-T-0761). Nothing to write for the item; the hunter's watch
+    /// stops its clocks.
     async fn paused(&self) {}
+    /// The client has the transfer but has not made it live (hash check,
+    /// magnet metadata). Not held any more: a wait for a worker ends here.
+    async fn queued(&self) {}
 }
 
 /// `monitor`: poll the downloader for `state.handle` until the transfer
@@ -2072,10 +2076,11 @@ pub async fn monitor(
                     tokio::time::sleep(interval).await;
                 }
             }
-            DownloadStatus::Paused { .. } => {
-                // Held by the operator or the worker's cap: in flight, not live
-                // (SKADI-T-0710). The watch pauses its clock; no progress to
-                // report, and never a failure.
+            DownloadStatus::Paused { .. } | DownloadStatus::Waiting => {
+                // Held by the operator or the worker's cap (SKADI-T-0710), or
+                // not yet taken by any worker (SKADI-T-0761): in flight, not
+                // live. The watch pauses its clock; no progress to report, and
+                // never a failure.
                 if let Some(sink) = progress {
                     sink.paused().await;
                 }
@@ -2084,6 +2089,9 @@ pub async fn monitor(
                 }
             }
             DownloadStatus::Queued => {
+                if let Some(sink) = progress {
+                    sink.queued().await;
+                }
                 if poll + 1 < max_polls.max(1) {
                     tokio::time::sleep(interval).await;
                 }
@@ -3066,6 +3074,53 @@ mod snatch_monitor_tests {
             vec![0.25, 0.75],
             "each Downloading poll reported; Queued/Completed did not"
         );
+    }
+
+    /// A transfer no worker has taken yet is held, not running (SKADI-T-0761):
+    /// the sink hears "paused" for each such poll, which is what stops the
+    /// hunter's clocks, and never a progress report of 0%.
+    #[tokio::test]
+    async fn monitor_tells_the_sink_a_waiting_transfer_is_held() {
+        #[derive(Default)]
+        struct Recorder {
+            reports: std::sync::Mutex<Vec<f32>>,
+            held: std::sync::atomic::AtomicU32,
+        }
+        #[async_trait::async_trait]
+        impl ProgressSink for Recorder {
+            async fn report(&self, progress: f32) {
+                self.reports.lock().unwrap().push(progress);
+            }
+            async fn paused(&self) {
+                self.held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let mut state = state_with_chosen(ReleaseFetch::Magnet("magnet:?xt=urn:btih:abc".into()));
+        state.handle = Some(DownloadHandle {
+            native_id: "h1".into(),
+            category: "2000".into(),
+        });
+        let downloader = d(MockDownloader::new(
+            Protocol::Torrent,
+            vec![DownloadStatus::Waiting, DownloadStatus::Waiting],
+        ));
+        let recorder = Recorder::default();
+        let err = monitor(
+            &mut state,
+            &[downloader],
+            Duration::from_millis(1),
+            2,
+            Some(&recorder),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Network(_)),
+            "still in flight: the run keeps watching, {err:?}"
+        );
+        assert_eq!(recorder.held.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(recorder.reports.lock().unwrap().is_empty());
     }
 
     // --- import / notify ---

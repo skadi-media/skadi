@@ -32,7 +32,15 @@ pub struct DownloadHandle {
 /// Backend-agnostic transfer state.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum DownloadStatus {
+    /// The client has the transfer but has not made it live: it is behind the
+    /// client's own hash/init work, or still fetching magnet metadata.
     Queued,
+    /// No worker has taken the transfer yet (SKADI-T-0761): it waits in
+    /// skadi's own queue for a slot under the worker's active cap, or for a
+    /// worker to be running at all. In flight, not live, and nothing the
+    /// release did: the hunter's clocks do not run on it, however long the
+    /// wait, so no blocklist can come of it.
+    Waiting,
     Downloading {
         progress: f32,
     },

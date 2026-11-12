@@ -15,7 +15,15 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     And the job carries incomplete dir "/data/incomplete" and complete dir "/data/complete"
     And the job's acquirable ref is the release title "The Matrix"
     When the hunter reads the status
-    Then the status is queued
+    Then the status is waiting for a worker
+
+  @C16 @passing @SKADI-T-0761
+  Scenario: a job no worker has claimed is waiting, not a started transfer, so no clock can run on it
+    Given a magnet release "The Matrix" with info hash "abc"
+    When the hunter adds the release under category 2000
+    And the hunter reads the status
+    Then the status is waiting for a worker
+    And the download is still in flight from the hunter's view
 
   @C16 @passing
   Scenario: a .torrent URL release is enqueued as-is for the worker to resolve

@@ -132,6 +132,7 @@ fn statuses_from(step: &Step) -> Vec<DownloadStatus> {
         .skip(1)
         .map(|r| match r[0].as_str() {
             "Queued" => DownloadStatus::Queued,
+            "Waiting" => DownloadStatus::Waiting,
             "Completed" => DownloadStatus::Completed {
                 files: vec![std::path::PathBuf::from("/tmp/done.mkv")],
             },

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-11-12
+
+### Fixed
+- A download waiting in the queue for a worker was given up on after 18 hours and its release blocklisted, without ever having been started. With `worker.max_active` set and many downloads queued, this blocklisted good releases and drove items down to worse ones. A download no worker has taken is now reported as waiting, and the give-up clock runs only from when a worker takes it (SKADI-T-0761).
+
 ## [0.1.13] - 2026-11-10
 
 ### Added

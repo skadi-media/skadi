@@ -1934,7 +1934,49 @@ async fn run_manual_import(
     body: &ManualImportRequest,
 ) -> std::result::Result<skadi_importer::ImportOutcome, ApiError> {
     let (importer, completed) = resolve_manual_import(state, body).await?;
-    Ok(importer.import(completed).await?)
+    let outcome = importer.import(completed).await?;
+    // Placing the file is half of an import: the item must also become
+    // Imported, or it stays Missing and is hunted again (SKADI-T-0766). The
+    // acquire workflow does this in its import step; do the same here. A file
+    // that was already at its destination counts too — it is that item's file.
+    if let Some((kind, svc)) = manual_import_services(state, &body.kind) {
+        let mut placed = outcome.clone();
+        placed
+            .imported
+            .extend(outcome.already_present.iter().cloned());
+        let parsed = manual_import_parse(&body.path);
+        skadi_hunter::persist_imported(&svc, kind, &placed, Some(&parsed), 0).await;
+    }
+    Ok(outcome)
+}
+
+/// The media kind a manual import names and its hunter services, when both
+/// resolve ([`resolve_manual_import`] has already refused the request otherwise).
+fn manual_import_services(
+    state: &Arc<AppState>,
+    kind: &str,
+) -> Option<(
+    skadi_core::MediaKind,
+    std::sync::Arc<skadi_hunter::HunterServices>,
+)> {
+    let kind = state
+        .library
+        .iter()
+        .map(|p| p.kind())
+        .find(|k| kind_str(*k) == kind.to_lowercase())?;
+    Some((kind, skadi_hunter::try_services_for(kind)?))
+}
+
+/// The release parse a manual import's quality starts from: the last component
+/// of the path the operator pointed at — a release folder or a file, either of
+/// which normally carries the release name. The probe of the placed file then
+/// corrects the resolution (SKADI-T-0241).
+fn manual_import_parse(path: &str) -> skadi_quality::ParsedRelease {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path);
+    skadi_quality::parse(name)
 }
 
 /// What a manual import's outcome means for the download row (SKADI-T-0709):

@@ -188,6 +188,138 @@ fn transfer_backoff(attempts: u32) -> chrono::Duration {
 /// chose, including none.
 const AUTO_BLOCK_TTL: chrono::Duration = chrono::Duration::days(30);
 
+/// Persist what an import placed (SKADI-T-0766): for each distinct acquirable in
+/// `outcome.imported`, probe the placed file, settle its quality, write the
+/// `Imported` status and the media-info, and emit the trace.
+///
+/// Shared by the acquire workflow's import step and by the manual import
+/// (`POST /downloads/import`), which used to place the file and leave the item
+/// `Missing`. `parsed` is the release parse the quality starts from — the
+/// grabbed release's for the workflow, the source file name's for a manual
+/// import — and `format_score` its custom-format score (0 when there is none).
+pub async fn persist_imported(
+    svc: &HunterServices,
+    kind: skadi_core::MediaKind,
+    outcome: &skadi_importer::ImportOutcome,
+    parsed: Option<&skadi_quality::ParsedRelease>,
+    format_score: i32,
+) {
+    // Fan out across **every distinct imported book** (SKADI-T-0310): a pack
+    // download satisfies several library books, so probe + re-score + persist for
+    // each — not just the run's primary acquirable, which used to leave the rest
+    // `Wanted` (and re-acquired). One representative file per book.
+    for imported in distinct_imported(&outcome.imported) {
+        // Probe the placed file FIRST (SKADI-T-0237/0241): its real streams are
+        // ground truth — used both to make the stored quality honest and to
+        // persist media-info. Best-effort + strictly **non-fatal**.
+        let probe_path = imported.file.path.clone();
+        let media_info = match tokio::task::spawn_blocking(move || {
+            skadi_media_probe::DefaultProber.probe(&probe_path)
+        })
+        .await
+        {
+            Ok(info) => info,
+            Err(e) => {
+                tracing::warn!(acquirable = %imported.acquirable.0, "media probe task panicked: {e}");
+                None
+            }
+        };
+
+        // Re-score against the probe (SKADI-T-0241): override the title-parsed
+        // resolution/bitrate with the file's real values, so a release titled
+        // `2160p` whose file is really 1080p is stored as 1080p and can't fake a
+        // cutoff (the next sweep keeps looking for a genuine 4K).
+        let probed_resolution = media_info
+            .as_ref()
+            .and_then(|m| m.video.as_ref())
+            .map(|v| v.resolution_tier());
+        let probed_bitrate = media_info
+            .as_ref()
+            .and_then(|m| m.audio.as_ref())
+            .and_then(|a| a.bitrate_kbps);
+        let reconciled = parsed
+            .map(|p| skadi_quality::reconcile_with_probe(p, probed_resolution, probed_bitrate));
+
+        let quality_id = if let Some(ab) = svc.scoring.audiobook.as_ref() {
+            // Audiobooks: the imported file's container is ground truth
+            // (SKADI-T-0148). Reconcile the release-title-parsed quality
+            // against the actual file's format so an MP3 release advertised
+            // as M4B doesn't get stored as M4B (which used to happen because
+            // the movie `to_quality` returned None → profile cutoff).
+            let parsed = reconciled
+                .as_ref()
+                .and_then(|p| skadi_quality::audiobook::to_audiobook_quality(p, &ab.definitions));
+            let file_fmt = imported
+                .file
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .and_then(skadi_quality::AudioFormat::from_token);
+            match file_fmt {
+                Some(fmt) => {
+                    skadi_quality::reconcile_quality_with_format(parsed, fmt, &ab.definitions)
+                        .or(parsed)
+                        .unwrap_or_else(skadi_quality::audiobook::unknown_audiobook_id)
+                }
+                None => parsed.unwrap_or_else(skadi_quality::audiobook::unknown_audiobook_id),
+            }
+        } else {
+            // Nothing matched a definition (unparseable title, no probe, or an
+            // SD tier the ladder doesn't carry): store UNKNOWN rather than
+            // substituting the profile cutoff. The cutoff fabricated a
+            // "satisfied" item that no upgrade would ever replace, the mirror
+            // image of the adoption SDTV floor (SKADI-T-0412 / SKADI-T-0399).
+            // The upgrade sweeps skip Unknown instead of ranking it lowest.
+            reconciled
+                .as_ref()
+                .and_then(|p| skadi_quality::to_quality(p, &svc.scoring.definitions))
+                .map(|q| q.id)
+                .unwrap_or(skadi_quality::UNKNOWN_QUALITY_ID)
+        };
+
+        let _ = svc
+            .status
+            .set_imported(
+                &imported.acquirable,
+                AcquisitionStatus::Imported {
+                    file: FileRef {
+                        path: imported.file.path.clone(),
+                    },
+                    quality: quality_id,
+                    score: format_score,
+                    at: Utc::now(),
+                },
+                acquirable_replaced(&outcome.imported, &imported.acquirable),
+            )
+            .await;
+
+        // Persist the probed media-info (SKADI-T-0237) alongside the now-honest
+        // quality. Non-fatal.
+        if let Some(info) = media_info {
+            let _ = svc.status.set_media_info(&imported.acquirable, info).await;
+        }
+
+        // Trace: a file landed in the library (SKADI-T-0323). Keyed by the
+        // imported book's own ref so a pack fans out one trace per book.
+        let file_name = imported
+            .file
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+        crate::trace::emit(
+            kind,
+            &imported.acquirable.0,
+            "importing",
+            "imported",
+            format!("imported {file_name}"),
+            None,
+        )
+        .await;
+    }
+}
+
 /// The distinct acquirables in an import outcome, in first-seen order, each represented by
 /// its first imported file (SKADI-T-0310). A pack download places files for several library
 /// books, so we probe + mark each book `Imported` once, using one representative file.
@@ -1360,128 +1492,14 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
                     }
                 });
 
-                // Fan out across **every distinct imported book** (SKADI-T-0310): a pack
-                // download satisfies several library books, so probe + re-score + persist for
-                // each — not just the run's primary acquirable, which used to leave the rest
-                // `Wanted` (and re-acquired). One representative file per book.
-                for imported in distinct_imported(&outcome.imported) {
-                    // Probe the placed file FIRST (SKADI-T-0237/0241): its real streams are
-                    // ground truth — used both to make the stored quality honest and to
-                    // persist media-info. Best-effort + strictly **non-fatal**.
-                    let probe_path = imported.file.path.clone();
-                    let media_info = match tokio::task::spawn_blocking(move || {
-                        skadi_media_probe::DefaultProber.probe(&probe_path)
-                    })
-                    .await
-                    {
-                        Ok(info) => info,
-                        Err(e) => {
-                            tracing::warn!(acquirable = %imported.acquirable.0, "media probe task panicked: {e}");
-                            None
-                        }
-                    };
-
-                    // Re-score against the probe (SKADI-T-0241): override the title-parsed
-                    // resolution/bitrate with the file's real values, so a release titled
-                    // `2160p` whose file is really 1080p is stored as 1080p and can't fake a
-                    // cutoff (the next sweep keeps looking for a genuine 4K).
-                    let probed_resolution = media_info
-                        .as_ref()
-                        .and_then(|m| m.video.as_ref())
-                        .map(|v| v.resolution_tier());
-                    let probed_bitrate = media_info
-                        .as_ref()
-                        .and_then(|m| m.audio.as_ref())
-                        .and_then(|a| a.bitrate_kbps);
-                    let reconciled = state.chosen.as_ref().map(|r| {
-                        skadi_quality::reconcile_with_probe(
-                            &r.parsed,
-                            probed_resolution,
-                            probed_bitrate,
-                        )
-                    });
-
-                    let quality_id = if let Some(ab) = svc.scoring.audiobook.as_ref() {
-                        // Audiobooks: the imported file's container is ground truth
-                        // (SKADI-T-0148). Reconcile the release-title-parsed quality
-                        // against the actual file's format so an MP3 release advertised
-                        // as M4B doesn't get stored as M4B (which used to happen because
-                        // the movie `to_quality` returned None → profile cutoff).
-                        let parsed = reconciled.as_ref().and_then(|p| {
-                            skadi_quality::audiobook::to_audiobook_quality(p, &ab.definitions)
-                        });
-                        let file_fmt = imported
-                            .file
-                            .path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .and_then(skadi_quality::AudioFormat::from_token);
-                        match file_fmt {
-                            Some(fmt) => skadi_quality::reconcile_quality_with_format(
-                                parsed,
-                                fmt,
-                                &ab.definitions,
-                            )
-                            .or(parsed)
-                            .unwrap_or_else(skadi_quality::audiobook::unknown_audiobook_id),
-                            None => parsed
-                                .unwrap_or_else(skadi_quality::audiobook::unknown_audiobook_id),
-                        }
-                    } else {
-                        // Nothing matched a definition (unparseable title, no probe, or an
-                        // SD tier the ladder doesn't carry): store UNKNOWN rather than
-                        // substituting the profile cutoff. The cutoff fabricated a
-                        // "satisfied" item that no upgrade would ever replace, the mirror
-                        // image of the adoption SDTV floor (SKADI-T-0412 / SKADI-T-0399).
-                        // The upgrade sweeps skip Unknown instead of ranking it lowest.
-                        reconciled
-                            .as_ref()
-                            .and_then(|p| skadi_quality::to_quality(p, &svc.scoring.definitions))
-                            .map(|q| q.id)
-                            .unwrap_or(skadi_quality::UNKNOWN_QUALITY_ID)
-                    };
-
-                    let _ = svc
-                        .status
-                        .set_imported(
-                            &imported.acquirable,
-                            AcquisitionStatus::Imported {
-                                file: FileRef {
-                                    path: imported.file.path.clone(),
-                                },
-                                quality: quality_id,
-                                score: format_score,
-                                at: Utc::now(),
-                            },
-                            acquirable_replaced(&outcome.imported, &imported.acquirable),
-                        )
-                        .await;
-
-                    // Persist the probed media-info (SKADI-T-0237) alongside the now-honest
-                    // quality. Non-fatal.
-                    if let Some(info) = media_info {
-                        let _ = svc.status.set_media_info(&imported.acquirable, info).await;
-                    }
-
-                    // Trace: a file landed in the library (SKADI-T-0323). Keyed by the
-                    // imported book's own ref so a pack fans out one trace per book.
-                    let file_name = imported
-                        .file
-                        .path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("file")
-                        .to_string();
-                    crate::trace::emit(
-                        state.request.kind,
-                        &imported.acquirable.0,
-                        "importing",
-                        "imported",
-                        format!("imported {file_name}"),
-                        None,
-                    )
-                    .await;
-                }
+                persist_imported(
+                    &svc,
+                    state.request.kind,
+                    outcome,
+                    state.chosen.as_ref().map(|r| &r.parsed),
+                    format_score,
+                )
+                .await;
             }
 
             // Move-mode import: the importer has relocated the files, so the

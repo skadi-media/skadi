@@ -144,6 +144,8 @@ h1 { font-weight: 600; margin: 0; }
 #series-overview { font-size: 26px; line-height: 36px; height: 72px; overflow: hidden; margin: 0 0 24px 0; color: #c5d3e0; }
 #series-seasons { height: 70px; white-space: nowrap; overflow: hidden; margin-bottom: 18px; }
 .season { display: inline-block; padding: 10px 26px; margin-right: 10px; border: 3px solid transparent; border-radius: 30px; background: #141d27; font-size: 28px; color: #9fb0c0; }
+/* How many more seasons lie off either end of the row. */
+.more { display: inline-block; padding: 10px 14px; margin-right: 10px; font-size: 26px; color: #7d8fa0; }
 .season.here { color: #fff; background: #25435f; }
 .season.sel { color: #fff; border-color: #fff; background: #2f7fcb; }
 #series-episodes { height: 650px; overflow: hidden; }

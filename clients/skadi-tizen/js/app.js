@@ -576,7 +576,10 @@
 
   // ---- Series page -------------------------------------------------------
 
-  var EP_VISIBLE = 7;
+  // Season tabs that fit in the row. A long-running series has more (The
+  // Great British Bake Off has 17): the row then shows a window of them,
+  // moved so the selected season is always in it.
+  var EP_VISIBLE = 7, SEASONS_VISIBLE = 6;
   var R = { series: null, seasons: [], si: 0, eps: [], sel: 0, top: 0, inSeasons: false };
   function openSeries(id) {
     toast('Loading…', true);
@@ -584,7 +587,7 @@
     api('GET', '/series/' + id, null, function (status, series) {
       if (status !== 200 || !series) { toast('Could not load this series (' + status + ')'); return; }
       untoast();
-      R.series = series; R.seasons = C.seasons(series); R.si = 0; R.inSeasons = false;
+      R.series = series; R.seasons = C.seasons(series); R.si = 0; R.sLeft = 0; R.inSeasons = false;
       $('series-title').textContent = series.title;
       $('series-meta').textContent = metaLine(series, series.network);
       $('series-overview').textContent = series.overview || '';
@@ -610,9 +613,14 @@
   function seasonName(n) { return n === 0 ? 'Specials' : 'Season ' + n; }
   function drawSeries() {
     var html = '', i;
-    for (i = 0; i < R.seasons.length; i++) {
+    R.sLeft = C.rowLeft(R.si, SEASONS_VISIBLE, R.sLeft || 0);
+    var sEnd = Math.min(R.seasons.length, R.sLeft + SEASONS_VISIBLE);
+    // A mark at either end says there are more seasons that way.
+    if (R.sLeft > 0) html += '<span class="more">\u2039 ' + R.sLeft + '</span>';
+    for (i = R.sLeft; i < sEnd; i++) {
       html += '<span class="season' + (i === R.si ? (R.inSeasons ? ' sel' : ' here') : '') + '">' + seasonName(R.seasons[i]) + '</span>';
     }
+    if (sEnd < R.seasons.length) html += '<span class="more">' + (R.seasons.length - sEnd) + ' \u203a</span>';
     $('series-seasons').innerHTML = html;
     R.top = C.rowLeft(R.sel, EP_VISIBLE, R.top);
     html = '';

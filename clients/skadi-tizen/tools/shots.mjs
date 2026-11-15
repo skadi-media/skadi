@@ -58,7 +58,8 @@ function shows() {
   const out = [];
   for (let i = 0; i < 30; i++) {
     const episodes = [];
-    const seasonCount = 1 + (i % 4);
+    // The last show runs to 20 seasons, more than the season row can hold.
+    const seasonCount = i === 29 ? 20 : 1 + (i % 4);
     for (let s = 1; s <= seasonCount; s++) {
       for (let n = 1; n <= 10; n++) {
         // Season 1 episode 4 was never downloaded: the page must show the gap.
@@ -72,7 +73,8 @@ function shows() {
     }
     if (i === 0) episodes.push({ id: 's0sp', season: 0, number: 1, title: 'A Special', status: { Imported: {} }, file: { path: '/tv/0/0/1.mkv' }, media_info: null });
     out.push({
-      id: `show${i}`, title: `${WORDS[(i * 3) % WORDS.length]} ${NOUNS[(i + 4) % NOUNS.length]}${i % 5 === 0 ? ' Files' : ''}`,
+      // The 20-season show sorts last, so the walk-through can reach it with one page jump.
+      id: `show${i}`, title: i === 29 ? 'Zenith Long Runner' : `${WORDS[(i * 3) % WORDS.length]} ${NOUNS[(i + 4) % NOUNS.length]}${i % 5 === 0 ? ' Files' : ''}`,
       sort_title: null, year: 1995 + i, network: ['Channel One', 'Northstar', 'Meridian TV'][i % 3], content_rating: ['TV-14', 'TV-PG', 'TV-MA'][i % 3],
       genres: [['Drama', 'Mystery'], ['Comedy'], ['Animation', 'Family']][i % 3], added_at: new Date(Date.UTC(2026, 0, 1 + ((i * 53) % 300))).toISOString(), overview: 'A made-up series for the screenshot harness, with a description long enough to need clipping when it runs past the two lines the page gives it. '.repeat(2),
       poster_url: `/fixture/poster/${100 + i}.svg`, backdrop_url: `/fixture/backdrop/${100 + i}.svg`, episodes,
@@ -310,6 +312,32 @@ check('at the end of an episode the next one plays', /e2x3\/video/.test((await f
 await press(KEY.BACK);
 check('Back from an episode returns to the series page', (await view()) === 'series');
 check('the series page is on the episode that was playing', (await html('#series-episodes .sel .num')) === '3');
+await press(KEY.BACK);
+
+// A series with more seasons than fit in the row (SKADI-T-0762).
+await press(KEY.BACK, KEY.RIGHT, 417 /* fast-forward: jump pages, to the last title */, KEY.ENTER);
+await page.waitForSelector('#series.on');
+await page.waitForTimeout(400);
+const seasonTabs = () => page.evaluate(() => {
+  const row = document.getElementById('series-seasons').getBoundingClientRect();
+  const tabs = [...document.querySelectorAll('#series-seasons .season')];
+  const cur = document.querySelector('#series-seasons .season.sel, #series-seasons .season.here');
+  const r = cur.getBoundingClientRect();
+  return { count: tabs.length, current: cur.textContent, onScreen: r.left >= row.left && r.right <= row.right && r.right <= 1920,
+    more: [...document.querySelectorAll('#series-seasons .more')].map((m) => m.textContent.trim()) };
+});
+let tabs = await seasonTabs();
+await shot('series-many-seasons-first');
+check('a 20-season series shows a window of season tabs, with a mark for the rest', tabs.count === 6 && tabs.current === 'Season 1' && tabs.onScreen && tabs.more.length === 1 && tabs.more[0].startsWith('14'));
+await many(KEY.UP, 12);
+await many(KEY.RIGHT, 9);
+tabs = await seasonTabs();
+await shot('series-many-seasons-middle');
+check('moving to season 10 keeps its tab on screen, with marks on both sides', tabs.current === 'Season 10' && tabs.onScreen && tabs.more.length === 2);
+await many(KEY.RIGHT, 30);
+tabs = await seasonTabs();
+await shot('series-many-seasons-last');
+check('the last season is reachable and on screen', tabs.current === 'Season 20' && tabs.onScreen && tabs.more.length === 1);
 await press(KEY.BACK);
 
 // Search

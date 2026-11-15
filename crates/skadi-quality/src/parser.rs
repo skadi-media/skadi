@@ -378,9 +378,11 @@ pub fn parse(title: &str) -> ParsedRelease {
 
 // --- TV parsing (SKADI-I-0037 / SKADI-T-0267) --------------------------------
 
-/// `S01E05-E07` / `S01E05-07` range → (season, first, last).
+/// `S01E05-E07` / `S01E05-07` range → (season, first, separator, second marker,
+/// last). The separator and the optional second `E` are captured so the caller
+/// can tell a range from an episode title that starts with a number.
 static TV_RANGE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,3})\s*E(\d{1,3})\s*-\s*E?(\d{1,3})\b").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,3})\s*E(\d{1,3})(\s*-\s*)(E?)(\d{1,3})\b").unwrap());
 /// `S01E05` / `S01E05E06` list → season + a run of `E\d+`.
 static TV_SEASON_EP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,3})((?:\s*E\d{1,3})+)\b").unwrap());
@@ -432,12 +434,20 @@ pub fn parse_tv(title: &str) -> ParsedRelease {
     // like `S01E36-1.28` (a trailing score/number, not a range) must NOT parse as
     // `[36, 1]` — the matcher would mark E01 falsely Imported from an E36 file
     // (SKADI-T-0324 review). Fall through to the plain SxxEyy branch instead.
+    //
+    // A bare second number is a range end only when it sits tight against the
+    // dash (`E05-07`). `S01E04 - 10.00 A.M.` is episode 4 of a show whose episode
+    // titles are times of day: with spaces round the dash and no second `E`, the
+    // number belongs to the title. Read as a range it gave one file to episodes
+    // 4 to 10 (SKADI-T-0765). `E04 - E10`, with the marker, is still a range.
     if let Some(c) = TV_RANGE_RE.captures(&work).filter(|c| {
-        let (a, b) = (cap_u16(c, 2), cap_u16(c, 3));
-        a < b && b - a < 100
+        let (a, b) = (cap_u16(c, 2), cap_u16(c, 5));
+        let marked = !c[4].is_empty();
+        let tight = &c[3] == "-";
+        a < b && b - a < 100 && (marked || tight)
     }) {
         p.season = Some(cap_u16(&c, 1));
-        let (a, b) = (cap_u16(&c, 2), cap_u16(&c, 3));
+        let (a, b) = (cap_u16(&c, 2), cap_u16(&c, 5));
         p.episodes = (a..=b).collect();
         boundary = Some(c.get(0).unwrap().start());
     } else if let Some(c) = TV_SEASON_EP_RE.captures(&work) {
@@ -1271,6 +1281,40 @@ mod tests {
         let p = parse_tv("Show.S01E05E06.1080p.WEB");
         assert_eq!(p.season, Some(1));
         assert_eq!(p.episodes, vec![5, 6]);
+    }
+
+    /// SKADI-T-0765: a number that starts the episode title is not a range end.
+    #[test]
+    fn tv_episode_title_that_starts_with_a_number_is_not_a_range() {
+        // The file a season pack carried, and the name skadi gives it itself.
+        for name in [
+            "The Pitt (2025) - S01E04 - 10.00 A.M. (1080p AMZN WEB-DL x265 Silence).mkv",
+            "The Pitt (2025) - S01E01 - 7.00 A.M. (1080p AMZN WEB-DL x265 Silence).mkv",
+            "the-pitt_-_S01E06_-_12-00-p-m.mkv",
+            "Show - S02E03 - 24 Hours Later [720p].mkv",
+        ] {
+            let p = parse_tv(name);
+            assert_eq!(p.episodes.len(), 1, "{name}: {:?}", p.episodes);
+        }
+        let p =
+            parse_tv("The Pitt (2025) - S01E04 - 10.00 A.M. (1080p AMZN WEB-DL x265 Silence).mkv");
+        assert_eq!((p.season, p.episodes), (Some(1), vec![4]));
+        assert_eq!(p.year, Some(2025));
+        assert_eq!(p.resolution.as_deref(), Some("1080p"));
+    }
+
+    /// A true range still expands: tight, or with the second marker.
+    #[test]
+    fn tv_true_ranges_still_expand() {
+        for name in [
+            "Show.Name.S01E05-E07.1080p.BluRay.x264-GRP",
+            "Show.Name.S01E05-07.1080p.BluRay.x264-GRP",
+            "Show Name - S01E05 - E07 - Title",
+            "show-name_-_S01E05-E07_-_title.mkv",
+        ] {
+            let p = parse_tv(name);
+            assert_eq!(p.episodes, vec![5, 6, 7], "{name}");
+        }
     }
 
     #[test]

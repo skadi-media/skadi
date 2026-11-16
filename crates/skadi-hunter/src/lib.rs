@@ -69,6 +69,7 @@ pub use state::{
 };
 pub use status::{InMemoryStatusSink, StatusSink};
 pub use steps::indexer_flags;
+pub use steps::persist_imported;
 pub use tracker::{ActivityFilter, InFlightTracker, RunMeta, tracker};
 
 /// Dedicated Postgres **database** (same server as skadi's) that all Cloacina

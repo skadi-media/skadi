@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - The download worker kept downloading a torrent after its job was removed, when the removal came while the torrent was still being added. The data stayed in the downloads folder with no job to import or delete it. The worker now drops such a torrent when it starts to track it, and every ten minutes drops any torrent in its session that has no live job. A removal that deletes data also removes the job's emptied folder (SKADI-T-0764).
 - A manual import (Downloads → Import, `POST /downloads/import`) put the file in the library but left the film, episode or book Missing, so it was looked for again. The item now becomes Imported with the file's path and quality, as after an automatic import. A file that was already in place is counted too, so importing again repairs an item the old behaviour left Missing (SKADI-T-0766).
+- An episode whose title starts with a number was read as a range of episodes: `S01E04 - 10.00 A.M.` matched episodes 4 to 10, so one file of a season pack was given to seven episodes. A second number is a range end only when it is tight against the dash (`E05-07`) or has its own marker (`E05 - E07`) (SKADI-T-0765).
 
 ## [0.1.14] - 2026-11-12
 

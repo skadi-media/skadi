@@ -15,11 +15,12 @@ skadi-store = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The claim lease is compared with the clock (SKADI-T-0767).
+chrono = { workspace = true }
 
 [dev-dependencies]
 cucumber = { workspace = true }
 tokio = { workspace = true }
-chrono = { workspace = true }
 skadi-quality = { workspace = true }
 
 # BDD runner (SKADI-I-0057): cucumber needs its own main; features in tests/features.

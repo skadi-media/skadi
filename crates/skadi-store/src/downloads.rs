@@ -617,6 +617,12 @@ impl DownloadJobRepo for Store {
             .set((
                 downloads::status.eq(DownloadJobStatus::Downloading.as_str()),
                 downloads::worker_id.eq(&worker_id),
+                // The worker is about to add the torrent: until its first
+                // progress write the client has nothing live. A re-claimed row
+                // would otherwise keep the `live` of its last run through an
+                // add that can take an hour on a busy store, and the hunter's
+                // stall clock would run on it (SKADI-T-0767).
+                downloads::client_state.eq(Some("initializing")),
                 downloads::updated_at.eq(Timestamp(Utc::now())),
             ))
             .execute(conn)

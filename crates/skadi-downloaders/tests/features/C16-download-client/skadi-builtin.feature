@@ -25,6 +25,28 @@ Feature: The built-in skadi downloader — the daemon's side of the downloads-qu
     Then the status is waiting for a worker
     And the download is still in flight from the hunter's view
 
+  @C16 @passing @SKADI-T-0767
+  Scenario: a transfer the worker stopped tracking is waiting for a worker, so it cannot stall
+    Given a magnet release "The Matrix" with info hash "abc"
+    When the hunter adds the release under category 2000
+    And the worker claims the job as "w1"
+    And the worker reports 250 of 1000 bytes with 3 peers
+    And the worker last renewed the job's lease 1 minutes ago
+    And the hunter reads the status
+    Then the status is downloading at 25%
+    When the worker last renewed the job's lease 90 minutes ago
+    And the hunter reads the status
+    Then the status is waiting for a worker
+    And the download is still in flight from the hunter's view
+
+  @C16 @passing @SKADI-T-0767
+  Scenario: a claimed transfer is not live until the worker reports it
+    Given a magnet release "The Matrix" with info hash "abc"
+    When the hunter adds the release under category 2000
+    And the worker claims the job as "w1"
+    And the hunter reads the status
+    Then the status is queued
+
   @C16 @passing
   Scenario: a .torrent URL release is enqueued as-is for the worker to resolve
     Given a .torrent URL release "Heat" at "http://gluetun:9696/1/download?apikey=k&link=AAAA"

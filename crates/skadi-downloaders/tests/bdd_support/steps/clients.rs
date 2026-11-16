@@ -144,6 +144,18 @@ async fn claim(w: &mut World, worker: String) {
     assert_eq!(job.id, w.handle().native_id);
 }
 
+/// The worker's per-transfer heartbeat (SKADI-T-0214): a tracked transfer's
+/// claim lease is renewed every tick. A negative age writes a lease that
+/// expired that long ago — the worker stopped (SKADI-T-0767).
+#[when(regex = r"^the worker last renewed the job's lease (\d+) minutes ago$")]
+async fn lease_renewed(w: &mut World, minutes: i64) {
+    // A lease is two minutes long: renewed N minutes ago, it expired N-2 ago.
+    w.store()
+        .heartbeat(&w.handle().native_id, 120 - minutes * 60)
+        .await
+        .unwrap();
+}
+
 #[when(regex = r"^the worker reports (\d+) of (\d+) bytes with (\d+) peers$")]
 async fn progress(w: &mut World, done: i64, total: i64, peers: i32) {
     w.store()

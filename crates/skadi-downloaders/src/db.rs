@@ -49,6 +49,21 @@ impl DbDownloader {
     }
 }
 
+/// How long past its expiry a claim lease may be before the transfer counts as
+/// untracked (SKADI-T-0767). The worker renews the lease every tick with a
+/// lease of two minutes by default; a few missed ticks on a busy store are not
+/// a dead worker.
+const LEASE_GRACE: chrono::Duration = chrono::Duration::minutes(5);
+
+/// Has this row's claim lease lapsed for longer than [`LEASE_GRACE`]? A row
+/// with no lease yet (claimed, first heartbeat not written) has not lapsed.
+fn lease_lapsed(
+    lease_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    lease_expires_at.is_some_and(|t| now - t > LEASE_GRACE)
+}
+
 /// The torrent source string for a release, or an error for unsupported kinds.
 fn release_source(release: &Release) -> Result<String> {
     match &release.fetch {
@@ -115,6 +130,19 @@ impl Downloader for DbDownloader {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("no download job {}", handle.native_id)))?;
         Ok(match job.status {
+            // No worker is tracking this transfer (SKADI-T-0767): its claim
+            // lease, which a live tracker renews every tick, lapsed a while
+            // ago. The worker is stopped, or it restarted and has not taken the
+            // row back yet. Whatever the row still says about progress and
+            // client state is stale, so it is reported as waiting for a worker:
+            // the hunter holds it, and neither the stall clock nor the lifetime
+            // cap runs. On 2026-11-14/15 239 releases were blocklisted as
+            // "stalled at 0% for 3h" while the worker was stopped.
+            DownloadJobStatus::Downloading | DownloadJobStatus::Stalled
+                if lease_lapsed(job.lease_expires_at, chrono::Utc::now()) =>
+            {
+                DownloadStatus::Waiting
+            }
             // A row no worker has claimed is waiting for a slot, not started
             // (SKADI-T-0761). It used to be reported as `Queued`, the same as
             // a claimed transfer stuck initializing, so the hunter's lifetime
@@ -310,6 +338,92 @@ mod tests {
         // Status surfaces teardown as `Removed`, not as a failure of the
         // release (SKADI-T-0691).
         assert_eq!(dl.status(&handle).await.unwrap(), DownloadStatus::Removed);
+    }
+
+    /// SKADI-T-0767: with the worker stopped, a claimed transfer's row still
+    /// says `downloading`, `live`, and its last progress. The hunter must be
+    /// told it is waiting for a worker, not that it is a live transfer.
+    #[tokio::test]
+    async fn a_transfer_whose_lease_lapsed_is_waiting_for_a_worker() {
+        let store = temp_store().await;
+        let dl = DbDownloader::new(
+            DownloaderId::new(),
+            Arc::new(store.clone()),
+            "/mnt/storage/skadi-torrent/incomplete".into(),
+            "/mnt/storage/skadi-torrent/complete".into(),
+        );
+        let handle = dl
+            .add(&magnet_release("Stopped Worker"), &Category(2000))
+            .await
+            .unwrap();
+        store.claim_next("w1").await.unwrap().unwrap();
+        store
+            .update_progress(
+                &handle.native_id,
+                &DownloadProgress {
+                    progress_bytes: 250,
+                    total_bytes: 1000,
+                    info_hash: Some("abc".into()),
+                    client_state: Some("live".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // A fresh lease: tracked, live.
+        store.heartbeat(&handle.native_id, 120).await.unwrap();
+        assert!(matches!(
+            dl.status(&handle).await.unwrap(),
+            DownloadStatus::Downloading { .. }
+        ));
+        // Just expired, inside the grace: a few missed ticks, still live.
+        store.heartbeat(&handle.native_id, -60).await.unwrap();
+        assert!(matches!(
+            dl.status(&handle).await.unwrap(),
+            DownloadStatus::Downloading { .. }
+        ));
+        // Expired an hour ago: nobody is tracking it.
+        store.heartbeat(&handle.native_id, -3600).await.unwrap();
+        assert_eq!(dl.status(&handle).await.unwrap(), DownloadStatus::Waiting);
+        // The worker comes back and renews: live again.
+        store.heartbeat(&handle.native_id, 120).await.unwrap();
+        assert!(matches!(
+            dl.status(&handle).await.unwrap(),
+            DownloadStatus::Downloading { .. }
+        ));
+    }
+
+    /// SKADI-T-0767: a claim starts the row as `initializing`, so a re-claimed
+    /// transfer does not look live through the worker's add.
+    #[tokio::test]
+    async fn a_claimed_transfer_is_not_live_until_the_worker_reports_it() {
+        let store = temp_store().await;
+        let dl = DbDownloader::new(
+            DownloaderId::new(),
+            Arc::new(store.clone()),
+            "/mnt/storage/skadi-torrent/incomplete".into(),
+            "/mnt/storage/skadi-torrent/complete".into(),
+        );
+        let handle = dl
+            .add(&magnet_release("Slow Add"), &Category(2000))
+            .await
+            .unwrap();
+        let claimed = store.claim_next("w1").await.unwrap().unwrap();
+        assert_eq!(claimed.client_state.as_deref(), Some("initializing"));
+        assert_eq!(dl.status(&handle).await.unwrap(), DownloadStatus::Queued);
+    }
+
+    #[test]
+    fn lease_lapsed_needs_a_lease_older_than_the_grace() {
+        let now = Utc::now();
+        assert!(!lease_lapsed(None, now), "no lease yet");
+        assert!(!lease_lapsed(
+            Some(now + chrono::Duration::seconds(90)),
+            now
+        ));
+        assert!(!lease_lapsed(Some(now - chrono::Duration::minutes(4)), now));
+        assert!(lease_lapsed(Some(now - chrono::Duration::minutes(6)), now));
     }
 
     #[tokio::test]

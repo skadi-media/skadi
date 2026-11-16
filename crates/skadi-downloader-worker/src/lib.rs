@@ -31,6 +31,10 @@ use skadi_store::{
 /// This worker build's version, reported in its liveness heartbeat (SKADI-T-0288).
 const WORKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// How often the running worker drops session torrents that have no live row
+/// (SKADI-T-0764). The pass reads every download row, so it is not per tick.
+const SESSION_RECONCILE_EVERY: Duration = Duration::from_secs(600);
+
 pub mod egress;
 pub mod seed_policy;
 pub use seed_policy::{SeedAction, SeedPolicy, SeedVerdict};
@@ -696,6 +700,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     // The egress IP the heartbeat carries (SKADI-T-0683): asked of gluetun on
     // loopback, at most once a minute (see `egress`).
     let mut egress = egress::EgressProbe::from_env();
+    let mut last_reconcile = std::time::Instant::now();
     loop {
         // Liveness heartbeat (SKADI-T-0288): upsert our last-seen every tick,
         // independent of claimed jobs, so the daemon can tell a healthy-idle worker
@@ -737,6 +742,12 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         live.apply_ratelimits(&api);
 
         handle_removals(&api, &store).await;
+        // The startup pass again, on a timer (SKADI-T-0764): a torrent that lost
+        // its row while the worker ran is dropped here, not at the next restart.
+        if last_reconcile.elapsed() >= SESSION_RECONCILE_EVERY {
+            reconcile_session(&api, &store).await;
+            last_reconcile = std::time::Instant::now();
+        }
         handle_pauses(&api, &store).await;
         // Before the claim budget is computed, so the cap is enforced over what is
         // actually live — including torrents the session restore started on its own
@@ -814,6 +825,12 @@ async fn handle_removals(api: &Arc<Api>, store: &Store) {
             return;
         }
     };
+    // Read once, only when a delete-data removal needs it for the folder prune.
+    let all_jobs = if pending.iter().any(|j| j.delete_data) {
+        store.list_downloads().await.ok()
+    } else {
+        None
+    };
     for job in pending {
         if let Some(hash) = &job.info_hash
             && let Ok(id) = TorrentIdOrHash::parse(hash)
@@ -845,6 +862,9 @@ async fn handle_removals(api: &Arc<Api>, store: &Store) {
             if removed > 0 {
                 tracing::info!(job = %job_id, files = removed, "removed the complete-dir mirror of a deleted download");
             }
+            if let Some(all) = all_jobs.as_deref() {
+                prune_job_folder(&job, all).await;
+            }
         }
         match store.mark_removed(&job.id).await {
             Ok(()) => tracing::info!(job = %job.id, delete_data = job.delete_data, "removed"),
@@ -871,6 +891,117 @@ pub fn live_info_hashes(jobs: &[DownloadJob]) -> std::collections::HashSet<Strin
         .collect()
 }
 
+/// The 40-hex info-hash a `magnet:` source names (`xt=urn:btih:<hex>`), lowercased.
+/// `None` for any other source, and for a base32 hash: the caller then treats the
+/// hash as unknown rather than guess.
+#[must_use]
+pub fn magnet_btih(source: &str) -> Option<String> {
+    let lower = source.to_ascii_lowercase();
+    if !lower.starts_with("magnet:") {
+        return None;
+    }
+    let at = lower.find("xt=urn:btih:")? + "xt=urn:btih:".len();
+    let hash: String = lower[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    (hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit())).then_some(hash)
+}
+
+/// The info-hashes a running session must keep (SKADI-T-0764), or `None` when
+/// that cannot be known and the reconcile pass must not run.
+///
+/// [`live_info_hashes`] is enough at startup, when nothing is being added. On a
+/// timer it is not: a claimed row has no `info_hash` until its first progress
+/// write, while its torrent can already be in the session. Such a row counts
+/// through the hash of its magnet; with any other source the hash is unknown
+/// until the add returns, so the whole pass is skipped — a wrong `forget` would
+/// detach a download that is wanted.
+#[must_use]
+pub fn session_keep_set(jobs: &[DownloadJob]) -> Option<std::collections::HashSet<String>> {
+    let mut keep = live_info_hashes(jobs);
+    for j in jobs {
+        if j.info_hash.is_some()
+            || matches!(
+                j.status,
+                DownloadJobStatus::Seeded | DownloadJobStatus::Removed
+            )
+        {
+            continue;
+        }
+        match magnet_btih(&j.source) {
+            Some(h) => {
+                keep.insert(h);
+            }
+            // Queued and never claimed: nothing of it is in the session yet.
+            None if j.status == DownloadJobStatus::Queued && j.worker_id.is_none() => {}
+            None if matches!(
+                j.status,
+                DownloadJobStatus::Queued
+                    | DownloadJobStatus::Downloading
+                    | DownloadJobStatus::Stalled
+            ) =>
+            {
+                return None;
+            }
+            None => {}
+        }
+    }
+    Some(keep)
+}
+
+/// What a tracker does with its torrent when its row is no longer tracked
+/// (SKADI-T-0764).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrphanAction {
+    /// Leave the torrent in the session: the row is held, queued, or has a
+    /// removal pending that the removal sweep will action.
+    Keep,
+    /// Drop the torrent, keep its files.
+    Forget,
+    /// Drop the torrent and delete its files.
+    Delete,
+}
+
+/// Decide what happens to a torrent whose row left the tracked state
+/// (SKADI-T-0764).
+///
+/// `row` is the row as just read (`None`: deleted). `Removed` means the removal
+/// sweep has already run — if it ran while `api_add_torrent` was still in flight
+/// (a slow add; 67 minutes was seen on a saturated NAS) librqbit had nothing to
+/// remove, and the torrent this tracker now holds would download to the end with
+/// no row. So the tracker finishes the removal itself, with the row's
+/// `delete_data`. A torrent that another live row shares is always kept.
+#[must_use]
+pub fn orphan_action(
+    row: Option<&DownloadJob>,
+    info_hash: &str,
+    jobs: &[DownloadJob],
+) -> OrphanAction {
+    let gone = match row {
+        None => true,
+        Some(j) => j.status == DownloadJobStatus::Removed,
+    };
+    if !gone {
+        return OrphanAction::Keep;
+    }
+    let own_id = row.map(|j| j.id.as_str());
+    let others: Vec<DownloadJob> = jobs
+        .iter()
+        .filter(|j| Some(j.id.as_str()) != own_id)
+        .cloned()
+        .collect();
+    let shared =
+        session_keep_set(&others).is_none_or(|keep| keep.contains(&info_hash.to_ascii_lowercase()));
+    if shared {
+        return OrphanAction::Keep;
+    }
+    match row {
+        Some(j) if j.delete_data => OrphanAction::Delete,
+        _ => OrphanAction::Forget,
+    }
+}
+
 /// Forget session-restored torrents the worker is no longer tracking
 /// (SKADI-T-0480).
 ///
@@ -892,7 +1023,10 @@ async fn reconcile_session(api: &Arc<Api>, store: &Store) {
             return;
         }
     };
-    let live = live_info_hashes(&jobs);
+    let Some(live) = session_keep_set(&jobs) else {
+        tracing::debug!("session reconcile skipped: a claimed row has no known info-hash yet");
+        return;
+    };
     let restored = api.api_torrent_list().torrents;
     let mut forgotten = 0usize;
     for t in restored {
@@ -912,7 +1046,7 @@ async fn reconcile_session(api: &Arc<Api>, store: &Store) {
         tracing::info!(
             forgotten,
             remaining = live.len(),
-            "dropped session-restored torrents with no live download row; \
+            "dropped session torrents with no live download row; \
              the session file shrinks by this much for the next restart"
         );
     }
@@ -1540,9 +1674,13 @@ async fn track(
             Ok(Some(j)) if seeding && j.status == DownloadJobStatus::Completed => Some(j),
             Ok(Some(j)) => {
                 tracing::info!(job = %id, status = ?j.status, "row left tracked state; stop tracking");
+                drop_if_orphaned(&api, &store, Some(&j), torrent_id, &info_hash).await;
                 return;
             }
-            Ok(None) => return,
+            Ok(None) => {
+                drop_if_orphaned(&api, &store, None, torrent_id, &info_hash).await;
+                return;
+            }
             Err(e) => {
                 tracing::warn!(job = %id, "get_download failed: {e}");
                 None
@@ -1663,6 +1801,97 @@ async fn track(
 
         tokio::time::sleep(tick).await;
     }
+}
+
+/// Finish a removal the sweep could not (SKADI-T-0764): when a tracker finds its
+/// row `Removed` or deleted, drop the torrent it holds per [`orphan_action`].
+async fn drop_if_orphaned(
+    api: &Arc<Api>,
+    store: &Store,
+    row: Option<&DownloadJob>,
+    torrent_id: TorrentIdOrHash,
+    info_hash: &str,
+) {
+    // The usual case: the removal sweep already dropped the torrent. Nothing to
+    // do, and no reason to read every row.
+    if !matches!(
+        row.map(|j| j.status),
+        None | Some(DownloadJobStatus::Removed)
+    ) || api.api_stats_v1(torrent_id).is_err()
+    {
+        return;
+    }
+    let jobs = match store.list_downloads().await {
+        Ok(j) => j,
+        Err(e) => {
+            // Unknown whether another row shares the torrent: keep it. The timed
+            // session reconcile is the backstop.
+            tracing::warn!(%info_hash, "list_downloads (orphan check) failed: {e}");
+            return;
+        }
+    };
+    let action = orphan_action(row, info_hash, &jobs);
+    let res = match action {
+        OrphanAction::Keep => return,
+        OrphanAction::Forget => api.api_torrent_action_forget(torrent_id).await,
+        OrphanAction::Delete => api.api_torrent_action_delete(torrent_id).await,
+    };
+    match res {
+        Ok(_) => {
+            tracing::info!(%info_hash, ?action, "dropped a torrent whose row was removed while it was being added")
+        }
+        Err(e) => tracing::warn!(%info_hash, ?action, "could not drop an orphaned torrent: {e}"),
+    }
+    if action == OrphanAction::Delete
+        && let Some(job) = row
+    {
+        prune_job_folder(job, &jobs).await;
+    }
+}
+
+/// After a delete-data removal, remove the job's own output folder if nothing
+/// but empty directories is left in it (SKADI-T-0764: librqbit deletes the
+/// files and leaves the folder; 1,167 empty ones had gathered on one server).
+/// Skipped when another live row downloads into the same folder.
+async fn prune_job_folder(job: &DownloadJob, jobs: &[DownloadJob]) {
+    let Some(folder) = job_output_folder(job) else {
+        return;
+    };
+    let shared = jobs.iter().any(|j| {
+        j.id != job.id
+            && !matches!(
+                j.status,
+                DownloadJobStatus::Seeded | DownloadJobStatus::Removed
+            )
+            && job_output_folder(j).as_deref() == Some(folder.as_str())
+    });
+    if shared {
+        return;
+    }
+    let _ =
+        tokio::task::spawn_blocking(move || prune_empty_tree(std::path::Path::new(&folder))).await;
+}
+
+/// Blocking: remove `dir` if it holds nothing but empty directories. Never
+/// removes a file; returns whether `dir` itself is gone. A symlink is not
+/// followed and counts as content.
+pub fn prune_empty_tree(dir: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return false;
+    };
+    if !meta.is_dir() {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut empty = true;
+    for e in entries.flatten() {
+        if !prune_empty_tree(&e.path()) {
+            empty = false;
+        }
+    }
+    empty && std::fs::remove_dir(dir).is_ok()
 }
 
 /// Best-effort `mark_error` (logs if the write itself fails).
@@ -2212,6 +2441,190 @@ mod tests {
         assert_eq!(empty.stall_timeout_secs, None);
         // Lease length defaults to the registry value (SKADI-T-0214).
         assert_eq!(empty.lease_secs, 120);
+    }
+
+    /// A download row for the pure-decision tests (SKADI-T-0764).
+    fn row(id: &str, hash: Option<&str>, status: DownloadJobStatus) -> DownloadJob {
+        DownloadJob {
+            id: id.into(),
+            acquirable_ref: format!("release {id}"),
+            source: "https://indexer.example/download/1.torrent".into(),
+            category: None,
+            status,
+            info_hash: hash.map(str::to_string),
+            progress_bytes: 0,
+            total_bytes: 0,
+            down_speed_bps: None,
+            up_speed_bps: None,
+            uploaded_bytes: None,
+            peers: None,
+            peers_seen: None,
+            eta_seconds: None,
+            files: Vec::new(),
+            error: None,
+            worker_id: None,
+            delete_data: false,
+            incomplete_dir: None,
+            complete_dir: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            completed_at: None,
+            lease_expires_at: None,
+            stalled_at: None,
+            client_state: None,
+            target_kind: None,
+            target_ref: None,
+            import_state: None,
+            import_error: None,
+            priority: 0,
+        }
+    }
+
+    const HASH_A: &str = "01091b1bcfbb88612cecb21730caba147098eadc";
+    const HASH_B: &str = "cc206c2c8d8fe277d62b4961851beb25374d1278";
+
+    /// SKADI-T-0764, the case seen live: the transfer waited in the queue, was
+    /// claimed again, and its row was removed (delete data) while the add was
+    /// still in flight. The tracker that then starts must delete the torrent.
+    #[test]
+    fn orphan_action_deletes_a_torrent_whose_row_was_removed_during_the_add() {
+        let mut removed = row("1", Some(HASH_A), DownloadJobStatus::Removed);
+        removed.delete_data = true;
+        let jobs = vec![
+            removed.clone(),
+            row("2", Some(HASH_B), DownloadJobStatus::Downloading),
+        ];
+        assert_eq!(
+            orphan_action(Some(&removed), HASH_A, &jobs),
+            OrphanAction::Delete
+        );
+        // "Remove, keep files" only detaches.
+        removed.delete_data = false;
+        assert_eq!(
+            orphan_action(Some(&removed), HASH_A, &jobs),
+            OrphanAction::Forget
+        );
+        // A deleted row carries no delete flag: never delete data on a guess.
+        assert_eq!(orphan_action(None, HASH_A, &jobs), OrphanAction::Forget);
+    }
+
+    #[test]
+    fn orphan_action_keeps_a_torrent_another_live_row_shares() {
+        // The same release re-acquired: the old row is removed, the new one is
+        // queued behind the cap with the same info-hash (case differs on purpose).
+        let mut removed = row("1", Some(HASH_A), DownloadJobStatus::Removed);
+        removed.delete_data = true;
+        let upper = HASH_A.to_ascii_uppercase();
+        let jobs = vec![
+            removed.clone(),
+            row("2", Some(&upper), DownloadJobStatus::Queued),
+        ];
+        assert_eq!(
+            orphan_action(Some(&removed), HASH_A, &jobs),
+            OrphanAction::Keep
+        );
+        // The new row has no hash yet, but its magnet names the same torrent.
+        let mut by_magnet = row("3", None, DownloadJobStatus::Downloading);
+        by_magnet.source = format!("magnet:?xt=urn:btih:{upper}&dn=x");
+        let jobs = vec![removed.clone(), by_magnet];
+        assert_eq!(
+            orphan_action(Some(&removed), HASH_A, &jobs),
+            OrphanAction::Keep
+        );
+        // An add in flight whose hash cannot be known: keep, do not guess.
+        let mut unknown = row("4", None, DownloadJobStatus::Downloading);
+        unknown.worker_id = Some("w".into());
+        let jobs = vec![removed.clone(), unknown];
+        assert_eq!(
+            orphan_action(Some(&removed), HASH_A, &jobs),
+            OrphanAction::Keep
+        );
+    }
+
+    #[test]
+    fn orphan_action_leaves_held_rows_to_their_own_handlers() {
+        // Re-queued by the active cap, paused, or with a removal still pending:
+        // the torrent stays; the claim loop or the removal sweep owns it.
+        for status in [
+            DownloadJobStatus::Queued,
+            DownloadJobStatus::Paused,
+            DownloadJobStatus::RemoveRequested,
+            DownloadJobStatus::Completed,
+            DownloadJobStatus::Seeded,
+            DownloadJobStatus::Error,
+        ] {
+            let mut j = row("1", Some(HASH_A), status);
+            j.delete_data = true;
+            assert_eq!(
+                orphan_action(Some(&j), HASH_A, std::slice::from_ref(&j)),
+                OrphanAction::Keep,
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn magnet_btih_reads_only_a_40_hex_hash() {
+        assert_eq!(
+            magnet_btih("magnet:?xt=urn:btih:01091B1BCFBB88612CECB21730CABA147098EADC&dn=a+b"),
+            Some(HASH_A.to_string())
+        );
+        assert_eq!(
+            magnet_btih(&format!("magnet:?dn=x&xt=urn:btih:{HASH_B}")),
+            Some(HASH_B.into())
+        );
+        // base32, a short hash, another scheme: unknown.
+        assert_eq!(
+            magnet_btih("magnet:?xt=urn:btih:AEERWG6PXOEGCLHMWILTBSV2CRYJR2W4"),
+            None
+        );
+        assert_eq!(magnet_btih("magnet:?xt=urn:btih:abc123"), None);
+        assert_eq!(
+            magnet_btih(&format!("https://x.example/?xt=urn:btih:{HASH_A}")),
+            None
+        );
+    }
+
+    #[test]
+    fn session_keep_set_counts_claimed_rows_without_a_hash() {
+        // A claimed magnet row with no hash written yet keeps its torrent.
+        let mut adding = row("1", None, DownloadJobStatus::Downloading);
+        adding.source = format!("magnet:?xt=urn:btih:{HASH_A}");
+        adding.worker_id = Some("w".into());
+        let jobs = vec![
+            adding,
+            row("2", Some(HASH_B), DownloadJobStatus::Completed),
+            // Never claimed, not a magnet: nothing of it is in the session.
+            row("3", None, DownloadJobStatus::Queued),
+            row("4", None, DownloadJobStatus::Removed),
+        ];
+        let keep = session_keep_set(&jobs).expect("every claimed hash is known");
+        assert!(keep.contains(HASH_A) && keep.contains(HASH_B));
+        assert_eq!(keep.len(), 2);
+
+        // A claimed `.torrent` URL row: its hash is unknown until the add
+        // returns, so the pass must not run.
+        let mut url = row("5", None, DownloadJobStatus::Downloading);
+        url.worker_id = Some("w".into());
+        assert_eq!(session_keep_set(&[url]), None);
+    }
+
+    #[test]
+    fn prune_empty_tree_removes_only_empty_directories() {
+        let base = skadi_core::unique_temp_path("worker-prune");
+        let empty = base.join("Release A");
+        std::fs::create_dir_all(empty.join("Subs").join("deep")).unwrap();
+        let kept = base.join("Release B");
+        std::fs::create_dir_all(kept.join("Subs")).unwrap();
+        std::fs::write(kept.join("movie.mkv"), b"x").unwrap();
+
+        assert!(prune_empty_tree(&empty), "a tree of empty folders goes");
+        assert!(!empty.exists());
+        assert!(!prune_empty_tree(&kept), "a folder with a file stays");
+        assert!(kept.join("movie.mkv").exists());
+        assert!(!kept.join("Subs").exists(), "its empty subfolder is pruned");
+        assert!(!prune_empty_tree(&base.join("missing")));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

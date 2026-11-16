@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The download worker kept downloading a torrent after its job was removed, when the removal came while the torrent was still being added. The data stayed in the downloads folder with no job to import or delete it. The worker now drops such a torrent when it starts to track it, and every ten minutes drops any torrent in its session that has no live job. A removal that deletes data also removes the job's emptied folder (SKADI-T-0764).
+
 ## [0.1.14] - 2026-11-12
 
 ### Fixed

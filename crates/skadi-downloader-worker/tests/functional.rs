@@ -266,3 +266,76 @@ async fn seed_time_limit_stops_seeding_after_completion() {
     agent.abort();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// SKADI-T-0764: a row that is already `removed` while its torrent is in the
+/// session — the removal sweep ran before the add returned — must not leave the
+/// torrent downloading. The tracker drops it, deletes its data and removes the
+/// emptied folder.
+///
+/// The sweep is kept out of the way with a long poll interval, and the row is
+/// taken to `removed` (delete data) by hand: the state the live worker reached
+/// when a 67-minute add outlasted the removal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "network: starts a webseed-backed open movie from webtorrent.io"]
+async fn tracker_drops_a_torrent_whose_row_is_already_removed() {
+    let base = unique_base();
+    let dl = base.join("downloads");
+    std::fs::create_dir_all(&dl).expect("dl dir");
+    let db_url = format!("sqlite://{}", base.join("worker.db").display());
+
+    let cfg = Config {
+        download_dir: dl.clone(),
+        state_dir: base.join("state"),
+        port_range: 29881..29891,
+        database_url: db_url.clone(),
+        worker_id: "orphan-fn".into(),
+        // One claim at start, then no sweep for the length of the test.
+        poll_interval: Duration::from_secs(600),
+        tick_interval: Duration::from_secs(1),
+        watch_dir: None,
+        migrate: true,
+        seed_policy: SeedPolicy::unlimited(),
+        down_limit_bps: Some(256 * 1024),
+        up_limit_bps: None,
+        max_active: None,
+        stall_timeout_secs: None,
+        metadata_timeout_secs: None,
+        lease_secs: 120,
+        extra_trackers: Vec::new(),
+    };
+
+    // Enqueue before the worker starts, so its first (and only) tick claims it.
+    let store = Store::connect(&db_url).expect("connect");
+    store.run_migrations().await.expect("migrate");
+    let job = enqueue(&store, "orphan-bbb", BBB_TORRENT_URL, &dl.join("orph")).await;
+    let folder = dl.join("orph").join("orphan-bbb");
+    let agent = tokio::spawn(run(cfg));
+
+    assert!(
+        wait_progress_by_id(&store, &job.id, 180).await,
+        "BBB picked up and downloading"
+    );
+    assert!(folder.is_dir(), "the job's folder holds the partial data");
+
+    // The sweep's outcome without the sweep: `removed`, delete data.
+    store.request_remove(&job.id, true).await.expect("request");
+    store.mark_removed(&job.id).await.expect("mark removed");
+
+    let mut gone = false;
+    for _ in 0..60 {
+        if !folder.exists() {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    assert!(
+        gone,
+        "the tracker deletes the orphaned torrent's data and its folder"
+    );
+    let row = store.get_download(&job.id).await.unwrap().unwrap();
+    assert_eq!(row.status, DownloadJobStatus::Removed);
+
+    agent.abort();
+    let _ = std::fs::remove_dir_all(&base);
+}

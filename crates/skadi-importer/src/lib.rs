@@ -488,6 +488,13 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                     // quarantine of the same title (SKADI-T-0413). Both copies
                     // stay reviewable, which is the point of a review area.
                     let placed = tokio::task::spawn_blocking(move || {
+                        // The same file, set aside by an earlier import of this
+                        // download: nothing to do (SKADI-T-0763). Without this
+                        // every repeat grab of a pack linked each file again as
+                        // `name.1`, `name.2` …, up to 96 names for one file.
+                        if already_quarantined(&src, &d) {
+                            return Ok(());
+                        }
                         let target = non_colliding_path(&d);
                         place_file(&src, &target, hardlinks)
                     })
@@ -1484,6 +1491,36 @@ fn cleanup_staging(dest: &Path) {
 /// fails (e.g. cross-filesystem `EXDEV`), fall back to a copy. The source is
 /// never removed — torrents stay seedable. `allow_hardlink=false` forces the
 /// copy path (used by tests to exercise the fallback deterministically).
+/// Is `src` already in the review area at `dest` or one of its numbered
+/// variants (`stem.1.ext` …)? Compared by file identity, so it answers yes only
+/// for a hardlink of the very same file, never for another file of that name.
+fn already_quarantined(src: &Path, dest: &Path) -> bool {
+    let Some(id) = file_identity(src) else {
+        return false;
+    };
+    if file_identity(dest) == Some(id) {
+        return true;
+    }
+    let stem = dest
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    let ext = dest.extension().map(|e| e.to_string_lossy().into_owned());
+    for n in 1..=999 {
+        let name = match &ext {
+            Some(e) => format!("{stem}.{n}.{e}"),
+            None => format!("{stem}.{n}"),
+        };
+        let candidate = dest.with_file_name(name);
+        if !candidate.exists() {
+            return false;
+        }
+        if file_identity(&candidate) == Some(id) {
+            return true;
+        }
+    }
+    false
+}
+
 /// A path that does not exist yet: `dest` if free, else `stem.1.ext`, `stem.2.ext`…
 ///
 /// Used by quarantine (SKADI-T-0413) so a second file with the same name joins the
@@ -1797,6 +1834,47 @@ mod tests {
         assert_eq!(outcome.quarantined, vec![dest]);
         assert!(outcome.imported.is_empty());
         assert!(outcome.rejected.is_empty());
+    }
+
+    /// SKADI-T-0763: importing the same download again does not set the same
+    /// file aside a second time; a different file of the same name still gets
+    /// its own numbered name (SKADI-T-0413).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_file_already_in_review_is_not_quarantined_again() {
+        let dir = unique_dir("requar");
+        let src = dir.join("ambiguous.m4b");
+        std::fs::write(&src, b"audio").unwrap();
+        let review = dir.join("_review");
+        let importer = DefaultImporter::new(Quarantiner {
+            review: review.clone(),
+        });
+
+        for _ in 0..3 {
+            let outcome = importer.import(completed(vec![src.clone()])).await.unwrap();
+            assert_eq!(outcome.quarantined, vec![review.join("ambiguous.m4b")]);
+            assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+        }
+        let names: Vec<_> = std::fs::read_dir(&review)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "one name for one file: {names:?}");
+
+        // Another file with the same name is a different file: it joins as `.1`,
+        // and a repeat of *it* adds nothing either.
+        let other_dir = dir.join("other");
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let other = other_dir.join("ambiguous.m4b");
+        std::fs::write(&other, b"different audio").unwrap();
+        for _ in 0..2 {
+            importer
+                .import(completed(vec![other.clone()]))
+                .await
+                .unwrap();
+        }
+        assert!(review.join("ambiguous.1.m4b").exists());
+        assert_eq!(std::fs::read_dir(&review).unwrap().count(), 2);
     }
 
     /// SKADI-T-0424: the shared adoption primitive, which replaced three

@@ -102,10 +102,19 @@ pub fn parse_asin(name: &str) -> Option<AsinId> {
     static BRACKETED_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)[\[{(]\s*([0-9a-z]{10})\s*[\]})]").unwrap()
     });
+    // An explicit `asin-…` marker is trusted as written. A bare bracketed id
+    // must look like one: a real ASIN or ISBN-10 has a digit in it. Ten letters
+    // in brackets are a word — `(Unabridged)` and `[EarReaders]` were both read
+    // as ASINs (SKADI-T-0763).
     MARKED_RE
         .captures(name)
-        .or_else(|| BRACKETED_RE.captures(name))
         .and_then(|c| c.get(1))
+        .or_else(|| {
+            BRACKETED_RE
+                .captures_iter(name)
+                .filter_map(|c| c.get(1))
+                .find(|m| m.as_str().chars().any(|ch| ch.is_ascii_digit()))
+        })
         .map(|m| AsinId(m.as_str().to_uppercase()))
 }
 
@@ -536,6 +545,18 @@ mod tests {
         );
         // No asin marker — a bare year/10-char token must not match.
         assert_eq!(parse_asin("Project Hail Mary (2021)"), None);
+        // Ten letters in brackets are a word, not an id (SKADI-T-0763): both of
+        // these were returned as ASINs by the library-import scan.
+        assert_eq!(parse_asin("Leviathan Wakes Book 1 (Unabridged).m4b"), None);
+        assert_eq!(
+            parse_asin("Carrie audiobook by Stephen King [EarReaders].mp3"),
+            None
+        );
+        // A word in brackets does not hide a real id later in the name.
+        assert_eq!(
+            parse_asin("The Great Hunt (Unabridged) [B0B7LGNDTJ] - 02.m4b"),
+            Some(AsinId("B0B7LGNDTJ".into()))
+        );
         assert_eq!(parse_asin("Stormlight Archive 1234567890"), None);
     }
 

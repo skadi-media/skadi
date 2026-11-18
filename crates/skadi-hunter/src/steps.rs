@@ -320,6 +320,19 @@ pub async fn persist_imported(
     }
 }
 
+/// Did an audiobook import place files for other books and none for the book
+/// the run is for (SKADI-T-0763)? Only audiobooks: a TV season run is *for* a
+/// season and places episodes, so its own ref is never among the placed ones.
+fn pack_missed_its_book(
+    kind: skadi_core::MediaKind,
+    target: &skadi_importer::AcquirableRef,
+    outcome: &skadi_importer::ImportOutcome,
+) -> bool {
+    kind == skadi_core::MediaKind::Audiobook
+        && !outcome.imported.is_empty()
+        && !outcome.imported.iter().any(|f| f.acquirable == *target)
+}
+
 /// The distinct acquirables in an import outcome, in first-seen order, each represented by
 /// its first imported file (SKADI-T-0310). A pack download places files for several library
 /// books, so we probe + mark each book `Imported` once, using one representative file.
@@ -1500,6 +1513,22 @@ pub async fn import(context: &mut Context<Value>) -> Result<()> {
                     format_score,
                 )
                 .await;
+
+                // A pack that placed other books and not the one this run is
+                // for (SKADI-T-0763). The books it did place are Imported above
+                // and stay so; this run's book is not, and the same pack must
+                // not be grabbed for it again — two Redwall packs were grabbed
+                // 14 times for two books they kept failing to deliver.
+                if pack_missed_its_book(state.request.kind, &state.acquirable, outcome) {
+                    let why = "the download placed other books, none for this one";
+                    record_import_outcome(&svc, &state, Some(why)).await;
+                    record_failed_and_blocklist(
+                        &state,
+                        FailureReason::ImportFailed(why.to_string()),
+                    )
+                    .await;
+                    state.terminal_failure = true;
+                }
             }
 
             // Move-mode import: the importer has relocated the files, so the
@@ -2078,6 +2107,49 @@ mod tests {
         // Monotonic non-decreasing.
         let seq: Vec<i64> = (0..6).map(h).collect();
         assert!(seq.windows(2).all(|w| w[0] <= w[1]), "{seq:?}");
+    }
+
+    /// SKADI-T-0763: a pack that delivered other books is not an import of
+    /// the book it was grabbed for.
+    #[test]
+    fn a_pack_that_places_only_other_books_missed_its_book() {
+        use super::pack_missed_its_book;
+        use skadi_core::{FileRef, MediaKind};
+        use skadi_importer::{AcquirableRef, ImportOutcome, ImportedFile};
+        let placed = |refs: &[&str]| ImportOutcome {
+            imported: refs
+                .iter()
+                .map(|a| ImportedFile {
+                    acquirable: AcquirableRef((*a).to_string()),
+                    file: FileRef { path: "p".into() },
+                    replaced: false,
+                })
+                .collect(),
+            ..ImportOutcome::default()
+        };
+        let target = AcquirableRef("doomwyte".into());
+        assert!(pack_missed_its_book(
+            MediaKind::Audiobook,
+            &target,
+            &placed(&["mattimeo", "redwall"])
+        ));
+        assert!(!pack_missed_its_book(
+            MediaKind::Audiobook,
+            &target,
+            &placed(&["mattimeo", "doomwyte"])
+        ));
+        // Nothing placed is the ordinary "no placed files" failure, not this.
+        assert!(!pack_missed_its_book(
+            MediaKind::Audiobook,
+            &target,
+            &placed(&[])
+        ));
+        // A season run places episodes; its own ref is never among them.
+        assert!(!pack_missed_its_book(
+            MediaKind::Series,
+            &AcquirableRef("season-x-1".into()),
+            &placed(&["ep1", "ep2"])
+        ));
     }
 
     #[test]

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-18
+
 ### Fixed
 - Audiobook series packs often imported nothing for the book they were grabbed for. A file is now matched by its path below the download folder, a book titled after its series no longer ties with every file of the pack, and a pack of which the library tracks one book places that book and leaves the rest in the download. A pack that delivers other books and not the wanted one is marked failed for that book and not grabbed for it again (SKADI-T-0763).
 - Audio that could not be matched was set aside in `_review` again on every repeat import, under `name.1`, `name.2` and so on, and only its last folder was kept, so discs of different books were mixed. A file already in `_review` is not linked again, and the path below the download folder is kept (SKADI-T-0763).

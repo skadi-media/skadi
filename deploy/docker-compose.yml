@@ -246,7 +246,8 @@ services:
   # Gentle VPN recovery (deploy/README "VPN stability"). With HEALTH_RESTART_VPN=off,
   # gluetun no longer self-restarts the tunnel — which is what stormed NordVPN into
   # throttling the key. This watchdog provides recovery instead, but SLOWLY: only after
-  # gluetun has been unhealthy for a few minutes does it do ONE clean restart of gluetun
+  # gluetun has been unhealthy, or healthy with no traffic through the tunnel
+  # (SKADI-T-0769), for a few minutes does it do ONE clean restart of gluetun
   # plus its network-namespace mates (flaresolverr, worker, which lose the namespace
   # when gluetun restarts), then it waits ~5 min. At most one reconnect per ~5 min — a
   # controlled recovery, never the ~10/min storm. (Distinct from `autoheal`, which fires
@@ -284,20 +285,39 @@ services:
       CHECK_INTERVAL: "60" # seconds between health checks
       FAIL_THRESHOLD: "3" # consecutive unhealthy checks before a bounce (~3 min)
       BOUNCE_COOLDOWN: "300" # seconds to settle after a bounce before checking again
+      # Two public addresses the tunnel probe tries to open a TCP connection to
+      # from inside gluetun's namespace (SKADI-T-0769). One answer is enough.
+      PROBE_HOSTS: "1.1.1.1 9.9.9.9"
+      PROBE_PORT: "443"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         echo "vpn-watchdog: started (gentle gluetun recovery; HEALTH_RESTART_VPN=off)";
+        # Does the tunnel pass traffic? A TCP connect from inside gluetun's
+        # namespace: with the tunnel down gluetun's firewall drops everything, so
+        # no host answers. Not the public-IP endpoint — that needs a third-party
+        # lookup and can be empty with a working tunnel (SKADI-T-0769).
+        tunnel_up() {
+          for h in $$PROBE_HOSTS; do
+            docker exec "$$GLUETUN" nc -z -w 5 "$$h" "$$PROBE_PORT" >/dev/null 2>&1 && return 0;
+          done;
+          return 1;
+        };
         fails=0;
         while true; do
           status=$$(docker inspect --format '{{.State.Health.Status}}' "$$GLUETUN" 2>/dev/null || echo missing);
-          if [ "$$status" = healthy ]; then
+          # The container's own health is not enough: with the provider refusing
+          # the login gluetun retried for 25 hours, tunnel down, and stayed
+          # "healthy" (2026-11-20). So a healthy container must also pass traffic.
+          if [ "$$status" = healthy ] && tunnel_up; then
             fails=0;
           else
             fails=$$((fails + 1));
-            echo "vpn-watchdog: gluetun=$$status ($$fails/$$FAIL_THRESHOLD)";
+            if [ "$$status" = healthy ]; then probe="no traffic through the tunnel"; else probe="tunnel not probed"; fi;
+            echo "vpn-watchdog: gluetun=$$status, $$probe ($$fails/$$FAIL_THRESHOLD)";
             if [ "$$fails" -ge "$$FAIL_THRESHOLD" ]; then
-              echo "vpn-watchdog: gentle bounce of gluetun + dependents (one clean reconnect)";
+              refused=$$(docker logs --since 5m "$$GLUETUN" 2>&1 | grep -c AUTH_FAILED);
+              echo "vpn-watchdog: gentle bounce of gluetun + dependents (one clean reconnect); gluetun=$$status, $$probe, $$refused login refusals in the last 5 min";
               docker restart "$$GLUETUN" >/dev/null 2>&1 || true;
               sleep 20;
               docker restart $$DEPENDENTS >/dev/null 2>&1 || true;

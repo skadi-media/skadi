@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The VPN watchdog started a container that had been stopped on purpose: on a reconnect it restarted every container that shares the VPN's network, and a restart also starts a stopped one. It now restarts only those that were running, and names the ones it left stopped (SKADI-T-0771).
 - The VPN watchdog did nothing while the VPN provider refused the login: gluetun kept retrying one server for 25 hours with the tunnel down and its container still reported healthy. The watchdog now also checks that traffic passes through the tunnel, and after three failed checks does its one clean reconnect, as it does for an unhealthy container (SKADI-T-0769).
 
 ## [0.1.15] - 2026-11-18

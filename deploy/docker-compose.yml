@@ -318,9 +318,21 @@ services:
             if [ "$$fails" -ge "$$FAIL_THRESHOLD" ]; then
               refused=$$(docker logs --since 5m "$$GLUETUN" 2>&1 | grep -c AUTH_FAILED);
               echo "vpn-watchdog: gentle bounce of gluetun + dependents (one clean reconnect); gluetun=$$status, $$probe, $$refused login refusals in the last 5 min";
+              # Only the dependents that are running now come back: `docker restart`
+              # also starts a stopped container, and one the operator stopped on
+              # purpose must stay stopped (SKADI-T-0771).
+              running=""; stopped="";
+              for d in $$DEPENDENTS; do
+                if [ "$$(docker inspect --format '{{.State.Running}}' "$$d" 2>/dev/null)" = true ]; then
+                  running="$$running $$d";
+                else
+                  stopped="$$stopped $$d";
+                fi;
+              done;
+              if [ -n "$$stopped" ]; then echo "vpn-watchdog: left stopped:$$stopped"; fi;
               docker restart "$$GLUETUN" >/dev/null 2>&1 || true;
               sleep 20;
-              docker restart $$DEPENDENTS >/dev/null 2>&1 || true;
+              if [ -n "$$running" ]; then docker restart $$running >/dev/null 2>&1 || true; fi;
               fails=0;
               sleep "$$BOUNCE_COOLDOWN";
             fi;

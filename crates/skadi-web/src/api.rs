@@ -1490,6 +1490,211 @@ pub async fn system_log(page_size: usize) -> Result<Vec<LogLine>, ApiError> {
     Ok(resp.json::<Vec<LogLine>>().await?)
 }
 
+/// `GET /library/storage/summary` (mirror of skadi-api `StorageSummary`,
+/// SKADI-T-0774).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSummary {
+    #[serde(default)]
+    pub kinds: Vec<StorageKind>,
+    #[serde(default)]
+    pub orphans: StorageOrphanTotals,
+    #[serde(default)]
+    pub free_bytes: Option<u64>,
+    #[serde(default)]
+    pub total_bytes: Option<u64>,
+    #[serde(default)]
+    pub sweeps: Vec<StorageSweep>,
+}
+
+/// The totals of one kind. Sizes and counts leave out the files that are gone.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageKind {
+    pub kind: String,
+    #[serde(default)]
+    pub files: i64,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub disk_bytes: i64,
+    #[serde(default)]
+    pub linked: i64,
+    #[serde(default)]
+    pub measured: i64,
+    #[serde(default)]
+    pub measured_bytes: i64,
+    #[serde(default)]
+    pub pieces: i64,
+    #[serde(default)]
+    pub checksummed: i64,
+    #[serde(default)]
+    pub gone: i64,
+    #[serde(default)]
+    pub last_read_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageOrphanTotals {
+    #[serde(default)]
+    pub files: i64,
+    #[serde(default)]
+    pub size_bytes: i64,
+}
+
+/// Where one domain's storage sweep is.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSweep {
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub skipped: Option<String>,
+    #[serde(default)]
+    pub last: Option<StorageSweepCounts>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSweepCounts {
+    #[serde(default)]
+    pub files: u64,
+    #[serde(default)]
+    pub recorded: u64,
+    #[serde(default)]
+    pub gone: u64,
+    #[serde(default)]
+    pub unreadable: u64,
+    #[serde(default)]
+    pub dropped: u64,
+    #[serde(default)]
+    pub orphans: u64,
+    #[serde(default)]
+    pub pruned: u64,
+}
+
+/// `GET /library/storage/files`: one page.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageFilesPage {
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub files: Vec<StorageFile>,
+}
+
+/// The storage facts of one library file.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageFile {
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    pub path: String,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub disk_bytes: i64,
+    #[serde(default)]
+    pub links: i64,
+    #[serde(default)]
+    pub mtime: String,
+    #[serde(default)]
+    pub pieces: Option<i64>,
+    #[serde(default)]
+    pub pieces_at: Option<String>,
+    #[serde(default)]
+    pub checksum_at: Option<String>,
+    #[serde(default)]
+    pub gone_at: Option<String>,
+}
+
+/// `GET /library/storage/orphans`: one page.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageOrphansPage {
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub orphans: Vec<StorageOrphan>,
+}
+
+/// A file in a library folder that no item holds.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageOrphan {
+    pub path: String,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub mtime: String,
+    #[serde(default)]
+    pub first_seen: String,
+}
+
+/// `GET /library/storage/summary` — totals by kind, orphans, free space and
+/// the storage sweeps. Admin only.
+pub async fn library_storage_summary() -> Result<StorageSummary, ApiError> {
+    let resp = get(&format!("{API_BASE}/library/storage/summary"))?
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "library storage summary -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<StorageSummary>().await?)
+}
+
+/// `GET /library/storage/files?<query>` — one page of the file list; the
+/// daemon sorts, filters and pages. `query` is
+/// `library_details::files_query`.
+pub async fn library_storage_files(query: &str) -> Result<StorageFilesPage, ApiError> {
+    let resp = get(&format!("{API_BASE}/library/storage/files?{query}"))?
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "library storage files -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<StorageFilesPage>().await?)
+}
+
+/// `GET /library/storage/orphans` — one page of the files no item holds.
+pub async fn library_storage_orphans(
+    limit: usize,
+    offset: usize,
+) -> Result<StorageOrphansPage, ApiError> {
+    let resp = get(&format!(
+        "{API_BASE}/library/storage/orphans?limit={limit}&offset={offset}"
+    ))?
+    .send()
+    .await
+    .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "library storage orphans -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<StorageOrphansPage>().await?)
+}
+
 /// `GET /root-folders` — per root folder free/total bytes + writability.
 pub async fn root_folders() -> Result<Vec<RootFolder>, ApiError> {
     let resp = get(&format!("{API_BASE}/root-folders"))?

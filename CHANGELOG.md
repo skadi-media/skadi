@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Settings has a "Library details" page for the admin: files, size, space on disk, hard-linked files and gone files by kind; the free space of the library disk; when each kind was last read and whether a reading runs now; the list of every file, sorted and filtered by the daemon one page at a time; and the media files in the library folders that no item holds. Piece counts and checksums read "not measured" until their collectors exist (SKADI-T-0774).
 - Skadi records the size, the space on disk, the hard links and the identity of each library file: when a file is imported, and in a pass over the library every 24 hours (`storage.sweep.interval_hours`; 0 turns it off). The pass also records the files that are gone and the media files in the library folders that no item holds. Nothing shows these yet; a "Library details" page follows (SKADI-T-0773).
 
 ### Fixed

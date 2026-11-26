@@ -1357,6 +1357,17 @@ p.genres.muted {
 .system-banner { margin: 0 0 0.6rem; }
 .system-table td { vertical-align: top; overflow-wrap: anywhere; }
 .system-table td.nowrap { white-space: nowrap; overflow-wrap: normal; }
+/* Library details (SKADI-T-0774). */
+.system-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.storage-kinds th:nth-child(n+2):nth-child(-n+6),
+.storage-files th:nth-child(n+3):nth-child(-n+5),
+.storage-orphans th:nth-child(2) { text-align: right; }
+.storage-total-row td { font-weight: 600; border-top: 1px solid var(--border); }
+.storage-file-row.gone .storage-path { text-decoration: line-through; }
+.storage-file-row.gone .storage-gone { text-decoration: none; }
+.storage-subhead { margin-top: 1.5rem; }
+.storage-space { margin: 0 0 0.75rem; }
+.sweep-row.running .sweep-state { font-weight: 600; }
 .system-table .status-dot { margin-right: 0.4rem; vertical-align: middle; }
 .check-level { font-size: 0.72rem; color: var(--fg-2); }
 .check-id, .task-what { font-size: 0.72rem; }

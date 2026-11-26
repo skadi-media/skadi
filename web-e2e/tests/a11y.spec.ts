@@ -228,6 +228,7 @@ test.describe("C31 a11y: axe on the main pages", () => {
     "/naming",
     "/importlists",
     "/system",
+    "/library-details",
     "/listen",
     "/players",
     "/upload",

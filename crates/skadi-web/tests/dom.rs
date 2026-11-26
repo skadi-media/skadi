@@ -2146,3 +2146,196 @@ fn grab_buttons_name_their_release() {
         "the action column has a name"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Library details (SKADI-T-0774)
+// ---------------------------------------------------------------------------
+
+fn storage_kind(kind: &str, files: i64, size_gb: i64, gone: i64) -> skadi_web::api::StorageKind {
+    skadi_web::api::StorageKind {
+        kind: kind.into(),
+        files,
+        size_bytes: size_gb * 1024 * 1024 * 1024,
+        disk_bytes: size_gb * 1024 * 1024 * 1024,
+        gone,
+        last_read_at: Some("2026-11-26T20:15:00+00:00".into()),
+        ..Default::default()
+    }
+}
+
+#[wasm_bindgen_test]
+fn library_details_totals_show_each_kind_a_total_and_the_orphans() {
+    use skadi_web::api::StorageOrphanTotals;
+    use skadi_web::library_details::KindTable;
+    let kinds = vec![
+        storage_kind("movie", 1818, 2, 0),
+        storage_kind("series", 24_014, 3, 4),
+    ];
+    let orphans = StorageOrphanTotals {
+        files: 7,
+        size_bytes: 1024 * 1024 * 1024,
+    };
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! { <KindTable kinds=kinds.clone() orphans=orphans.clone()/> }
+    });
+    assert_eq!(
+        count(&host, "tbody tr.storage-kind-row"),
+        3,
+        "two kinds and the total"
+    );
+    assert_eq!(count(&host, "tbody tr.storage-total-row"), 1);
+    let total = find(&host, "tr.storage-total-row").text_content().unwrap();
+    assert!(total.contains("25,832"), "the files add up: {total}");
+    assert!(total.contains("5.0 GB"), "the sizes add up: {total}");
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Movies") && text.contains("TV"), "{text}");
+    // Nothing is measured yet: both collectors say so, on every row.
+    assert_eq!(text.matches("not measured").count(), 6, "{text}");
+    assert!(text.contains("7 files with no item, 1.0 GB."), "{text}");
+}
+
+#[wasm_bindgen_test]
+fn library_details_totals_say_so_before_the_first_reading() {
+    use skadi_web::api::StorageOrphanTotals;
+    use skadi_web::library_details::KindTable;
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! { <KindTable kinds=Vec::new() orphans=StorageOrphanTotals::default()/> }
+    });
+    assert_eq!(count(&host, "table"), 0);
+    assert!(
+        host.text_content()
+            .unwrap()
+            .contains("No file has been read yet")
+    );
+}
+
+#[wasm_bindgen_test]
+fn library_details_readings_show_the_last_read_time_and_what_runs_now() {
+    use skadi_web::api::{StorageSweep, StorageSweepCounts};
+    use skadi_web::library_details::SweepTable;
+    let sweeps = vec![
+        StorageSweep {
+            name: "movies-storage-sweep".into(),
+            kind: "movie".into(),
+            running: true,
+            ..Default::default()
+        },
+        StorageSweep {
+            name: "television-storage-sweep".into(),
+            kind: "series".into(),
+            finished_at: Some("2026-11-26T20:16:00+00:00".into()),
+            last: Some(StorageSweepCounts {
+                files: 24_014,
+                gone: 4,
+                orphans: 7,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ];
+    let kinds = vec![storage_kind("series", 24_014, 3, 4)];
+    let host = host();
+    let _handle = mount_to(host.clone(), move || {
+        view! { <SweepTable sweeps=sweeps.clone() kinds=kinds.clone()/> }
+    });
+    assert_eq!(count(&host, "tr.sweep-row"), 2);
+    assert_eq!(count(&host, "tr.sweep-row.running"), 1);
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Running now"), "{text}");
+    assert!(text.contains("Idle"), "{text}");
+    assert!(
+        text.contains("2026-11-26 20:15:00"),
+        "the last read time: {text}"
+    );
+    assert!(
+        text.contains("24,014 files, 4 gone, 7 with no item"),
+        "{text}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn library_details_files_show_size_links_and_not_measured() {
+    use skadi_web::api::StorageFile;
+    use skadi_web::library_details::FileTable;
+    let files = vec![
+        StorageFile {
+            id: "1".into(),
+            kind: "movie".into(),
+            path: "/library/movie/A (2020)/A (2020).mkv".into(),
+            size_bytes: 2 * 1024 * 1024 * 1024,
+            disk_bytes: 2 * 1024 * 1024 * 1024,
+            links: 2,
+            mtime: "2026-10-01T08:00:00+00:00".into(),
+            ..Default::default()
+        },
+        StorageFile {
+            id: "2".into(),
+            kind: "series".into(),
+            path: "/library/television/B/S01E01.mkv".into(),
+            size_bytes: 1024 * 1024 * 1024,
+            links: 1,
+            mtime: "2026-10-02T08:00:00+00:00".into(),
+            pieces: Some(5000),
+            pieces_at: Some("2026-11-20T00:00:00+00:00".into()),
+            gone_at: Some("2026-11-25T03:00:00+00:00".into()),
+            ..Default::default()
+        },
+    ];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <FileTable files=files.clone()/> },
+    );
+    assert_eq!(count(&host, "tr.storage-file-row"), 2);
+    assert_eq!(count(&host, "tr.storage-file-row.gone"), 1);
+    let text = host.text_content().unwrap();
+    assert!(text.contains("2.0 GB"), "{text}");
+    assert!(
+        text.contains("Not found since 2026-11-25 03:00:00 UTC"),
+        "{text}"
+    );
+    // The first file: pieces and checksum. The second: checksum only.
+    assert_eq!(text.matches("not measured").count(), 3, "{text}");
+    assert!(
+        text.contains("5,000"),
+        "a measured piece count is shown: {text}"
+    );
+}
+
+/// The gate is the known-good role, as on the System page: nobody else gets a
+/// panel, a filter or a request.
+#[wasm_bindgen_test]
+fn the_library_details_page_draws_no_panels_for_anyone_but_the_admin() {
+    use skadi_web::library_details::LibraryDetailsPage;
+    use skadi_web::subnav::RoleCtx;
+    for (role, says) in [
+        (Some("member"), "household admin"),
+        (Some("contributor"), "household admin"),
+        (Some("kid"), "household admin"),
+        (None, "Loading"),
+    ] {
+        let host = host();
+        let _handle = mount_to(host.clone(), move || {
+            provide_context(RoleCtx(RwSignal::new(role.map(str::to_string))));
+            view! { <LibraryDetailsPage/> }
+        });
+        let text = host.text_content().unwrap();
+        assert!(text.contains(says), "{role:?}: {text}");
+        assert_eq!(count(&host, ".provider-section"), 0, "{role:?} got panels");
+        assert_eq!(count(&host, "select"), 0, "{role:?} got the filters");
+    }
+}
+
+#[wasm_bindgen_test]
+async fn library_details_panels_show_rows_then_a_retry() {
+    use skadi_web::library_details::LibraryDetailsPage;
+    check_list_view(
+        "Library details",
+        "sk-rows",
+        "/api/v1/library/storage/summary",
+        || view! { <LibraryDetailsPage/> },
+    )
+    .await;
+}

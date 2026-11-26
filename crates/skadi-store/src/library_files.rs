@@ -819,10 +819,13 @@ impl LibraryFileRepo for Store {
         self.with_conn(move |conn| {
             let rows = library_files::table
                 .filter(library_files::kind.eq(&kind))
-                .order(library_files::path.asc())
                 .select(FileRow::as_select())
                 .load(conn);
-            files(rows)
+            // Sorted here, by bytes: the database's order of text depends on
+            // its collation, which differs between the backends.
+            let mut rows = files(rows)?;
+            rows.sort_by(|a, b| a.path.cmp(&b.path));
+            Ok(rows)
         })
         .await
     }

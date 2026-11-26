@@ -17,6 +17,8 @@
 //! rest of the daemon** while it walks tens of thousands of files on a network
 //! share.
 
+pub mod storage;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

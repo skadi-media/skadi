@@ -505,6 +505,14 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
         default: "3",
         tier: Tier::Tier1,
     },
+    // Hours between two passes of the storage sweep of a domain (SKADI-T-0773):
+    // it reads the size, links and identity of every library file. 0 = off.
+    ConfigKeySpec {
+        key: "storage.sweep.interval_hours",
+        kind: ValueKind::U16,
+        default: "24",
+        tier: Tier::Tier1,
+    },
     // Worker (the `SKADI_WORKER_*` surface; defaults match its current
     // `Config::from_env`).
     ConfigKeySpec {
@@ -765,6 +773,10 @@ pub const HELP: &[(&str, &str)] = &[
     (
         "import.audiobook_convert_concurrency",
         "How many audiobooks convert to M4B at the same time, from 1 to 8. Each conversion uses about one CPU core.",
+    ),
+    (
+        "storage.sweep.interval_hours",
+        "How many hours pass between two readings of the size, the hard links and the identity of each library file. The same pass finds the files that are gone and the files with no record. 0 turns it off.",
     ),
     (
         "import.recycle_bin",

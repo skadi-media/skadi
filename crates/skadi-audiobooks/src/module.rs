@@ -166,10 +166,10 @@ impl AudiobooksModule {
         Arc::new(HunterServices {
             kind: MediaKind::Audiobook,
             store: self.store.clone(),
-            status: Arc::new(AudiobookStatusSink::new(
-                repo.clone(),
-                Arc::new(self.store.clone()),
-            )),
+            status: Arc::new(
+                AudiobookStatusSink::new(repo.clone(), Arc::new(self.store.clone()))
+                    .with_storage(Arc::new(self.store.clone())),
+            ),
             indexers: providers.indexers.clone(),
             downloaders: providers.downloaders.clone(),
             importer: Arc::new(DefaultImporter::new(NoMatcher)),
@@ -273,6 +273,15 @@ impl DomainModule for AudiobooksModule {
             crate::convert::ConvertJob::new(self.store.clone()),
             crate::convert::DEFAULT_CONVERT_INTERVAL,
         )));
+
+        // Storage sweep (SKADI-T-0773): size, links and identity of every file
+        // the domain holds, the files that are gone and the files with no record.
+        workers.push(Box::new(
+            skadi_library_scan::storage::StorageSweepWorker::new(
+                Arc::new(crate::storage::BookStorageSource::new(self.store.clone())),
+                self.store.clone(),
+            ),
+        ));
 
         // Author-discovery worker (SKADI-T-0132): only once both the catalog
         // provider (author → products) and the enrichment provider are wired.
@@ -555,10 +564,11 @@ mod tests {
             vec![
                 "audiobooks-hunter",
                 "audiobooks-author-maintenance",
-                "audiobooks-m4b-convert"
+                "audiobooks-m4b-convert",
+                "audiobooks-storage-sweep"
             ],
-            "one hunter worker, author maintenance and the M4B conversion (idle when off); \
-             refresh and discovery deferred"
+            "one hunter worker, author maintenance, the M4B conversion (idle when off) and \
+             the storage sweep; refresh and discovery deferred"
         );
         module.runner().shutdown().await.unwrap();
     }

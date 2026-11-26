@@ -259,10 +259,10 @@ impl MoviesModule {
         Arc::new(HunterServices {
             kind: skadi_core::MediaKind::Movie,
             store: self.store.clone(),
-            status: Arc::new(MovieStatusSink::new(
-                repo.clone(),
-                Arc::new(self.store.clone()),
-            )),
+            status: Arc::new(
+                MovieStatusSink::new(repo.clone(), Arc::new(self.store.clone()))
+                    .with_storage(Arc::new(self.store.clone())),
+            ),
             indexers: providers.indexers.clone(),
             downloaders: providers.downloaders.clone(),
             // Static importer is a no-op fallback; the factory below is the
@@ -490,6 +490,14 @@ impl DomainModule for MoviesModule {
             ))],
             Arc::new(skadi_library_scan::DefaultProber),
         )));
+        // Storage sweep (SKADI-T-0773): size, links and identity of every file
+        // the domain holds, the files that are gone and the files with no record.
+        workers.push(Box::new(
+            skadi_library_scan::storage::StorageSweepWorker::new(
+                Arc::new(crate::scan::MovieStorageSource::new(self.store.clone())),
+                self.store.clone(),
+            ),
+        ));
         workers
     }
 }

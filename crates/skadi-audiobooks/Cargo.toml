@@ -12,6 +12,7 @@ description = "Audiobooks domain for Skadi: Author/Series/Book/BookFile, repo, m
 futures = { workspace = true }
 skadi-core = { workspace = true }
 skadi-store = { workspace = true }
+skadi-library-scan = { workspace = true }
 skadi-config = { workspace = true }
 skadi-quality = { workspace = true }
 skadi-metadata = { workspace = true }

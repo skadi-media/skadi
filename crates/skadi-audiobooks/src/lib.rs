@@ -35,6 +35,7 @@ pub mod repo;
 pub mod roles;
 mod schema;
 pub mod status_sink;
+pub mod storage;
 pub mod wanted;
 pub mod work;
 

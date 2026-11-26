@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Skadi records the size, the space on disk, the hard links and the identity of each library file: when a file is imported, and in a pass over the library every 24 hours (`storage.sweep.interval_hours`; 0 turns it off). The pass also records the files that are gone and the media files in the library folders that no item holds. Nothing shows these yet; a "Library details" page follows (SKADI-T-0773).
+
 ### Fixed
 - The VPN watchdog started a container that had been stopped on purpose: on a reconnect it restarted every container that shares the VPN's network, and a restart also starts a stopped one. It now restarts only those that were running, and names the ones it left stopped (SKADI-T-0771).
 - The VPN watchdog did nothing while the VPN provider refused the login: gluetun kept retrying one server for 25 hours with the tunnel down and its container still reported healthy. The watchdog now also checks that traffic passes through the tunnel, and after three failed checks does its one clean reconnect, as it does for an unhealthy container (SKADI-T-0769).

@@ -383,6 +383,23 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: changed size, one sample"
     );
 
+    // An mtime finer than a microsecond does not read back as a change.
+    let mut fine = stat("movie", "/lib/movie/a.mkv", 12 * GB, 2);
+    fine.mtime = t(0) + Duration::nanoseconds(1_234_567);
+    store.record_library_file_stat(&fine, t(6)).await.unwrap();
+    store
+        .record_library_file_checksum(&a.id, "abc", t(6))
+        .await
+        .unwrap();
+    let same = store.record_library_file_stat(&fine, t(6)).await.unwrap();
+    assert_eq!(
+        same.checksum_at,
+        Some(t(6)),
+        "{label}: the same mtime again is not a change"
+    );
+    let reset = stat("movie", "/lib/movie/a.mkv", 12 * GB, 2);
+    store.record_library_file_stat(&reset, t(6)).await.unwrap();
+
     // Gone, then found: gone_at is set once, and cleared by the next stat.
     assert!(store.mark_library_file_gone(&a.id, t(7)).await.unwrap());
     assert!(store.mark_library_file_gone(&a.id, t(8)).await.unwrap());
@@ -457,7 +474,20 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: a claimed path leaves the orphans"
     );
     assert_eq!(
-        store.prune_library_orphans(t(12)).await.unwrap(),
+        store.prune_library_orphans("/lib/t", t(12)).await.unwrap(),
+        0,
+        "{label}: /lib/t is not a parent folder of /lib/tv"
+    );
+    assert_eq!(
+        store
+            .prune_library_orphans("/lib/movie", t(12))
+            .await
+            .unwrap(),
+        0,
+        "{label}: another folder's orphans stay"
+    );
+    assert_eq!(
+        store.prune_library_orphans("/lib/tv", t(12)).await.unwrap(),
         1,
         "{label}: not seen since the pass began"
     );
@@ -568,6 +598,25 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         oldest.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
         vec!["/lib/book/f.m4b", "/lib/movie/b.mkv"],
         "{label}: oldest measurement first, ties by path"
+    );
+
+    // Rows of one kind, and the removal of a row with its history.
+    let series = store.library_files_of_kind("series").await.unwrap();
+    assert_eq!(
+        series.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        vec![o, "/lib/tv/c.mkv", "/lib/tv/d.mkv", "/lib/tv/e.mkv"],
+        "{label}: every row of the kind, gone ones too, by path"
+    );
+    let c = &ids["/lib/tv/c.mkv"];
+    assert!(store.delete_library_file(c).await.unwrap());
+    assert!(!store.delete_library_file(c).await.unwrap(), "{label}");
+    assert_eq!(
+        store.library_file_by_path("/lib/tv/c.mkv").await.unwrap(),
+        None
+    );
+    assert!(
+        store.library_file_samples(c).await.unwrap().is_empty(),
+        "{label}: the history goes with the row"
     );
 }
 

@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use diesel::prelude::*;
 use skadi_core::{MediaInfo, Result};
+use skadi_library_scan::storage::{StorageItem, StorageSource};
 use skadi_library_scan::{ScanItem, ScanProgress, ScanSource};
 use skadi_store::Store;
 
@@ -91,6 +92,50 @@ impl ScanSource for EpisodeScanSource {
                     .get_result(conn)
                     .map_err(crate::repo::db_err)?;
                 Ok(ScanProgress { scanned, total })
+            })
+            .await
+    }
+}
+/// The files the episodes hold, for the storage sweep (SKADI-T-0773).
+pub struct EpisodeStorageSource {
+    store: Store,
+}
+
+impl EpisodeStorageSource {
+    #[must_use]
+    pub fn new(store: Store) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl StorageSource for EpisodeStorageSource {
+    fn name(&self) -> &'static str {
+        "television"
+    }
+
+    fn kind(&self) -> skadi_core::MediaKind {
+        skadi_core::MediaKind::Series
+    }
+
+    async fn files(&self) -> Result<Vec<StorageItem>> {
+        self.store
+            .with_conn(move |conn| {
+                let rows: Vec<(String, Option<String>)> = episodes::table
+                    .filter(episodes::file_path.is_not_null())
+                    .select((episodes::id, episodes::file_path))
+                    .order(episodes::id.asc())
+                    .load(conn)
+                    .map_err(crate::repo::db_err)?;
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|(id, path)| {
+                        path.map(|p| StorageItem {
+                            acquirable_ref: id,
+                            path: p.into(),
+                        })
+                    })
+                    .collect())
             })
             .await
     }

@@ -11,6 +11,9 @@ description = "Background library media scan for Skadi: profiles every imported 
 [dependencies]
 tracing = { workspace = true }
 skadi-core = { workspace = true }
+skadi-store = { workspace = true }
+skadi-config = { workspace = true }
+chrono = { workspace = true }
 skadi-media-probe = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

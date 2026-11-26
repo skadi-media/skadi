@@ -31,6 +31,7 @@ mod downloads;
 mod history;
 pub mod import_lists;
 mod item_tags;
+mod library_files;
 mod repo;
 mod schema;
 mod schema_version;
@@ -52,6 +53,10 @@ pub use downloads::{
 pub use history::{HistoryCounts, HistoryCursor, HistoryEntry, HistoryQuery, HistoryRepo};
 pub use import_lists::{ImportList, ImportListExclusion, ImportListRepo};
 pub use item_tags::ItemTagRepo;
+pub use library_files::{
+    LibraryFile, LibraryFileRepo, LibraryFileSample, LibraryFileStat, LibraryKindTotals,
+    LibraryOrphan, ProbeState, StorageProbeRepo, StorageProbeStatus,
+};
 pub use repo::{DomainState, DomainStateRepo};
 pub use schema_version::{MIGRATIONS_TABLE, SchemaStatus};
 pub use settings::{SettingRecord, SettingsRepo};

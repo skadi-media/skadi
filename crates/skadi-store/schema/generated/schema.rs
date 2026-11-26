@@ -226,3 +226,68 @@ diesel::table! {
         created_at -> Timestamp,
     }
 }
+
+diesel::table! {
+    use diesel::sql_types::{BigInt, Nullable, Text};
+    use diesel_dualdb::sql_types::Timestamp;
+
+    library_files (id) {
+        id -> Text,
+        kind -> Text,
+        acquirable_ref -> Text,
+        path -> Text,
+        dev -> BigInt,
+        ino -> BigInt,
+        size_bytes -> BigInt,
+        disk_bytes -> BigInt,
+        links -> BigInt,
+        mtime -> Timestamp,
+        pieces -> Nullable<BigInt>,
+        pieces_at -> Nullable<Timestamp>,
+        checksum -> Nullable<Text>,
+        checksum_at -> Nullable<Timestamp>,
+        stat_at -> Timestamp,
+        gone_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::{BigInt, Nullable, Text};
+    use diesel_dualdb::sql_types::Timestamp;
+
+    library_file_samples (id) {
+        id -> Text,
+        file_id -> Text,
+        at -> Timestamp,
+        size_bytes -> BigInt,
+        links -> BigInt,
+        pieces -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::{BigInt, Text};
+    use diesel_dualdb::sql_types::Timestamp;
+
+    library_orphans (path) {
+        path -> Text,
+        size_bytes -> BigInt,
+        mtime -> Timestamp,
+        first_seen -> Timestamp,
+        last_seen -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::{Nullable, Text};
+    use diesel_dualdb::sql_types::Timestamp;
+
+    storage_probe_state (probe) {
+        probe -> Text,
+        state -> Text,
+        failed_at -> Nullable<Timestamp>,
+        reason -> Nullable<Text>,
+        cleared_at -> Nullable<Timestamp>,
+        cleared_by -> Nullable<Text>,
+    }
+}

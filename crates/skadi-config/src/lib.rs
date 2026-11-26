@@ -513,6 +513,56 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
         default: "24",
         tier: Tier::Tier1,
     },
+    // The piece probe of the storage host over SSH (SKADI-T-0775). Off by
+    // default; the credential is in the vault, not here.
+    ConfigKeySpec {
+        key: "storage.probe.pieces.enabled",
+        kind: ValueKind::Bool,
+        default: "false",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.pieces.per_hour",
+        kind: ValueKind::U16,
+        default: "120",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.pieces.remeasure_days",
+        kind: ValueKind::U16,
+        default: "30",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.host",
+        kind: ValueKind::String,
+        default: "",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.port",
+        kind: ValueKind::U16,
+        default: "22",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.user",
+        kind: ValueKind::String,
+        default: "",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.path_map",
+        kind: ValueKind::String,
+        default: "",
+        tier: Tier::Tier1,
+    },
+    ConfigKeySpec {
+        key: "storage.probe.host_key",
+        kind: ValueKind::String,
+        default: "",
+        tier: Tier::Tier1,
+    },
     // Worker (the `SKADI_WORKER_*` surface; defaults match its current
     // `Config::from_env`).
     ConfigKeySpec {
@@ -777,6 +827,35 @@ pub const HELP: &[(&str, &str)] = &[
     (
         "storage.sweep.interval_hours",
         "How many hours pass between two readings of the size, the hard links and the identity of each library file. The same pass finds the files that are gone and the files with no record. 0 turns it off.",
+    ),
+    (
+        "storage.probe.pieces.enabled",
+        "When on, Skadi asks the storage host over SSH how many pieces each library file is in. The mount cannot say. Set the host, the user, the path map and the credential first.",
+    ),
+    (
+        "storage.probe.pieces.per_hour",
+        "The most files the piece probe measures in one hour.",
+    ),
+    (
+        "storage.probe.pieces.remeasure_days",
+        "A file's piece count is measured again after this many days. 0 means never.",
+    ),
+    (
+        "storage.probe.host",
+        "The name or the address of the storage host for the piece probe.",
+    ),
+    ("storage.probe.port", "The SSH port of the storage host."),
+    (
+        "storage.probe.user",
+        "The user the piece probe logs in as. It needs to read the library; it needs no sudo and no write access.",
+    ),
+    (
+        "storage.probe.path_map",
+        "The library root as Skadi sees it, an equals sign, and the same folder on the storage host. Example: /library=/volume1/media.",
+    ),
+    (
+        "storage.probe.host_key",
+        "The public key of the storage host. Skadi writes it at the first connection and refuses a host that shows a different one. Empty it to accept a new key.",
     ),
     (
         "import.recycle_bin",

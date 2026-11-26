@@ -14,6 +14,8 @@ skadi-core = { workspace = true }
 skadi-store = { workspace = true }
 skadi-config = { workspace = true }
 chrono = { workspace = true }
+russh = { workspace = true }
+serde_json = { workspace = true }
 skadi-media-probe = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
@@ -22,3 +24,5 @@ serde = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# The test SSH host of the piece probe generates its keys (SKADI-T-0775).
+rand = "0.10"

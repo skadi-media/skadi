@@ -17,13 +17,15 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::routing::get;
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use skadi_core::AppError;
+use skadi_library_scan::probe;
 use skadi_store::{
-    LibraryFile, LibraryFileQuery, LibraryFileRepo, LibraryFileSort, LibraryOrphan, Store,
+    LibraryFile, LibraryFileQuery, LibraryFileRepo, LibraryFileSort, LibraryOrphan,
+    StorageProbeRepo, Store,
 };
 
 use crate::error::ApiError;
@@ -40,6 +42,21 @@ pub fn library_storage_router() -> Router<Arc<AppState>> {
         .route("/library/storage/summary", get(summary))
         .route("/library/storage/files", get(files))
         .route("/library/storage/orphans", get(orphans))
+        .route("/storage/probe", get(probe_state))
+        .route("/storage/probe/clear", post(probe_clear))
+        .route(
+            "/storage/probe/credential",
+            put(probe_set_credential).delete(probe_delete_credential),
+        )
+}
+
+/// The piece probe of the storage host (SKADI-T-0775), for the daemon to
+/// spawn: it runs until `cancel` fires. Idle while the probe is off.
+pub async fn piece_probe_loop(store: Store, cancel: tokio_util::sync::CancellationToken) {
+    use skadi_core::module::Worker as _;
+    Box::new(probe::PieceProbeWorker::new(store))
+        .run(cancel)
+        .await;
 }
 
 fn store(state: &AppState) -> Result<&Store, ApiError> {
@@ -377,4 +394,117 @@ async fn orphans(
         offset,
         orphans: rows.into_iter().map(StorageOrphanDto::from).collect(),
     }))
+}
+
+/// `GET /storage/probe`: the piece probe, with no secret in it.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeDto {
+    /// `storage.probe.pieces.enabled`.
+    pub enabled: bool,
+    /// `off`, `not_set_up`, `failed` or `on`.
+    pub state: &'static str,
+    /// The settings the probe cannot run without and does not have.
+    pub missing: Vec<String>,
+    /// Why the probe stopped. Kept after a clear, as a record.
+    pub reason: Option<String>,
+    pub failed_at: Option<String>,
+    pub cleared_at: Option<String>,
+    pub cleared_by: Option<String>,
+    /// `password` or `key` when a credential is stored; never the secret.
+    pub credential: Option<&'static str>,
+    /// The storage host's public key, pinned at the first connection.
+    pub host_key: Option<String>,
+}
+
+async fn probe_dto(store: &Store) -> Result<ProbeDto, ApiError> {
+    let o = probe::overview(store).await?;
+    let state = if o.failed {
+        "failed"
+    } else if !o.enabled {
+        "off"
+    } else if !o.missing.is_empty() {
+        "not_set_up"
+    } else {
+        "on"
+    };
+    Ok(ProbeDto {
+        enabled: o.enabled,
+        state,
+        missing: o.missing.iter().map(|m| (*m).to_string()).collect(),
+        reason: o.reason,
+        failed_at: o.failed_at.map(|t| t.to_rfc3339()),
+        cleared_at: o.cleared_at.map(|t| t.to_rfc3339()),
+        cleared_by: o.cleared_by,
+        credential: o.credential,
+        host_key: o.host_key,
+    })
+}
+
+async fn probe_state(State(state): State<Arc<AppState>>) -> Result<Json<ProbeDto>, ApiError> {
+    Ok(Json(probe_dto(store(&state)?).await?))
+}
+
+/// `POST /storage/probe/clear`: an operator says the cause is fixed. The probe
+/// runs again at its next tick. Clearing a probe that has not failed changes
+/// nothing.
+async fn probe_clear(
+    State(state): State<Arc<AppState>>,
+    member: Option<axum::Extension<crate::household::Member>>,
+) -> Result<Json<ProbeDto>, ApiError> {
+    let store = store(&state)?;
+    let by = crate::household::member_or_admin(member).name;
+    if store
+        .clear_storage_probe(probe::PROBE, &by, chrono::Utc::now())
+        .await?
+    {
+        tracing::info!(by, "piece probe: failure cleared");
+    }
+    Ok(Json(probe_dto(store).await?))
+}
+
+/// Body of `PUT /storage/probe/credential`.
+#[derive(Deserialize)]
+struct CredentialBody {
+    /// `password` or `key`.
+    kind: String,
+    /// The password, or the private key in OpenSSH or PEM form.
+    secret: String,
+    /// The passphrase of an encrypted key.
+    #[serde(default)]
+    passphrase: Option<String>,
+}
+
+/// `PUT /storage/probe/credential`: store how the probe logs in. The answer is
+/// the probe's state; it never carries the secret back.
+async fn probe_set_credential(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CredentialBody>,
+) -> Result<Json<ProbeDto>, ApiError> {
+    let store = store(&state)?;
+    if body.secret.trim().is_empty() {
+        return Err(ApiError(AppError::Validation("the secret is empty".into())));
+    }
+    let credential = match body.kind.as_str() {
+        "password" => probe::ProbeCredential::Password {
+            secret: body.secret,
+        },
+        "key" => probe::ProbeCredential::Key {
+            secret: body.secret,
+            passphrase: body.passphrase.filter(|p| !p.is_empty()),
+        },
+        other => return Err(bad("kind", other, "password, key")),
+    };
+    probe::save_credential(store, &credential).await?;
+    tracing::info!(kind = credential.kind(), "piece probe: credential stored");
+    Ok(Json(probe_dto(store).await?))
+}
+
+/// `DELETE /storage/probe/credential`.
+async fn probe_delete_credential(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ProbeDto>, ApiError> {
+    let store = store(&state)?;
+    probe::delete_credential(store).await?;
+    Ok(Json(probe_dto(store).await?))
 }

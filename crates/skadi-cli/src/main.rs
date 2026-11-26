@@ -903,6 +903,12 @@ async fn run_daemon(logs: skadi_api::logbuf::LogBuffer) -> Result<()> {
         store.clone(),
         state.cancel.clone(),
     ));
+    // The piece probe of the storage host (SKADI-T-0775). Off unless
+    // `storage.probe.pieces.enabled` is on; opens no connection until then.
+    tokio::spawn(skadi_api::library_storage::piece_probe_loop(
+        store.clone(),
+        state.cancel.clone(),
+    ));
     // Abandoned upload sessions (SKADI-T-0629). A half-sent file sits on the
     // library mount until someone resumes it; this is what stops "until
     // someone resumes it" from meaning "forever".

@@ -29,6 +29,7 @@
 
 mod builtin;
 mod cache;
+mod storage;
 mod vpn;
 
 use std::collections::HashMap;
@@ -52,6 +53,7 @@ pub use builtin::{
     ProviderRollup, RootCheck, WorkerCheck,
 };
 pub use cache::HealthCache;
+pub use storage::PieceProbeCheck;
 pub use vpn::{VpnCheck, VpnChecks};
 
 /// How bad a check result is.
@@ -408,6 +410,9 @@ impl HealthRegistry {
                 ))
             }))
             .with(single(|ctx| Arc::new(WorkerCheck::new(ctx.store.clone()))))
+            .with(single(|ctx| {
+                Arc::new(PieceProbeCheck::new(ctx.store.clone()))
+            }))
             .with(Arc::new(VpnChecks))
             .with(single(|_| Arc::new(ProviderRollup::INDEXERS)))
             .with(single(|_| Arc::new(ProviderRollup::DOWNLOAD_CLIENTS)))

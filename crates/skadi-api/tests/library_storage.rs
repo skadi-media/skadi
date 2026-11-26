@@ -313,3 +313,231 @@ async fn every_storage_endpoint_refuses_a_non_admin() {
         assert_eq!(st, StatusCode::OK, "{path} as the admin");
     }
 }
+
+// ---------------------------------------------------------------------------
+// The piece probe (SKADI-T-0775)
+// ---------------------------------------------------------------------------
+
+const SECRET: &str = "swordfish-do-not-echo";
+
+#[tokio::test]
+async fn the_probe_is_off_until_set_up_and_its_credential_is_never_sent_back() {
+    use skadi_store::{ConfigRepo, ConfigSource};
+    let (state, db) = seeded().await;
+    let (st, body) = call(
+        &state,
+        "GET",
+        "/api/v1/storage/probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], "off");
+    assert_eq!(body["enabled"], false);
+    assert!(body["credential"].is_null());
+
+    // On, with nothing set: it says what is missing.
+    db.store
+        .set_config(
+            "storage.probe.pieces.enabled",
+            "true",
+            ConfigSource::Runtime,
+        )
+        .await
+        .unwrap();
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/storage/probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(body["state"], "not_set_up");
+    assert_eq!(body["missing"].as_array().unwrap().len(), 4, "{body}");
+
+    // The credential goes in; only its kind comes out, here and after.
+    let (st, body) = call(
+        &state,
+        "PUT",
+        "/api/v1/storage/probe/credential",
+        "operator-token",
+        Some(serde_json::json!({"kind": "password", "secret": SECRET})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["credential"], "password");
+    assert!(!body.to_string().contains(SECRET), "{body}");
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/storage/probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(body["credential"], "password");
+    assert!(!body.to_string().contains(SECRET), "{body}");
+    assert_eq!(body["missing"].as_array().unwrap().len(), 3);
+    // Nor does the config surface carry it.
+    let (_, config) = call(&state, "GET", "/api/v1/config", "operator-token", None).await;
+    assert!(!config.to_string().contains(SECRET));
+
+    let (st, body) = call(
+        &state,
+        "PUT",
+        "/api/v1/storage/probe/credential",
+        "operator-token",
+        Some(serde_json::json!({"kind": "token", "secret": SECRET})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        !body.to_string().contains(SECRET),
+        "an error must not echo the secret"
+    );
+
+    let (st, body) = call(
+        &state,
+        "DELETE",
+        "/api/v1/storage/probe/credential",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body["credential"].is_null());
+}
+
+#[tokio::test]
+async fn a_failed_probe_shows_its_reason_and_an_admin_clears_it() {
+    use skadi_store::StorageProbeRepo;
+    let (state, db) = seeded().await;
+    db.store
+        .fail_storage_probe(
+            "pieces",
+            "the storage host refused the key of user skadi",
+            t(5),
+        )
+        .await
+        .unwrap();
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/storage/probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(body["state"], "failed");
+    assert_eq!(
+        body["reason"],
+        "the storage host refused the key of user skadi"
+    );
+    assert!(body["failedAt"].is_string());
+    assert!(body["clearedAt"].is_null());
+
+    // The health check carries the reason and the way out.
+    let (st, checks) = call(
+        &state,
+        "POST",
+        "/api/v1/health/checks/run?id=storage-piece-probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{checks}");
+    let check = checks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "storage-piece-probe")
+        .expect("the probe's check");
+    assert_eq!(check["severity"], "error", "{check}");
+    assert!(
+        check["message"]
+            .as_str()
+            .unwrap()
+            .contains("refused the key")
+    );
+    assert!(check["remediation"].as_str().unwrap().contains("Clear"));
+
+    let (st, body) = call(
+        &state,
+        "POST",
+        "/api/v1/storage/probe/clear",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], "off", "cleared; the flag is still off here");
+    assert!(body["clearedAt"].is_string());
+    assert!(
+        body["clearedBy"].as_str().is_some_and(|by| !by.is_empty()),
+        "{body}"
+    );
+    assert_eq!(
+        body["reason"], "the storage host refused the key of user skadi",
+        "the reason stays as a record"
+    );
+}
+
+#[tokio::test]
+async fn the_probe_endpoints_refuse_a_non_admin() {
+    use skadi_store::StorageProbeRepo;
+    let (state, db) = seeded().await;
+    db.store
+        .fail_storage_probe("pieces", "host key changed", t(5))
+        .await
+        .unwrap();
+    let mut tokens = Vec::new();
+    for (name, role) in [
+        ("Robin", "member"),
+        ("Sam", "contributor"),
+        ("Jamie", "kid"),
+    ] {
+        let (st, created) = call(
+            &state,
+            "POST",
+            "/api/v1/members",
+            "operator-token",
+            Some(serde_json::json!({"name": name, "role": role})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        tokens.push((role, created["token"].as_str().unwrap().to_string()));
+    }
+    let credential = serde_json::json!({"kind": "password", "secret": SECRET});
+    for (role, token) in &tokens {
+        for (method, path, body) in [
+            ("GET", "/api/v1/storage/probe", None),
+            ("POST", "/api/v1/storage/probe/clear", None),
+            (
+                "PUT",
+                "/api/v1/storage/probe/credential",
+                Some(credential.clone()),
+            ),
+            ("DELETE", "/api/v1/storage/probe/credential", None),
+        ] {
+            let (st, answer) = call(&state, method, path, token, body).await;
+            assert_eq!(
+                st,
+                StatusCode::FORBIDDEN,
+                "{method} {path} as {role}: {answer}"
+            );
+        }
+    }
+    // None of it happened: still failed, no credential.
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/storage/probe",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(body["state"], "failed");
+    assert!(body["credential"].is_null());
+}

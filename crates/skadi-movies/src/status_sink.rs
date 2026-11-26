@@ -14,19 +14,34 @@ use skadi_core::{AcquisitionStatus, AppError, MovieEditionId, Result};
 use skadi_hunter::StatusSink;
 use skadi_importer::AcquirableRef;
 use skadi_quality::default_definitions;
-use skadi_store::{HistoryEntry, HistoryRepo};
+use skadi_store::{HistoryEntry, HistoryRepo, LibraryFileRepo};
 
 use crate::repo::MoviesRepo;
 
 pub struct MovieStatusSink {
     repo: Arc<dyn MoviesRepo>,
     history: Arc<dyn HistoryRepo>,
+    /// Where an imported file's storage facts go (SKADI-T-0773). `None` = not
+    /// recorded here; the storage sweep finds the file later.
+    storage: Option<Arc<dyn LibraryFileRepo>>,
 }
 
 impl MovieStatusSink {
     #[must_use]
     pub fn new(repo: Arc<dyn MoviesRepo>, history: Arc<dyn HistoryRepo>) -> Self {
-        Self { repo, history }
+        Self {
+            repo,
+            history,
+            storage: None,
+        }
+    }
+
+    /// Write the storage facts of each imported file (size, links, identity)
+    /// when the import is recorded (SKADI-T-0773).
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn LibraryFileRepo>) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     /// Resolve a movie title for the history label, best-effort.
@@ -90,7 +105,20 @@ impl MovieStatusSink {
         // backends: writes status_json + status_kind + updated_at, plus
         // file/quality/format_score on `Imported`. We don't need a second
         // round-trip here.
+        let placed = match &status {
+            AcquisitionStatus::Imported { file, .. } => Some(file.path.clone()),
+            _ => None,
+        };
         self.repo.set_edition_status(id, status).await?;
+        if let (Some(storage), Some(file)) = (&self.storage, &placed) {
+            skadi_library_scan::storage::record_file(
+                storage.as_ref(),
+                skadi_core::MediaKind::Movie,
+                &acquirable.0,
+                file,
+            )
+            .await;
+        }
 
         if let Some(event) = event
             && !replay
@@ -302,6 +330,51 @@ mod tests {
         assert!(row.file.is_some());
         assert_eq!(row.quality, Some(qid));
         assert_eq!(row.format_score, 17);
+    }
+
+    /// An import writes the file's storage row at once, and the sweep's
+    /// source lists the same file under the same ref (SKADI-T-0773).
+    #[tokio::test]
+    async fn an_import_writes_the_storage_row_of_its_file() {
+        use skadi_library_scan::storage::StorageSource as _;
+        use skadi_store::LibraryFileRepo as _;
+
+        let (dir, store) = fresh_store().await;
+        let edition = seed_movie_with_edition(&store).await;
+        let path = dir.path().join("The Matrix (1999).mkv");
+        std::fs::write(&path, vec![0u8; 4096]).unwrap();
+        let store_arc = Arc::new(store.clone());
+        let sink = MovieStatusSink::new(store_arc.clone(), store_arc.clone())
+            .with_storage(store_arc.clone());
+
+        sink.set_status(
+            &edition.acquirable_ref(),
+            AcquisitionStatus::Imported {
+                file: FileRef { path: path.clone() },
+                quality: QualityId::new(),
+                score: 0,
+                at: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let row = store
+            .library_file_by_path(&path.to_string_lossy())
+            .await
+            .unwrap()
+            .expect("the storage row");
+        assert_eq!(row.kind, "movie");
+        assert_eq!(row.acquirable_ref, edition.acquirable_ref().0);
+        assert_eq!(row.size_bytes, 4096);
+
+        let items = crate::scan::MovieStorageSource::new(store)
+            .files()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, path);
+        assert_eq!(items[0].acquirable_ref, row.acquirable_ref);
     }
 
     #[tokio::test]

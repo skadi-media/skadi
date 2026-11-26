@@ -13,19 +13,34 @@ use skadi_core::{AcquisitionStatus, AppError, EpisodeId, Result};
 use skadi_hunter::StatusSink;
 use skadi_importer::AcquirableRef;
 use skadi_quality::default_definitions;
-use skadi_store::{HistoryEntry, HistoryRepo};
+use skadi_store::{HistoryEntry, HistoryRepo, LibraryFileRepo};
 
 use crate::repo::TvRepo;
 
 pub struct EpisodeStatusSink {
     repo: Arc<dyn TvRepo>,
     history: Arc<dyn HistoryRepo>,
+    /// Where an imported file's storage facts go (SKADI-T-0773). `None` = not
+    /// recorded here; the storage sweep finds the file later.
+    storage: Option<Arc<dyn LibraryFileRepo>>,
 }
 
 impl EpisodeStatusSink {
     #[must_use]
     pub fn new(repo: Arc<dyn TvRepo>, history: Arc<dyn HistoryRepo>) -> Self {
-        Self { repo, history }
+        Self {
+            repo,
+            history,
+            storage: None,
+        }
+    }
+
+    /// Write the storage facts of each imported file (size, links, identity)
+    /// when the import is recorded (SKADI-T-0773).
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn LibraryFileRepo>) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     /// `Series Title - SxxEyy` for the history label, best-effort.
@@ -102,7 +117,20 @@ impl EpisodeStatusSink {
                 .get_episode(id)
                 .await?
                 .is_some_and(|e| e.status.is_same_import(&status));
+        let placed = match &status {
+            AcquisitionStatus::Imported { file, .. } => Some(file.path.clone()),
+            _ => None,
+        };
         self.repo.set_episode_status(id, status).await?;
+        if let (Some(storage), Some(file)) = (&self.storage, &placed) {
+            skadi_library_scan::storage::record_file(
+                storage.as_ref(),
+                skadi_core::MediaKind::Series,
+                &acquirable.0,
+                file,
+            )
+            .await;
+        }
 
         if let Some(event) = event
             && !replay

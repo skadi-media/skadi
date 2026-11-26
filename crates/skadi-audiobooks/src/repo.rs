@@ -122,7 +122,7 @@ pub trait WatchersRepo: Send + Sync {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_err(e: impl std::fmt::Display) -> AppError {
+pub(crate) fn db_err(e: impl std::fmt::Display) -> AppError {
     AppError::Internal(format!("database error: {e}"))
 }
 

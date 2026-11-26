@@ -230,10 +230,10 @@ impl TelevisionModule {
         Arc::new(HunterServices {
             kind: MediaKind::Series,
             store: self.store.clone(),
-            status: Arc::new(EpisodeStatusSink::new(
-                repo.clone(),
-                Arc::new(self.store.clone()),
-            )),
+            status: Arc::new(
+                EpisodeStatusSink::new(repo.clone(), Arc::new(self.store.clone()))
+                    .with_storage(Arc::new(self.store.clone())),
+            ),
             indexers: providers.indexers.clone(),
             downloaders: providers.downloaders.clone(),
             importer: Arc::new(DefaultImporter::new(NoMatcher)),
@@ -321,6 +321,14 @@ impl DomainModule for TelevisionModule {
             ))],
             Arc::new(skadi_library_scan::DefaultProber),
         )));
+        // Storage sweep (SKADI-T-0773): size, links and identity of every file
+        // the domain holds, the files that are gone and the files with no record.
+        workers.push(Box::new(
+            skadi_library_scan::storage::StorageSweepWorker::new(
+                Arc::new(crate::scan::EpisodeStorageSource::new(self.store.clone())),
+                self.store.clone(),
+            ),
+        ));
         workers
     }
 }

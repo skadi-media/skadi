@@ -219,9 +219,17 @@ pub trait LibraryFileRepo: Send + Sync {
     /// The orphans, largest first, then by path.
     async fn list_library_orphans(&self, limit: i64, offset: i64) -> Result<Vec<LibraryOrphan>>;
 
-    /// Remove the orphans not seen since `before`: a full pass that did not
-    /// meet them means they are gone from disk. Returns how many.
-    async fn prune_library_orphans(&self, before: DateTime<Utc>) -> Result<usize>;
+    /// Remove the orphans under the folder `under` not seen since `before`: a
+    /// full pass of that folder that did not meet them means they are gone
+    /// from disk. Orphans of other folders stay. Returns how many.
+    async fn prune_library_orphans(&self, under: &str, before: DateTime<Utc>) -> Result<usize>;
+
+    /// Every file row of one kind, gone ones too, in path order.
+    async fn library_files_of_kind(&self, kind: &str) -> Result<Vec<LibraryFile>>;
+
+    /// Remove a file row and its history: no record holds the file now.
+    /// `false` = no such file.
+    async fn delete_library_file(&self, id: &str) -> Result<bool>;
 }
 
 /// The state of each probe of the storage host.
@@ -370,7 +378,12 @@ impl LibraryFileRepo for Store {
         stat: &LibraryFileStat,
         at: DateTime<Utc>,
     ) -> Result<LibraryFile> {
-        let stat = stat.clone();
+        let mut stat = stat.clone();
+        // Postgres keeps microseconds. A finer mtime would read back changed
+        // on every pass and queue the file's measurements again for nothing.
+        stat.mtime =
+            chrono::DurationRound::duration_trunc(stat.mtime, chrono::Duration::microseconds(1))
+                .unwrap_or(stat.mtime);
         self.with_conn(move |conn| {
             // Read, then insert or update, in one transaction: the path is the
             // key, and the sample depends on what the row held before.
@@ -774,12 +787,58 @@ impl LibraryFileRepo for Store {
         .await
     }
 
-    async fn prune_library_orphans(&self, before: DateTime<Utc>) -> Result<usize> {
+    async fn prune_library_orphans(&self, under: &str, before: DateTime<Utc>) -> Result<usize> {
+        let under = std::path::PathBuf::from(under);
         self.with_conn(move |conn| {
-            diesel::delete(
-                library_orphans::table.filter(library_orphans::last_seen.lt(Timestamp(before))),
-            )
-            .execute(conn)
+            conn.transaction(|conn| {
+                // The folder test is done here, on path components: a LIKE
+                // pattern would need the path escaped, and `/lib/tv` must not
+                // match `/lib/tv2`.
+                let stale: Vec<String> = library_orphans::table
+                    .filter(library_orphans::last_seen.lt(Timestamp(before)))
+                    .select(library_orphans::path)
+                    .load(conn)?;
+                let mut n = 0;
+                for path in stale {
+                    if std::path::Path::new(&path).starts_with(&under) {
+                        n += diesel::delete(
+                            library_orphans::table.filter(library_orphans::path.eq(&path)),
+                        )
+                        .execute(conn)?;
+                    }
+                }
+                QueryResult::Ok(n)
+            })
+            .map_err(db_err)
+        })
+        .await
+    }
+
+    async fn library_files_of_kind(&self, kind: &str) -> Result<Vec<LibraryFile>> {
+        let kind = kind.to_string();
+        self.with_conn(move |conn| {
+            let rows = library_files::table
+                .filter(library_files::kind.eq(&kind))
+                .order(library_files::path.asc())
+                .select(FileRow::as_select())
+                .load(conn);
+            files(rows)
+        })
+        .await
+    }
+
+    async fn delete_library_file(&self, id: &str) -> Result<bool> {
+        let id = id.to_string();
+        self.with_conn(move |conn| {
+            conn.transaction(|conn| {
+                diesel::delete(
+                    library_file_samples::table.filter(library_file_samples::file_id.eq(&id)),
+                )
+                .execute(conn)?;
+                let n = diesel::delete(library_files::table.filter(library_files::id.eq(&id)))
+                    .execute(conn)?;
+                QueryResult::Ok(n > 0)
+            })
             .map_err(db_err)
         })
         .await

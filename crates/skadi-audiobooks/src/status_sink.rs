@@ -14,19 +14,34 @@ use skadi_core::{AcquisitionStatus, AppError, BookFileId, Result};
 use skadi_hunter::StatusSink;
 use skadi_importer::AcquirableRef;
 use skadi_quality::audiobook::default_audiobook_definitions;
-use skadi_store::{HistoryEntry, HistoryRepo};
+use skadi_store::{HistoryEntry, HistoryRepo, LibraryFileRepo};
 
 use crate::repo::AudiobooksRepo;
 
 pub struct AudiobookStatusSink {
     repo: Arc<dyn AudiobooksRepo>,
     history: Arc<dyn HistoryRepo>,
+    /// Where an imported file's storage facts go (SKADI-T-0773). `None` = not
+    /// recorded here; the storage sweep finds the file later.
+    storage: Option<Arc<dyn LibraryFileRepo>>,
 }
 
 impl AudiobookStatusSink {
     #[must_use]
     pub fn new(repo: Arc<dyn AudiobooksRepo>, history: Arc<dyn HistoryRepo>) -> Self {
-        Self { repo, history }
+        Self {
+            repo,
+            history,
+            storage: None,
+        }
+    }
+
+    /// Write the storage facts of each imported file (size, links, identity)
+    /// when the import is recorded (SKADI-T-0773).
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn LibraryFileRepo>) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     /// Resolve a book title for the history label, best-effort.
@@ -84,7 +99,27 @@ impl AudiobookStatusSink {
                 .get_book_file(id)
                 .await?
                 .is_some_and(|f| f.status.is_same_import(&status));
+        let placed = match &status {
+            AcquisitionStatus::Imported { file, .. } => Some(file.path.clone()),
+            _ => None,
+        };
         self.repo.set_book_file_status(id, status).await?;
+        if let (Some(storage), Some(file)) = (&self.storage, &placed) {
+            // A book of many files has one row per file.
+            let primary = file.clone();
+            let parts = tokio::task::spawn_blocking(move || crate::parts::book_parts(&primary))
+                .await
+                .unwrap_or_else(|_| vec![file.clone()]);
+            for part in parts {
+                skadi_library_scan::storage::record_file(
+                    storage.as_ref(),
+                    skadi_core::MediaKind::Audiobook,
+                    &acquirable.0,
+                    &part,
+                )
+                .await;
+            }
+        }
         // Wake the M4B conversion (SKADI-T-0139); it does nothing when off.
         if imported {
             crate::convert::nudge();
@@ -276,6 +311,59 @@ mod tests {
         assert_eq!(hist[0].event, "imported");
         assert_eq!(hist[0].kind, "audiobook");
         assert_eq!(hist[0].label, "The Way of Kings");
+    }
+
+    /// A book of many files gets one storage row per file, at import and from
+    /// the sweep's source (SKADI-T-0773).
+    #[tokio::test]
+    async fn an_import_of_a_book_of_parts_writes_one_storage_row_per_part() {
+        use skadi_library_scan::storage::StorageSource as _;
+        use skadi_store::LibraryFileRepo as _;
+
+        let (dir, store) = fresh_store().await;
+        let file = seed(&store).await;
+        let folder = dir.path().join("The Way of Kings");
+        std::fs::create_dir_all(&folder).unwrap();
+        for part in ["Part 1.mp3", "Part 2.mp3", "Part 10.mp3"] {
+            std::fs::write(folder.join(part), vec![0u8; 2048]).unwrap();
+        }
+        std::fs::write(folder.join("cover.jpg"), b"img").unwrap();
+        let s = Arc::new(store.clone());
+        let sink = AudiobookStatusSink::new(s.clone(), s.clone()).with_storage(s.clone());
+
+        sink.set_status(
+            &file.acquirable_ref(),
+            AcquisitionStatus::Imported {
+                file: FileRef {
+                    path: folder.join("Part 1.mp3"),
+                },
+                quality: QualityId::new(),
+                score: 0,
+                at: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let rows = store.library_files_of_kind("audiobook").await.unwrap();
+        assert_eq!(rows.len(), 3, "one row per part, none for the cover");
+        assert!(
+            rows.iter()
+                .all(|r| r.acquirable_ref == file.acquirable_ref().0)
+        );
+
+        let items = crate::storage::BookStorageSource::new(store)
+            .files()
+            .await
+            .unwrap();
+        let mut listed: Vec<String> = items
+            .iter()
+            .map(|i| i.path.to_string_lossy().into_owned())
+            .collect();
+        listed.sort();
+        let mut stored: Vec<String> = rows.into_iter().map(|r| r.path).collect();
+        stored.sort();
+        assert_eq!(listed, stored, "the sweep lists the files the import wrote");
     }
 
     #[tokio::test]

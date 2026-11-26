@@ -3983,6 +3983,7 @@ dependencies = [
  "skadi-hunter",
  "skadi-importer",
  "skadi-indexers",
+ "skadi-library-scan",
  "skadi-media-probe",
  "skadi-metadata",
  "skadi-naming",
@@ -4223,9 +4224,12 @@ name = "skadi-library-scan"
 version = "0.1.15"
 dependencies = [
  "async-trait",
+ "chrono",
  "serde",
+ "skadi-config",
  "skadi-core",
  "skadi-media-probe",
+ "skadi-store",
  "tokio",
  "tokio-util",
  "tracing",

@@ -112,6 +112,44 @@ pub struct LibraryKindTotals {
     pub gone: i64,
 }
 
+/// The column a file list is ordered by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LibraryFileSort {
+    #[default]
+    Size,
+    Disk,
+    Links,
+    Path,
+    Mtime,
+}
+
+/// One page of the file list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LibraryFileQuery {
+    /// Only this kind; `None` = every kind.
+    pub kind: Option<String>,
+    /// `Some(true)` = only files that are gone; `Some(false)` = only files on
+    /// disk; `None` = both.
+    pub gone: Option<bool>,
+    pub sort: LibraryFileSort,
+    pub descending: bool,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+impl Default for LibraryFileQuery {
+    fn default() -> Self {
+        Self {
+            kind: None,
+            gone: None,
+            sort: LibraryFileSort::Size,
+            descending: true,
+            limit: 50,
+            offset: 0,
+        }
+    }
+}
+
 /// Whether a probe may run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProbeState {
@@ -223,6 +261,18 @@ pub trait LibraryFileRepo: Send + Sync {
     /// full pass of that folder that did not meet them means they are gone
     /// from disk. Orphans of other folders stay. Returns how many.
     async fn prune_library_orphans(&self, under: &str, before: DateTime<Utc>) -> Result<usize>;
+
+    /// One page of the file list, and how many files the filters match in
+    /// all. Equal values keep one order from page to page.
+    async fn list_library_files(&self, query: &LibraryFileQuery)
+    -> Result<(Vec<LibraryFile>, i64)>;
+
+    /// When a file of this kind was last read from the mount: the time of the
+    /// newest `stat`. `None` = no file of the kind was read yet.
+    async fn library_last_stat_at(&self, kind: &str) -> Result<Option<DateTime<Utc>>>;
+
+    /// How many orphans there are, and their bytes.
+    async fn library_orphan_totals(&self) -> Result<(i64, i64)>;
 
     /// Every file row of one kind, gone ones too, in path order.
     async fn library_files_of_kind(&self, kind: &str) -> Result<Vec<LibraryFile>>;
@@ -810,6 +860,80 @@ impl LibraryFileRepo for Store {
                 QueryResult::Ok(n)
             })
             .map_err(db_err)
+        })
+        .await
+    }
+
+    async fn list_library_files(
+        &self,
+        query: &LibraryFileQuery,
+    ) -> Result<(Vec<LibraryFile>, i64)> {
+        let query = query.clone();
+        self.with_conn(move |conn| {
+            // The filters are built twice: a boxed query cannot be cloned, and
+            // the count and the page need the same ones.
+            let filtered = || {
+                let mut q = library_files::table.into_boxed();
+                if let Some(kind) = &query.kind {
+                    q = q.filter(library_files::kind.eq(kind.clone()));
+                }
+                match query.gone {
+                    Some(true) => q.filter(library_files::gone_at.is_not_null()),
+                    Some(false) => q.filter(library_files::gone_at.is_null()),
+                    None => q,
+                }
+            };
+            let total: i64 = filtered().count().get_result(conn).map_err(db_err)?;
+            let q = filtered();
+            // The id breaks ties, so a page boundary never splits or repeats
+            // files of equal value.
+            let q = match (query.sort, query.descending) {
+                (LibraryFileSort::Size, true) => q.order(library_files::size_bytes.desc()),
+                (LibraryFileSort::Size, false) => q.order(library_files::size_bytes.asc()),
+                (LibraryFileSort::Disk, true) => q.order(library_files::disk_bytes.desc()),
+                (LibraryFileSort::Disk, false) => q.order(library_files::disk_bytes.asc()),
+                (LibraryFileSort::Links, true) => q.order(library_files::links.desc()),
+                (LibraryFileSort::Links, false) => q.order(library_files::links.asc()),
+                (LibraryFileSort::Path, true) => q.order(library_files::path.desc()),
+                (LibraryFileSort::Path, false) => q.order(library_files::path.asc()),
+                (LibraryFileSort::Mtime, true) => q.order(library_files::mtime.desc()),
+                (LibraryFileSort::Mtime, false) => q.order(library_files::mtime.asc()),
+            };
+            let rows = q
+                .then_order_by(library_files::id.asc())
+                .limit(query.limit)
+                .offset(query.offset)
+                .select(FileRow::as_select())
+                .load(conn);
+            Ok((files(rows)?, total))
+        })
+        .await
+    }
+
+    async fn library_last_stat_at(&self, kind: &str) -> Result<Option<DateTime<Utc>>> {
+        let kind = kind.to_string();
+        self.with_conn(move |conn| {
+            let newest: Option<Timestamp> = library_files::table
+                .filter(library_files::kind.eq(&kind))
+                .order(library_files::stat_at.desc())
+                .select(library_files::stat_at)
+                .first(conn)
+                .optional()
+                .map_err(db_err)?;
+            Ok(newest.map(|t| t.0))
+        })
+        .await
+    }
+
+    async fn library_orphan_totals(&self) -> Result<(i64, i64)> {
+        self.with_conn(move |conn| {
+            library_orphans::table
+                .select((
+                    sql::<BigInt>("CAST(COUNT(*) AS BIGINT)"),
+                    sql::<BigInt>("CAST(COALESCE(SUM(size_bytes), 0) AS BIGINT)"),
+                ))
+                .first::<(i64, i64)>(conn)
+                .map_err(db_err)
         })
         .await
     }

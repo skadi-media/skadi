@@ -64,6 +64,8 @@ sha2 = { workspace = true }
 # Proving an uploaded file is readable media before it can be adopted
 # (SKADI-T-0629). library-import never probes; an upload must.
 skadi-media-probe = { workspace = true }
+# The storage sweeps' status, for `GET /library/storage/summary` (SKADI-T-0774).
+skadi-library-scan = { workspace = true }
 uuid = { workspace = true }
 # Web UI embedding (SKADI-T-0065). Off by default so the host workspace build
 # and `angreal test all` never need the wasm toolchain or a built dist/. The

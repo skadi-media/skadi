@@ -3937,6 +3937,7 @@ dependencies = [
  "skadi-hunter",
  "skadi-importer",
  "skadi-indexers",
+ "skadi-library-scan",
  "skadi-media-probe",
  "skadi-metadata",
  "skadi-naming",

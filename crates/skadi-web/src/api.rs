@@ -1695,6 +1695,82 @@ pub async fn library_storage_orphans(
     Ok(resp.json::<StorageOrphansPage>().await?)
 }
 
+/// `GET /storage/probe` (mirror of skadi-api `ProbeDto`, SKADI-T-0775). It
+/// carries no secret: `credential` is only `password` or `key`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageProbe {
+    #[serde(default)]
+    pub enabled: bool,
+    /// `off`, `not_set_up`, `failed` or `on`.
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub failed_at: Option<String>,
+    #[serde(default)]
+    pub cleared_at: Option<String>,
+    #[serde(default)]
+    pub cleared_by: Option<String>,
+    #[serde(default)]
+    pub credential: Option<String>,
+    #[serde(default)]
+    pub host_key: Option<String>,
+}
+
+async fn probe_answer(
+    what: &str,
+    resp: gloo_net::http::Response,
+) -> Result<StorageProbe, ApiError> {
+    if !resp.ok() {
+        return Err(ApiError(format!("{what} -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<StorageProbe>().await?)
+}
+
+/// `GET /storage/probe` — the piece probe of the storage host. Admin only.
+pub async fn storage_probe() -> Result<StorageProbe, ApiError> {
+    let resp = get(&format!("{API_BASE}/storage/probe"))?
+        .send()
+        .await
+        .noted()?;
+    probe_answer("storage probe", resp).await
+}
+
+/// `POST /storage/probe/clear` — the cause of the failure is fixed; the probe
+/// runs again.
+pub async fn storage_probe_clear() -> Result<StorageProbe, ApiError> {
+    let resp = post(&format!("{API_BASE}/storage/probe/clear"))?
+        .send()
+        .await?;
+    probe_answer("clear the storage probe", resp).await
+}
+
+/// `PUT /storage/probe/credential` — store the password or the private key
+/// the probe logs in with. `kind` is `password` or `key`.
+pub async fn storage_probe_set_credential(
+    kind: &str,
+    secret: &str,
+    passphrase: &str,
+) -> Result<StorageProbe, ApiError> {
+    let resp = put(&format!("{API_BASE}/storage/probe/credential"))?
+        .json(&serde_json::json!({ "kind": kind, "secret": secret, "passphrase": passphrase }))?
+        .send()
+        .await?;
+    probe_answer("store the probe credential", resp).await
+}
+
+/// `DELETE /storage/probe/credential`.
+pub async fn storage_probe_delete_credential() -> Result<StorageProbe, ApiError> {
+    let resp = delete(&format!("{API_BASE}/storage/probe/credential"))?
+        .send()
+        .await?;
+    probe_answer("remove the probe credential", resp).await
+}
+
 /// `GET /root-folders` — per root folder free/total bytes + writability.
 pub async fn root_folders() -> Result<Vec<RootFolder>, ApiError> {
     let resp = get(&format!("{API_BASE}/root-folders"))?

@@ -483,12 +483,12 @@ impl PieceCounter for SshCounter {
         let read = async {
             while let Some(msg) = channel.wait().await {
                 match msg {
+                    // A count is one short line; a host that floods is cut.
                     russh::ChannelMsg::Data { data }
-                    | russh::ChannelMsg::ExtendedData { data, .. } => {
-                        // A count is one short line; a host that floods is cut.
-                        if output.len() < 16 * 1024 {
-                            output.extend_from_slice(&data);
-                        }
+                    | russh::ChannelMsg::ExtendedData { data, .. }
+                        if output.len() < 16 * 1024 =>
+                    {
+                        output.extend_from_slice(&data);
                     }
                     russh::ChannelMsg::ExitStatus { exit_status } => exit = Some(exit_status),
                     _ => {}

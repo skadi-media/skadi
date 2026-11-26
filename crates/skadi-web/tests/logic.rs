@@ -3568,3 +3568,38 @@ fn the_storage_summary_reads_what_the_daemon_sends() {
     assert_eq!(s.free_bytes, Some(100));
     assert!(s.sweeps[0].running);
 }
+
+// ---------------------------------------------------------------------------
+// The piece probe panel (SKADI-T-0775)
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen_test]
+fn the_piece_probe_state_reads_in_words() {
+    use skadi_web::api::StorageProbe;
+    use skadi_web::library_details::{host_key_label, probe_state_label};
+    let mut p: StorageProbe = serde_json::from_str(
+        r#"{"enabled":true,"state":"not_set_up",
+            "missing":["storage.probe.host","the credential"],
+            "reason":null,"failedAt":null,"clearedAt":null,"clearedBy":null,
+            "credential":null,"hostKey":null}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        probe_state_label(&p),
+        "On, but not set up: storage.probe.host, the credential missing"
+    );
+    p.state = "failed".into();
+    assert_eq!(probe_state_label(&p), "Stopped after a failure");
+    p.state = "off".into();
+    assert_eq!(probe_state_label(&p), "Off");
+    p.state = "on".into();
+    assert_eq!(probe_state_label(&p), "On");
+
+    assert!(host_key_label(None).starts_with("none yet"));
+    assert_eq!(
+        host_key_label(Some(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJ0ZXN0a2V5Ym9keQ"
+        )),
+        "ssh-ed25519 …J0ZXN0a2V5Ym9keQ"
+    );
+}

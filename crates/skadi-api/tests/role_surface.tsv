@@ -28,6 +28,9 @@ admin	GET	/books/b1	allow
 admin	GET	/books/b1/files/f1/audio	allow
 admin	GET	/books/b1/files/f1/chapters	allow
 admin	GET	/library/genres	allow
+admin	GET	/library/storage/summary	allow
+admin	GET	/library/storage/files	allow
+admin	GET	/library/storage/orphans	allow
 admin	GET	/new-imports	allow
 admin	GET	/new-imports/count	allow
 admin	POST	/new-imports	allow
@@ -94,6 +97,9 @@ member	GET	/books/b1	allow
 member	GET	/books/b1/files/f1/audio	allow
 member	GET	/books/b1/files/f1/chapters	allow
 member	GET	/library/genres	allow
+member	GET	/library/storage/summary	deny
+member	GET	/library/storage/files	deny
+member	GET	/library/storage/orphans	deny
 member	GET	/new-imports	allow
 member	GET	/new-imports/count	allow
 member	POST	/new-imports	deny
@@ -160,6 +166,9 @@ contributor	GET	/books/b1	allow
 contributor	GET	/books/b1/files/f1/audio	allow
 contributor	GET	/books/b1/files/f1/chapters	allow
 contributor	GET	/library/genres	allow
+contributor	GET	/library/storage/summary	deny
+contributor	GET	/library/storage/files	deny
+contributor	GET	/library/storage/orphans	deny
 contributor	GET	/new-imports	allow
 contributor	GET	/new-imports/count	allow
 contributor	POST	/new-imports	deny
@@ -226,6 +235,9 @@ kid	GET	/books/b1	allow
 kid	GET	/books/b1/files/f1/audio	allow
 kid	GET	/books/b1/files/f1/chapters	allow
 kid	GET	/library/genres	allow
+kid	GET	/library/storage/summary	deny
+kid	GET	/library/storage/files	deny
+kid	GET	/library/storage/orphans	deny
 kid	GET	/new-imports	allow
 kid	GET	/new-imports/count	allow
 kid	POST	/new-imports	deny

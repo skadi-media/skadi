@@ -31,6 +31,7 @@ pub mod http_module;
 pub mod import_lists;
 pub mod import_lists_http;
 pub mod library;
+pub mod library_storage;
 pub mod logbuf;
 pub mod naming;
 pub mod new_imports;

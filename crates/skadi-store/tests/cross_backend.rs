@@ -600,6 +600,116 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: oldest measurement first, ties by path"
     );
 
+    // The paged file list. On disk: a 12 GB, b 2, c 10, d 20, extra 3, f 0,
+    // g 1; e (1 GB) is gone.
+    use skadi_store::{LibraryFileQuery, LibraryFileSort};
+    let (page, total) = store
+        .list_library_files(&LibraryFileQuery {
+            limit: 3,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(total, 8, "{label}: every row, gone ones too");
+    assert_eq!(
+        page.iter().map(|f| f.size_bytes / GB).collect::<Vec<_>>(),
+        vec![20, 12, 10],
+        "{label}: largest first by default"
+    );
+    let (next, _) = store
+        .list_library_files(&LibraryFileQuery {
+            limit: 3,
+            offset: 3,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        next.iter().map(|f| f.size_bytes / GB).collect::<Vec<_>>(),
+        vec![3, 2, 1],
+        "{label}: the next page"
+    );
+    let ones: Vec<String> = [&next[2].id]
+        .into_iter()
+        .cloned()
+        .chain(
+            store
+                .list_library_files(&LibraryFileQuery {
+                    limit: 1,
+                    offset: 6,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .0
+                .into_iter()
+                .map(|f| f.id),
+        )
+        .collect();
+    assert_ne!(
+        ones[0], ones[1],
+        "{label}: equal sizes do not repeat across pages"
+    );
+    let (gone, total) = store
+        .list_library_files(&LibraryFileQuery {
+            gone: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!((gone.len(), total), (1, 1), "{label}: only the gone file");
+    assert_eq!(gone[0].path, "/lib/tv/e.mkv", "{label}");
+    let (small, total) = store
+        .list_library_files(&LibraryFileQuery {
+            kind: Some("series".into()),
+            gone: Some(false),
+            sort: LibraryFileSort::Size,
+            descending: false,
+            limit: 1,
+            offset: 0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(total, 3, "{label}: series on disk");
+    assert_eq!(small[0].path, o, "{label}: smallest first");
+    let (linked, _) = store
+        .list_library_files(&LibraryFileQuery {
+            sort: LibraryFileSort::Links,
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        linked[0].path, "/lib/movie/a.mkv",
+        "{label}: most links first"
+    );
+
+    assert_eq!(
+        store.library_last_stat_at("series").await.unwrap(),
+        Some(t(20)),
+        "{label}: the newest stat of the kind"
+    );
+    assert_eq!(store.library_last_stat_at("music").await.unwrap(), None);
+    assert_eq!(
+        store.library_orphan_totals().await.unwrap(),
+        (0, 0),
+        "{label}: no orphans left"
+    );
+    store
+        .record_library_orphan("/lib/x/one.mkv", 5, t(0), t(30))
+        .await
+        .unwrap();
+    store
+        .record_library_orphan("/lib/x/two.mkv", 7, t(0), t(30))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.library_orphan_totals().await.unwrap(),
+        (2, 12),
+        "{label}: orphans and their bytes"
+    );
+
     // Rows of one kind, and the removal of a row with its history.
     let series = store.library_files_of_kind("series").await.unwrap();
     assert_eq!(

@@ -24,6 +24,28 @@ test("System opens for the admin and is not offered to a member", async ({ page,
   }
 });
 
+test("Library details opens for the admin and is not offered to a member", async ({ page, request }) => {
+  await steps.whenOpens(page, "/library-details");
+  await expect(page.getByRole("heading", { name: "Library details" }).first()).toBeVisible();
+  // The three panels: totals, the file list with its filters, the orphans.
+  await expect(page.getByRole("heading", { name: "Totals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Files", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Sort" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Files with no item" })).toBeVisible();
+  const restore = await steps.givenSignedInAs(request, page, "member");
+  try {
+    for (const p of ["/", "/preferences"]) {
+      await steps.whenOpens(page, p);
+      await expect(page.getByRole("link", { name: "Storage", exact: true })).toHaveCount(0);
+    }
+    await steps.whenOpens(page, "/library-details");
+    await expect(page.getByText("This page is for the household admin.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Totals" })).toHaveCount(0);
+  } finally {
+    await restore();
+  }
+});
+
 test("the overview shows a failing check as a warning", async ({ page, request }) => {
   // The harness runs no download worker, so the worker check fails.
   await steps.givenHealthChecksRun(request);

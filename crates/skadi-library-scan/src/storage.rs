@@ -326,6 +326,45 @@ pub struct SweepReport {
     pub pruned: usize,
 }
 
+/// Where one domain's sweep is: for the "Library details" page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SweepStatus {
+    /// The worker's name, e.g. `movies-storage-sweep`.
+    pub name: String,
+    /// The kind it sweeps, as `library_files.kind` holds it.
+    pub kind: &'static str,
+    /// A pass is running now.
+    pub running: bool,
+    /// When the pass that runs now, or the last one, began.
+    pub started_at: Option<DateTime<Utc>>,
+    /// When the last pass ended. `None` = no pass has ended since the daemon
+    /// started.
+    pub finished_at: Option<DateTime<Utc>>,
+    /// What the last pass that ended did.
+    pub last: Option<SweepReport>,
+}
+
+/// The sweeps of this process, by worker name. In memory: it says what runs
+/// now, which no table can, and it starts empty with the daemon. The time a
+/// kind was last read survives a restart in `library_files.stat_at`.
+static SWEEPS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, SweepStatus>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn sweeps() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, SweepStatus>> {
+    // A panic while the lock was held leaves the map usable: it holds plain
+    // values, each written whole.
+    SWEEPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Every sweep this process has started, in name order.
+#[must_use]
+pub fn sweep_statuses() -> Vec<SweepStatus> {
+    sweeps().values().cloned().collect()
+}
+
 /// Reads the storage facts of every file a domain holds, on a schedule.
 pub struct StorageSweepWorker {
     source: Arc<dyn StorageSource>,
@@ -415,9 +454,35 @@ impl StorageSweepWorker {
         (hours > 0).then(|| Duration::from_secs(hours * 3600))
     }
 
+    /// Make the sweep known to [`sweep_statuses`] before its first pass.
+    fn announce(&self) {
+        sweeps()
+            .entry(self.name.clone())
+            .or_insert_with(|| SweepStatus {
+                name: self.name.clone(),
+                kind: kind_name(self.source.kind()),
+                ..SweepStatus::default()
+            });
+    }
+
     /// One pass over the domain. Never fails: what went wrong is in the
     /// report and the log.
     pub async fn sweep_once(&self, cancel: &CancellationToken) -> SweepReport {
+        self.announce();
+        if let Some(status) = sweeps().get_mut(&self.name) {
+            status.running = true;
+            status.started_at = Some(Utc::now());
+        }
+        let report = self.pass(cancel).await;
+        if let Some(status) = sweeps().get_mut(&self.name) {
+            status.running = false;
+            status.finished_at = Some(Utc::now());
+            status.last = Some(report.clone());
+        }
+        report
+    }
+
+    async fn pass(&self, cancel: &CancellationToken) -> SweepReport {
         let mut report = SweepReport::default();
         let kind = kind_name(self.source.kind());
         let (folder, marker) = self.folder().await;
@@ -575,6 +640,7 @@ impl skadi_core::module::Worker for StorageSweepWorker {
     ) -> skadi_core::module::BoxFuture<'static, ()> {
         Box::pin(async move {
             let kind = kind_name(self.source.kind());
+            self.announce();
             let mut wait = self.start_delay;
             loop {
                 tokio::select! {
@@ -878,6 +944,25 @@ mod tests {
             None
         );
         assert_eq!(lib.orphans().await, vec![a.to_string_lossy().into_owned()]);
+    }
+
+    #[tokio::test]
+    async fn a_pass_is_reported_with_its_times_and_what_it_did() {
+        let lib = Lib::new().await;
+        let path = lib.file("A (2020)/a.mkv", 1000);
+        lib.hold("ed-1", &path);
+        let before = Utc::now();
+        lib.sweep().await;
+        // Other tests sweep under the same name at the same time, so only
+        // what every pass of this fake source has in common is asserted.
+        let status = sweep_statuses()
+            .into_iter()
+            .find(|s| s.name == "fake-storage-sweep")
+            .expect("the sweep is listed");
+        assert_eq!(status.kind, "movie");
+        assert!(status.started_at.is_some_and(|t| t >= before));
+        assert!(status.finished_at.is_some_and(|t| t >= before));
+        assert!(status.last.is_some());
     }
 
     #[test]

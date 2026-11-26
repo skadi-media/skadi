@@ -2163,12 +2163,14 @@ fn a_member_or_a_kid_gets_no_strip_at_all() {
 #[wasm_bindgen_test]
 fn an_unknown_role_shows_everything_rather_than_flashing_a_short_strip() {
     use skadi_web::subnav::{SETTINGS_SECTIONS, visible};
-    // Everything but the one page gated on a known admin (SKADI-T-0684).
+    // Everything but the two pages gated on a known admin (SKADI-T-0684,
+    // SKADI-T-0774).
     assert_eq!(
         visible(None, SETTINGS_SECTIONS).len(),
-        SETTINGS_SECTIONS.len() - 1
+        SETTINGS_SECTIONS.len() - 2
     );
     assert!(!subnav_hrefs(None, SETTINGS_SECTIONS).contains(&"/system"));
+    assert!(!subnav_hrefs(None, SETTINGS_SECTIONS).contains(&"/library-details"));
 }
 
 #[wasm_bindgen_test]
@@ -3456,4 +3458,113 @@ fn the_new_imports_url_escapes_the_cursor() {
     );
     let plain = new_imports_url(None, None, 15);
     assert!(plain.ends_with("/new-imports?limit=15"), "{plain}");
+}
+
+// ---------------------------------------------------------------------------
+// Library details (SKADI-T-0774)
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen_test]
+fn the_library_details_page_opens_for_a_known_admin_only() {
+    use skadi_web::library_details::can_open;
+    use skadi_web::subnav::SETTINGS_SECTIONS;
+    assert!(can_open(Some("admin")));
+    for role in [
+        None,
+        Some(""),
+        Some("Admin"),
+        Some("member"),
+        Some("kid"),
+        Some("contributor"),
+    ] {
+        assert!(!can_open(role), "{role:?}");
+        assert!(
+            !subnav_hrefs(role, SETTINGS_SECTIONS).contains(&"/library-details"),
+            "{role:?} is offered /library-details"
+        );
+    }
+    assert!(subnav_hrefs(Some("admin"), SETTINGS_SECTIONS).contains(&"/library-details"));
+}
+
+#[wasm_bindgen_test]
+fn library_details_labels_say_not_measured_until_a_collector_has_run() {
+    use skadi_web::library_details::{
+        NOT_MEASURED, bytes_label, count_label, kind_label, measured_label, pieces_per_gb_label,
+    };
+    assert_eq!(measured_label(0, 1818), NOT_MEASURED);
+    assert_eq!(measured_label(120, 1818), "120 of 1,818");
+    assert_eq!(pieces_per_gb_label(0, 0), NOT_MEASURED);
+    // 6,000 pieces over 12 GB.
+    assert_eq!(pieces_per_gb_label(6000, 12_000_000_000), "500");
+    assert_eq!(count_label(0), "0");
+    assert_eq!(count_label(999), "999");
+    assert_eq!(count_label(1000), "1,000");
+    assert_eq!(count_label(24_014), "24,014");
+    assert_eq!(count_label(1_234_567), "1,234,567");
+    assert_eq!(bytes_label(0), "0 B");
+    assert_eq!(bytes_label(1024 * 1024), "1.0 MB");
+    assert_eq!(kind_label("series"), "TV");
+    assert_eq!(
+        kind_label("music"),
+        "music",
+        "an unknown kind is shown as sent"
+    );
+}
+
+#[wasm_bindgen_test]
+fn the_file_list_query_asks_the_daemon_for_one_page() {
+    use skadi_web::library_details::{PAGE_SIZE, files_query};
+    assert_eq!(
+        files_query("", "present", "size", 0),
+        format!("state=present&sort=size&limit={PAGE_SIZE}&offset=0")
+    );
+    assert_eq!(
+        files_query("series", "gone", "path", 100),
+        format!("state=gone&sort=path&limit={PAGE_SIZE}&offset=100&kind=series")
+    );
+}
+
+#[wasm_bindgen_test]
+fn a_sweep_says_whether_it_runs_now() {
+    use skadi_web::api::StorageSweep;
+    use skadi_web::library_details::sweep_state;
+    let mut s = StorageSweep {
+        name: "movies-storage-sweep".into(),
+        kind: "movie".into(),
+        ..Default::default()
+    };
+    assert_eq!(sweep_state(&s), "Waiting for its first pass");
+    s.running = true;
+    assert_eq!(sweep_state(&s), "Running now");
+    s.running = false;
+    s.finished_at = Some("2026-11-26T20:00:00Z".into());
+    assert_eq!(sweep_state(&s), "Idle");
+    s.skipped = Some("/library/movie is empty".into());
+    assert_eq!(
+        sweep_state(&s),
+        "Last pass not completed: /library/movie is empty"
+    );
+}
+
+#[wasm_bindgen_test]
+fn the_storage_summary_reads_what_the_daemon_sends() {
+    use skadi_web::api::StorageSummary;
+    let s: StorageSummary = serde_json::from_str(
+        r#"{"kinds":[{"kind":"movie","files":2,"sizeBytes":14000000000,"diskBytes":14000000000,
+            "linked":1,"measured":0,"measuredBytes":0,"pieces":0,"checksummed":0,"gone":0,
+            "lastReadAt":"2026-11-01T12:01:00+00:00"}],
+            "orphans":{"files":2,"sizeBytes":4000000000},
+            "freeBytes":100,"totalBytes":1000,
+            "sweeps":[{"name":"movies-storage-sweep","kind":"movie","running":true,
+            "startedAt":"2026-11-26T20:00:00+00:00","finishedAt":null,"skipped":null,"last":null}]}"#,
+    )
+    .unwrap();
+    assert_eq!(s.kinds[0].size_bytes, 14_000_000_000);
+    assert_eq!(
+        s.kinds[0].last_read_at.as_deref(),
+        Some("2026-11-01T12:01:00+00:00")
+    );
+    assert_eq!(s.orphans.files, 2);
+    assert_eq!(s.free_bytes, Some(100));
+    assert!(s.sweeps[0].running);
 }

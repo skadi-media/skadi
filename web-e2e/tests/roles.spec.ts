@@ -73,6 +73,7 @@ const PAGES: [RegExp, string, string][] = [
   [/^\/naming$/, "GET", "/naming/settings"],
   [/^\/importlists$/, "GET", "/importlists"],
   [/^\/system$/, "GET", "/system/status"],
+  [/^\/library-details$/, "GET", "/library/storage/summary"],
 ];
 
 /** Controls the sweep does not press: signing out would end the sweep's own

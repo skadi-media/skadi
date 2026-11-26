@@ -37,11 +37,14 @@ pub const SETTINGS_SECTIONS: &[Section] = &[
     ("/listen", "Device"),
     // Status, health checks, tasks and logs (SKADI-T-0684).
     ("/system", "System"),
+    // What the library takes on disk (SKADI-T-0774). The page is headed
+    // "Library details"; the pill is one word, as every pill is.
+    ("/library-details", "Storage"),
 ];
 
 /// Pages drawn only for a role known to be the admin: an unresolved role does
 /// not get them, as it gets the rest of the strip (SKADI-T-0684).
-const KNOWN_ADMIN_ONLY: &[&str] = &["/system"];
+const KNOWN_ADMIN_ONLY: &[&str] = &["/system", "/library-details"];
 
 /// "What is skadi doing, and what is it still missing" — one question, and it
 /// used to be two top-level pages. Upload sits here rather than under Settings
@@ -112,6 +115,7 @@ fn page_call(href: &str) -> Option<(&'static str, &'static str)> {
         "/players" => ("GET", "/players"),
         "/listen" => ("GET", "/listen"),
         "/system" => ("GET", "/system/status"),
+        "/library-details" => ("GET", "/library/storage/summary"),
         "/activity" => ("GET", "/activity"),
         "/wanted" => ("GET", "/wanted"),
         "/upload" => ("POST", "/uploads"),
@@ -257,6 +261,17 @@ mod tests {
             assert!(
                 !hrefs(role, SETTINGS_SECTIONS).contains(&"/system"),
                 "{role:?} must not be offered /system"
+            );
+        }
+    }
+
+    #[test]
+    fn the_library_details_page_is_offered_to_a_known_admin_only() {
+        assert!(hrefs(Some("admin"), SETTINGS_SECTIONS).contains(&"/library-details"));
+        for role in [None, Some("contributor"), Some("member"), Some("kid")] {
+            assert!(
+                !hrefs(role, SETTINGS_SECTIONS).contains(&"/library-details"),
+                "{role:?} must not be offered /library-details"
             );
         }
     }

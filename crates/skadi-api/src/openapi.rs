@@ -111,6 +111,24 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/library/storage/summary",
+        "system",
+        "Storage totals by kind, the orphans, free space and the storage sweeps. Admin only",
+    ),
+    (
+        "GET",
+        "/library/storage/files",
+        "system",
+        "One page of the storage facts of the library files; `kind`, `state`, `sort`, `dir`, `limit`, `offset`. Admin only",
+    ),
+    (
+        "GET",
+        "/library/storage/orphans",
+        "system",
+        "One page of the files in the library folders that no item holds, largest first. Admin only",
+    ),
+    (
+        "GET",
         "/system/task",
         "system",
         "Scheduler task states and their next run times",
@@ -1193,6 +1211,9 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
     ("GET", "/calendar", "CalendarEntryDto"),
     ("GET", "/new-imports", "NewImportsPage"),
     ("GET", "/new-imports/count", "NewImportsCount"),
+    ("GET", "/library/storage/summary", "StorageSummary"),
+    ("GET", "/library/storage/files", "StorageFilesPage"),
+    ("GET", "/library/storage/orphans", "StorageOrphansPage"),
     // The list adds sort keys to each book (SKADI-T-0737).
     ("GET", "/books", "ListedBook"),
     ("GET", "/books/{id}", "Book"),
@@ -1208,6 +1229,9 @@ fn builtin_schemas() -> Schemas {
     out.extend(schema_for::<crate::library::CalendarEntryDto>());
     out.extend(schema_for::<crate::new_imports::NewImportsPage>());
     out.extend(schema_for::<crate::new_imports::NewImportsCount>());
+    out.extend(schema_for::<crate::library_storage::StorageSummary>());
+    out.extend(schema_for::<crate::library_storage::StorageFilesPage>());
+    out.extend(schema_for::<crate::library_storage::StorageOrphansPage>());
     out
 }
 

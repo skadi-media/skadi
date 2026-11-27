@@ -54,9 +54,8 @@ pub use history::{HistoryCounts, HistoryCursor, HistoryEntry, HistoryQuery, Hist
 pub use import_lists::{ImportList, ImportListExclusion, ImportListRepo};
 pub use item_tags::ItemTagRepo;
 pub use library_files::{
-    LibraryFile, LibraryFileQuery, LibraryFileRepo, LibraryFileSample, LibraryFileSort,
-    LibraryFileStat, LibraryKindTotals, LibraryOrphan, ProbeState, StorageProbeRepo,
-    StorageProbeStatus,
+    LibraryFile, LibraryFileQuery, LibraryFileRepo, LibraryFileSort, LibraryFileStat,
+    LibraryKindTotals, LibraryOrphan, ProbeState, StorageProbeRepo, StorageProbeStatus,
 };
 pub use repo::{DomainState, DomainStateRepo};
 pub use schema_version::{MIGRATIONS_TABLE, SchemaStatus};

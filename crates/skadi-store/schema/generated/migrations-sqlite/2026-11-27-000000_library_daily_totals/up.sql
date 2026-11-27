@@ -1,0 +1,1 @@
+CREATE TABLE library_daily_totals (day TEXT NOT NULL, kind TEXT NOT NULL, files BIGINT NOT NULL, size_bytes BIGINT NOT NULL, disk_bytes BIGINT NOT NULL, linked BIGINT NOT NULL, gone BIGINT NOT NULL, measured BIGINT NOT NULL, measured_bytes BIGINT NOT NULL, pieces BIGINT NOT NULL, checksummed BIGINT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (day, kind));

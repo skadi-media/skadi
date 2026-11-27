@@ -710,6 +710,91 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: orphans and their bytes"
     );
 
+    // Daily totals: one row per day and kind, replaced by a later pass of the
+    // same day, read back from a day on.
+    assert_eq!(
+        store
+            .record_library_daily_totals("2026-11-01", t(40))
+            .await
+            .unwrap(),
+        3,
+        "{label}: three kinds"
+    );
+    let g = &ids["/lib/book/g.m4b"];
+    store
+        .record_library_file_pieces(g, 50, t(41))
+        .await
+        .unwrap();
+    store
+        .record_library_daily_totals("2026-11-01", t(42))
+        .await
+        .unwrap();
+    store
+        .record_library_daily_totals("2026-11-02", t(43))
+        .await
+        .unwrap();
+    let days = store.library_daily_totals("2026-11-01").await.unwrap();
+    assert_eq!(
+        days.iter()
+            .map(|d| (d.day.as_str(), d.totals.kind.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("2026-11-01", "audiobook"),
+            ("2026-11-01", "movie"),
+            ("2026-11-01", "series"),
+            ("2026-11-02", "audiobook"),
+            ("2026-11-02", "movie"),
+            ("2026-11-02", "series"),
+        ],
+        "{label}: one row per day and kind, by day then kind"
+    );
+    assert_eq!(
+        (days[0].totals.measured, days[0].totals.pieces),
+        (2, 55),
+        "{label}: the later pass of the day replaced the row"
+    );
+    assert_eq!(
+        (days[1].totals.files, days[1].totals.size_bytes),
+        (2, 14 * GB),
+        "{label}"
+    );
+    assert_eq!(
+        store
+            .library_daily_totals("2026-11-02")
+            .await
+            .unwrap()
+            .len(),
+        3,
+        "{label}: from a day on"
+    );
+
+    // Thinning: of the samples older than the cut, the newest of each file
+    // and day stays. a has 4 samples on 2026-11-01: minutes 1, 3, 5 and 6.
+    let before = store.library_file_samples(&a.id).await.unwrap();
+    assert_eq!(before.len(), 4, "{label}: a's history before thinning");
+    let removed = store.thin_library_file_samples(t(4)).await.unwrap();
+    let after = store.library_file_samples(&a.id).await.unwrap();
+    assert_eq!(
+        after.len(),
+        3,
+        "{label}: minute 1 went, minute 3 is the day's newest before the cut"
+    );
+    assert_eq!(after[0].at, t(3), "{label}");
+    assert!(removed >= 1, "{label}");
+    store.thin_library_file_samples(t(30)).await.unwrap();
+    let after = store.library_file_samples(&a.id).await.unwrap();
+    assert_eq!(after.len(), 1, "{label}: one sample of the day stays");
+    assert_eq!(
+        (after[0].size_bytes, after[0].links),
+        (12 * GB, 2),
+        "{label}: the newest one"
+    );
+    assert_eq!(
+        store.thin_library_file_samples(t(30)).await.unwrap(),
+        0,
+        "{label}: thinning again removes nothing"
+    );
+
     // Rows of one kind, and the removal of a row with its history.
     let series = store.library_files_of_kind("series").await.unwrap();
     assert_eq!(

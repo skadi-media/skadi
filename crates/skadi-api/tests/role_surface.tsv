@@ -31,6 +31,8 @@ admin	GET	/library/genres	allow
 admin	GET	/library/storage/summary	allow
 admin	GET	/library/storage/files	allow
 admin	GET	/library/storage/orphans	allow
+admin	GET	/library/storage/history	allow
+admin	GET	/library/storage/files/f1/samples	allow
 admin	GET	/storage/probe	allow
 admin	POST	/storage/probe/clear	allow
 admin	PUT	/storage/probe/credential	allow
@@ -104,6 +106,8 @@ member	GET	/library/genres	allow
 member	GET	/library/storage/summary	deny
 member	GET	/library/storage/files	deny
 member	GET	/library/storage/orphans	deny
+member	GET	/library/storage/history	deny
+member	GET	/library/storage/files/f1/samples	deny
 member	GET	/storage/probe	deny
 member	POST	/storage/probe/clear	deny
 member	PUT	/storage/probe/credential	deny
@@ -177,6 +181,8 @@ contributor	GET	/library/genres	allow
 contributor	GET	/library/storage/summary	deny
 contributor	GET	/library/storage/files	deny
 contributor	GET	/library/storage/orphans	deny
+contributor	GET	/library/storage/history	deny
+contributor	GET	/library/storage/files/f1/samples	deny
 contributor	GET	/storage/probe	deny
 contributor	POST	/storage/probe/clear	deny
 contributor	PUT	/storage/probe/credential	deny
@@ -250,6 +256,8 @@ kid	GET	/library/genres	allow
 kid	GET	/library/storage/summary	deny
 kid	GET	/library/storage/files	deny
 kid	GET	/library/storage/orphans	deny
+kid	GET	/library/storage/history	deny
+kid	GET	/library/storage/files/f1/samples	deny
 kid	GET	/storage/probe	deny
 kid	POST	/storage/probe/clear	deny
 kid	PUT	/storage/probe/credential	deny

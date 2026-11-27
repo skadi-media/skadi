@@ -21,7 +21,9 @@ use diesel_dualdb::types::Timestamp;
 
 use skadi_core::Result;
 
-use crate::schema::{library_file_samples, library_files, library_orphans, storage_probe_state};
+use crate::schema::{
+    library_daily_totals, library_file_samples, library_files, library_orphans, storage_probe_state,
+};
 use crate::{Store, db_err};
 
 /// The storage facts of one library file.
@@ -110,6 +112,14 @@ pub struct LibraryKindTotals {
     pub checksummed: i64,
     /// Records whose file was not found.
     pub gone: i64,
+}
+
+/// What the library held of one kind on one day.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LibraryDailyTotals {
+    /// The UTC day, `YYYY-MM-DD`.
+    pub day: String,
+    pub totals: LibraryKindTotals,
 }
 
 /// The column a file list is ordered by.
@@ -274,6 +284,18 @@ pub trait LibraryFileRepo: Send + Sync {
     /// How many orphans there are, and their bytes.
     async fn library_orphan_totals(&self) -> Result<(i64, i64)>;
 
+    /// Write today's totals of every kind as the row of `day` (`YYYY-MM-DD`),
+    /// in place of an earlier row of the same day. Returns how many kinds.
+    async fn record_library_daily_totals(&self, day: &str, at: DateTime<Utc>) -> Result<usize>;
+
+    /// The daily totals from `since_day` on, by day and then by kind.
+    async fn library_daily_totals(&self, since_day: &str) -> Result<Vec<LibraryDailyTotals>>;
+
+    /// Thin the history: of the samples older than `before`, keep the newest
+    /// of each file and UTC day and remove the others. Returns how many were
+    /// removed.
+    async fn thin_library_file_samples(&self, before: DateTime<Utc>) -> Result<usize>;
+
     /// Every file row of one kind, gone ones too, in path order.
     async fn library_files_of_kind(&self, kind: &str) -> Result<Vec<LibraryFile>>;
 
@@ -351,6 +373,23 @@ struct SampleRow {
     size_bytes: i64,
     links: i64,
     pieces: Option<i64>,
+}
+
+#[derive(Queryable, Selectable, Insertable)]
+#[diesel(table_name = library_daily_totals)]
+struct DailyRow {
+    day: String,
+    kind: String,
+    files: i64,
+    size_bytes: i64,
+    disk_bytes: i64,
+    linked: i64,
+    gone: i64,
+    measured: i64,
+    measured_bytes: i64,
+    pieces: i64,
+    checksummed: i64,
+    at: Timestamp,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -934,6 +973,121 @@ impl LibraryFileRepo for Store {
                 ))
                 .first::<(i64, i64)>(conn)
                 .map_err(db_err)
+        })
+        .await
+    }
+
+    async fn record_library_daily_totals(&self, day: &str, at: DateTime<Utc>) -> Result<usize> {
+        let totals = self.library_totals_by_kind().await?;
+        let day = day.to_string();
+        self.with_conn(move |conn| {
+            conn.transaction(|conn| {
+                for t in &totals {
+                    let row = DailyRow {
+                        day: day.clone(),
+                        kind: t.kind.clone(),
+                        files: t.files,
+                        size_bytes: t.size_bytes,
+                        disk_bytes: t.disk_bytes,
+                        linked: t.linked,
+                        gone: t.gone,
+                        measured: t.measured,
+                        measured_bytes: t.measured_bytes,
+                        pieces: t.pieces,
+                        checksummed: t.checksummed,
+                        at: Timestamp(at),
+                    };
+                    // Replace, as delete then insert: an upsert clause is not
+                    // one fragment across both backends.
+                    diesel::delete(
+                        library_daily_totals::table
+                            .filter(library_daily_totals::day.eq(&row.day))
+                            .filter(library_daily_totals::kind.eq(&row.kind)),
+                    )
+                    .execute(conn)?;
+                    diesel::insert_into(library_daily_totals::table)
+                        .values(&row)
+                        .execute(conn)?;
+                }
+                QueryResult::Ok(totals.len())
+            })
+            .map_err(db_err)
+        })
+        .await
+    }
+
+    async fn library_daily_totals(&self, since_day: &str) -> Result<Vec<LibraryDailyTotals>> {
+        let since = since_day.to_string();
+        self.with_conn(move |conn| {
+            let rows: Vec<DailyRow> = library_daily_totals::table
+                .filter(library_daily_totals::day.ge(&since))
+                .select(DailyRow::as_select())
+                .load(conn)
+                .map_err(db_err)?;
+            let mut out: Vec<LibraryDailyTotals> = rows
+                .into_iter()
+                .map(|r| LibraryDailyTotals {
+                    day: r.day,
+                    totals: LibraryKindTotals {
+                        kind: r.kind,
+                        files: r.files,
+                        size_bytes: r.size_bytes,
+                        disk_bytes: r.disk_bytes,
+                        linked: r.linked,
+                        measured: r.measured,
+                        measured_bytes: r.measured_bytes,
+                        pieces: r.pieces,
+                        checksummed: r.checksummed,
+                        gone: r.gone,
+                    },
+                })
+                .collect();
+            // Sorted here, by bytes (see `library_files_of_kind`).
+            out.sort_by(|a, b| (&a.day, &a.totals.kind).cmp(&(&b.day, &b.totals.kind)));
+            Ok(out)
+        })
+        .await
+    }
+
+    async fn thin_library_file_samples(&self, before: DateTime<Utc>) -> Result<usize> {
+        self.with_conn(move |conn| {
+            conn.transaction(|conn| {
+                let old: Vec<(String, String, Timestamp)> = library_file_samples::table
+                    .filter(library_file_samples::at.lt(Timestamp(before)))
+                    .select((
+                        library_file_samples::id,
+                        library_file_samples::file_id,
+                        library_file_samples::at,
+                    ))
+                    .load(conn)?;
+                // The newest sample of each file and day stays.
+                let mut newest: std::collections::HashMap<
+                    (String, chrono::NaiveDate),
+                    (DateTime<Utc>, String),
+                > = std::collections::HashMap::new();
+                for (id, file_id, at) in &old {
+                    let key = (file_id.clone(), at.0.date_naive());
+                    match newest.get(&key) {
+                        Some((kept_at, kept_id)) if (*kept_at, kept_id) >= (at.0, id) => {}
+                        _ => {
+                            newest.insert(key, (at.0, id.clone()));
+                        }
+                    }
+                }
+                let keep: std::collections::HashSet<&String> =
+                    newest.values().map(|(_, id)| id).collect();
+                let mut removed = 0;
+                for (id, _, _) in &old {
+                    if !keep.contains(id) {
+                        removed += diesel::delete(
+                            library_file_samples::table.filter(library_file_samples::id.eq(id)),
+                        )
+                        .execute(conn)?;
+                    }
+                }
+                QueryResult::Ok(removed)
+            })
+            .map_err(db_err)
         })
         .await
     }

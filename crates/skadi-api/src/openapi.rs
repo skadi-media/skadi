@@ -129,6 +129,18 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/library/storage/history",
+        "system",
+        "What the library held, a row per day and kind, oldest first; `days` (90, at most 730). Admin only",
+    ),
+    (
+        "GET",
+        "/library/storage/files/{id}/samples",
+        "system",
+        "Each change of one file's size, hard links or pieces, oldest first. Admin only",
+    ),
+    (
+        "GET",
         "/storage/probe",
         "system",
         "The piece probe of the storage host: state, reason, what is not set, the kind of credential. No secret. Admin only",
@@ -1239,6 +1251,12 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
     ("GET", "/library/storage/files", "StorageFilesPage"),
     ("GET", "/library/storage/orphans", "StorageOrphansPage"),
     ("GET", "/storage/probe", "ProbeDto"),
+    ("GET", "/library/storage/history", "StorageHistory"),
+    (
+        "GET",
+        "/library/storage/files/{id}/samples",
+        "StorageSampleDto",
+    ),
     // The list adds sort keys to each book (SKADI-T-0737).
     ("GET", "/books", "ListedBook"),
     ("GET", "/books/{id}", "Book"),
@@ -1258,6 +1276,8 @@ fn builtin_schemas() -> Schemas {
     out.extend(schema_for::<crate::library_storage::StorageFilesPage>());
     out.extend(schema_for::<crate::library_storage::StorageOrphansPage>());
     out.extend(schema_for::<crate::library_storage::ProbeDto>());
+    out.extend(schema_for::<crate::library_storage::StorageHistory>());
+    out.extend(schema_for::<crate::library_storage::StorageSampleDto>());
     out
 }
 

@@ -291,3 +291,23 @@ diesel::table! {
         cleared_by -> Nullable<Text>,
     }
 }
+
+diesel::table! {
+    use diesel::sql_types::{BigInt, Text};
+    use diesel_dualdb::sql_types::Timestamp;
+
+    library_daily_totals (day, kind) {
+        day -> Text,
+        kind -> Text,
+        files -> BigInt,
+        size_bytes -> BigInt,
+        disk_bytes -> BigInt,
+        linked -> BigInt,
+        gone -> BigInt,
+        measured -> BigInt,
+        measured_bytes -> BigInt,
+        pieces -> BigInt,
+        checksummed -> BigInt,
+        at -> Timestamp,
+    }
+}

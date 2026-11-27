@@ -513,6 +513,14 @@ pub const REGISTRY: &[ConfigKeySpec] = &[
         default: "24",
         tier: Tier::Tier1,
     },
+    // A file's storage history keeps every sample for this many days; older
+    // ones are thinned to one a day (SKADI-T-0776). 0 keeps every sample.
+    ConfigKeySpec {
+        key: "storage.samples.full_days",
+        kind: ValueKind::U16,
+        default: "30",
+        tier: Tier::Tier1,
+    },
     // The piece probe of the storage host over SSH (SKADI-T-0775). Off by
     // default; the credential is in the vault, not here.
     ConfigKeySpec {
@@ -827,6 +835,10 @@ pub const HELP: &[(&str, &str)] = &[
     (
         "storage.sweep.interval_hours",
         "How many hours pass between two readings of the size, the hard links and the identity of each library file. The same pass finds the files that are gone and the files with no record. 0 turns it off.",
+    ),
+    (
+        "storage.samples.full_days",
+        "The history of a library file keeps every change of its size, hard links and pieces for this many days. Older changes are thinned to one a day. 0 keeps every change.",
     ),
     (
         "storage.probe.pieces.enabled",

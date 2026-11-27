@@ -33,6 +33,10 @@ use tokio_util::sync::CancellationToken;
 /// The config key: hours between two sweeps of a domain. 0 turns the sweep off.
 pub const SWEEP_INTERVAL_KEY: &str = "storage.sweep.interval_hours";
 
+/// The config key: a file's history keeps every sample for this many days;
+/// older ones are thinned to one a day. 0 keeps every sample.
+pub const SAMPLES_FULL_DAYS_KEY: &str = "storage.samples.full_days";
+
 /// The file an operator puts in the library root to prove the mount is up
 /// (`library.require_root_marker`). The same name the importer checks.
 const ROOT_MARKER: &str = ".skadi-root";
@@ -474,12 +478,39 @@ impl StorageSweepWorker {
             status.started_at = Some(Utc::now());
         }
         let report = self.pass(cancel).await;
+        if report.skipped.is_none() {
+            self.keep_history().await;
+        }
         if let Some(status) = sweeps().get_mut(&self.name) {
             status.running = false;
             status.finished_at = Some(Utc::now());
             status.last = Some(report.clone());
         }
         report
+    }
+
+    /// After a pass that ran to the end: write today's totals for the trend,
+    /// and thin the old per-file history. Best-effort; the next pass tries
+    /// again.
+    async fn keep_history(&self) {
+        let now = Utc::now();
+        let day = now.format("%Y-%m-%d").to_string();
+        if let Err(e) = self.store.record_library_daily_totals(&day, now).await {
+            tracing::warn!(error = %e, "storage sweep: daily totals not written");
+        }
+        let full_days: i64 = self
+            .config(SAMPLES_FULL_DAYS_KEY)
+            .await
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(30);
+        if full_days > 0 {
+            let before = now - chrono::Duration::days(full_days);
+            match self.store.thin_library_file_samples(before).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(removed = n, "storage sweep: old history thinned"),
+                Err(e) => tracing::warn!(error = %e, "storage sweep: history not thinned"),
+            }
+        }
     }
 
     async fn pass(&self, cancel: &CancellationToken) -> SweepReport {
@@ -963,6 +994,32 @@ mod tests {
         assert!(status.started_at.is_some_and(|t| t >= before));
         assert!(status.finished_at.is_some_and(|t| t >= before));
         assert!(status.last.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_completed_pass_writes_the_days_totals_and_a_skipped_one_does_not() {
+        let lib = Lib::new().await;
+        let path = lib.file("A (2020)/a.mkv", 1000);
+        lib.hold("ed-1", &path);
+        lib.sweep().await;
+        let days = lib.store.library_daily_totals("2000-01-01").await.unwrap();
+        assert_eq!(days.len(), 1, "one kind, one day");
+        assert_eq!(days[0].day, Utc::now().format("%Y-%m-%d").to_string());
+        assert_eq!(
+            (
+                days[0].totals.kind.as_str(),
+                days[0].totals.files,
+                days[0].totals.size_bytes
+            ),
+            ("movie", 1, 1000)
+        );
+
+        // The library goes away: the pass is skipped, and the day keeps the
+        // totals of the last good pass, not a library of nothing.
+        std::fs::remove_dir_all(&lib.root).unwrap();
+        assert!(lib.sweep().await.skipped.is_some());
+        let days = lib.store.library_daily_totals("2000-01-01").await.unwrap();
+        assert_eq!(days[0].totals.files, 1);
     }
 
     #[test]

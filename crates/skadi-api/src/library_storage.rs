@@ -42,6 +42,8 @@ pub fn library_storage_router() -> Router<Arc<AppState>> {
         .route("/library/storage/summary", get(summary))
         .route("/library/storage/files", get(files))
         .route("/library/storage/orphans", get(orphans))
+        .route("/library/storage/history", get(history))
+        .route("/library/storage/files/{id}/samples", get(file_samples))
         .route("/storage/probe", get(probe_state))
         .route("/storage/probe/clear", post(probe_clear))
         .route(
@@ -507,4 +509,105 @@ async fn probe_delete_credential(
     let store = store(&state)?;
     probe::delete_credential(store).await?;
     Ok(Json(probe_dto(store).await?))
+}
+
+/// The most days of history one request may ask for.
+pub const MAX_HISTORY_DAYS: i64 = 730;
+/// The days of history when the caller does not say.
+pub const DEFAULT_HISTORY_DAYS: i64 = 90;
+
+/// Query of `GET /library/storage/history`.
+#[derive(Deserialize, Default)]
+struct HistoryQuery {
+    days: Option<i64>,
+}
+
+/// `GET /library/storage/history`: what the library held, a row per day and
+/// kind, oldest first. A day with no completed storage sweep has no row.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageHistory {
+    /// The first day asked for, `YYYY-MM-DD` (UTC).
+    pub since: String,
+    pub days: Vec<StorageDayDto>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageDayDto {
+    /// `YYYY-MM-DD` (UTC).
+    pub day: String,
+    pub kind: String,
+    pub files: i64,
+    pub size_bytes: i64,
+    pub disk_bytes: i64,
+    pub linked: i64,
+    pub gone: i64,
+    pub measured: i64,
+    pub measured_bytes: i64,
+    pub pieces: i64,
+    pub checksummed: i64,
+}
+
+async fn history(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<HistoryQuery>,
+) -> Result<Json<StorageHistory>, ApiError> {
+    let days = q
+        .days
+        .unwrap_or(DEFAULT_HISTORY_DAYS)
+        .clamp(1, MAX_HISTORY_DAYS);
+    let since = (chrono::Utc::now() - chrono::Duration::days(days - 1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let rows = store(&state)?.library_daily_totals(&since).await?;
+    Ok(Json(StorageHistory {
+        since,
+        days: rows
+            .into_iter()
+            .map(|d| StorageDayDto {
+                day: d.day,
+                kind: d.totals.kind,
+                files: d.totals.files,
+                size_bytes: d.totals.size_bytes,
+                disk_bytes: d.totals.disk_bytes,
+                linked: d.totals.linked,
+                gone: d.totals.gone,
+                measured: d.totals.measured,
+                measured_bytes: d.totals.measured_bytes,
+                pieces: d.totals.pieces,
+                checksummed: d.totals.checksummed,
+            })
+            .collect(),
+    }))
+}
+
+/// One point of a file's history.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSampleDto {
+    pub at: String,
+    pub size_bytes: i64,
+    pub links: i64,
+    /// `null` before the file's first piece count.
+    pub pieces: Option<i64>,
+}
+
+/// `GET /library/storage/files/{id}/samples`: each change of a file's size,
+/// hard links or pieces, oldest first. An unknown id gives an empty list.
+async fn file_samples(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<Vec<StorageSampleDto>>, ApiError> {
+    let rows = store(&state)?.library_file_samples(&id).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|s| StorageSampleDto {
+                at: s.at.to_rfc3339(),
+                size_bytes: s.size_bytes,
+                links: s.links,
+                pieces: s.pieces,
+            })
+            .collect(),
+    ))
 }

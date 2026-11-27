@@ -53,6 +53,8 @@ const CASES: &[(&str, &str)] = &[
     ("GET", "/library/storage/summary"),
     ("GET", "/library/storage/files"),
     ("GET", "/library/storage/orphans"),
+    ("GET", "/library/storage/history"),
+    ("GET", "/library/storage/files/f1/samples"),
     ("GET", "/storage/probe"),
     ("POST", "/storage/probe/clear"),
     ("PUT", "/storage/probe/credential"),

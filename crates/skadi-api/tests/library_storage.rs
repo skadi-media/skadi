@@ -541,3 +541,115 @@ async fn the_probe_endpoints_refuse_a_non_admin() {
     assert_eq!(body["state"], "failed");
     assert!(body["credential"].is_null());
 }
+
+// ---------------------------------------------------------------------------
+// History (SKADI-T-0776)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_history_gives_a_row_per_day_and_kind_and_a_file_gives_its_samples() {
+    let (state, db) = seeded().await;
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let last_week = (Utc::now() - Duration::days(7))
+        .format("%Y-%m-%d")
+        .to_string();
+    let long_ago = (Utc::now() - Duration::days(400))
+        .format("%Y-%m-%d")
+        .to_string();
+    for day in [&long_ago, &last_week, &today] {
+        db.store
+            .record_library_daily_totals(day, Utc::now())
+            .await
+            .unwrap();
+    }
+    let (st, body) = call(
+        &state,
+        "GET",
+        "/api/v1/library/storage/history",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let days = body["days"].as_array().unwrap();
+    assert_eq!(
+        days.len(),
+        6,
+        "two days in the last 90, three kinds each: {body}"
+    );
+    assert_eq!(days[0]["day"], last_week.as_str(), "oldest first");
+    assert_eq!(days[0]["kind"], "audiobook");
+    assert_eq!(days[1]["kind"], "movie");
+    assert_eq!(days[1]["sizeBytes"], 14 * GB);
+    assert_eq!(days[5]["day"], today.as_str());
+
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/library/storage/history?days=1",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(body["days"].as_array().unwrap().len(), 3, "today only");
+    let (_, body) = call(
+        &state,
+        "GET",
+        "/api/v1/library/storage/history?days=100000",
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(
+        body["days"].as_array().unwrap().len(),
+        9,
+        "capped at two years: {body}"
+    );
+
+    // One file: its changes, oldest first.
+    let (_, page) = call(
+        &state,
+        "GET",
+        "/api/v1/library/storage/files?sort=links&limit=1",
+        "operator-token",
+        None,
+    )
+    .await;
+    let id = page["files"][0]["id"].as_str().unwrap().to_string();
+    db.store
+        .record_library_file_pieces(&id, 321, t(9))
+        .await
+        .unwrap();
+    let (st, samples) = call(
+        &state,
+        "GET",
+        &format!("/api/v1/library/storage/files/{id}/samples"),
+        "operator-token",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{samples}");
+    let samples = samples.as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    assert!(samples[0]["pieces"].is_null());
+    assert_eq!(samples[1]["pieces"], 321);
+    assert_eq!(samples[1]["sizeBytes"], 12 * GB);
+
+    // A non-admin gets neither.
+    let (_, created) = call(
+        &state,
+        "POST",
+        "/api/v1/members",
+        "operator-token",
+        Some(serde_json::json!({"name": "Robin", "role": "member"})),
+    )
+    .await;
+    let member = created["token"].as_str().unwrap().to_string();
+    for path in [
+        "/api/v1/library/storage/history".to_string(),
+        format!("/api/v1/library/storage/files/{id}/samples"),
+    ] {
+        let (st, _) = call(&state, "GET", &path, &member, None).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{path}");
+    }
+}

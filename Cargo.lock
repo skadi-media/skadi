@@ -4735,7 +4735,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "skadi-api"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "argon2 0.5.3",
  "async-trait",
@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-audiobooks"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "axum",
@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-cardigann"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4849,7 +4849,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-cli"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "clap",
@@ -4877,7 +4877,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-client"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cucumber",
  "reqwest",
@@ -4889,7 +4889,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-config"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cucumber",
  "serde",
@@ -4900,7 +4900,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4918,7 +4918,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-downloaders"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4934,7 +4934,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-e2e-harness"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "axum",
@@ -4963,7 +4963,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-http"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "chrono",
  "cucumber",
@@ -4978,7 +4978,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-hunter"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5011,7 +5011,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-importer"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "cucumber",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-indexers"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5051,7 +5051,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-library-scan"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5070,7 +5070,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-media-probe"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cucumber",
  "lofty",
@@ -5086,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-metadata"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5104,7 +5104,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-movies"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "axum",
@@ -5148,7 +5148,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-naming"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cucumber",
  "tokio",
@@ -5158,7 +5158,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-notify"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5176,7 +5176,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-quality"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cucumber",
  "regex",
@@ -5190,7 +5190,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-store"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "chacha20poly1305",
@@ -5212,7 +5212,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-testsupport"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "diesel",
  "diesel_migrations",
@@ -5225,7 +5225,7 @@ dependencies = [
 
 [[package]]
 name = "skadi-tv"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "axum",

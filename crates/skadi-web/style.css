@@ -1368,6 +1368,8 @@ p.genres.muted {
 .storage-subhead { margin-top: 1.5rem; }
 .storage-space { margin: 0 0 0.75rem; }
 .sweep-row.running .sweep-state { font-weight: 600; }
+.probe-credential { margin-top: 1rem; max-width: 40rem; }
+.probe-panel .probe-error { margin-bottom: 0.75rem; }
 .system-table .status-dot { margin-right: 0.4rem; vertical-align: middle; }
 .check-level { font-size: 0.72rem; color: var(--fg-2); }
 .check-id, .task-what { font-size: 0.72rem; }

@@ -2339,3 +2339,68 @@ async fn library_details_panels_show_rows_then_a_retry() {
     )
     .await;
 }
+
+// ---------------------------------------------------------------------------
+// The piece probe panel (SKADI-T-0775)
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen_test]
+fn a_failed_piece_probe_shows_its_reason_under_a_banner() {
+    use skadi_web::api::StorageProbe;
+    use skadi_web::library_details::ProbeFacts;
+    let probe = StorageProbe {
+        enabled: true,
+        state: "failed".into(),
+        reason: Some("the storage host refused the key of user skadi".into()),
+        failed_at: Some("2026-11-26T21:00:00+00:00".into()),
+        credential: Some("key".into()),
+        host_key: Some("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJ0ZXN0a2V5Ym9keQ".into()),
+        ..Default::default()
+    };
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <ProbeFacts probe=probe.clone()/> },
+    );
+    assert_eq!(
+        count(&host, ".system-banner.bad"),
+        1,
+        "the stop is announced"
+    );
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Stopped after a failure"), "{text}");
+    assert!(text.contains("refused the key of user skadi"), "{text}");
+    assert!(text.contains("2026-11-26 21:00:00"), "{text}");
+    assert!(text.contains("a private key is stored"), "{text}");
+    assert!(text.contains("ssh-ed25519 …"), "{text}");
+}
+
+#[wasm_bindgen_test]
+fn a_cleared_piece_probe_keeps_the_last_failure_as_a_record() {
+    use skadi_web::api::StorageProbe;
+    use skadi_web::library_details::ProbeFacts;
+    let probe = StorageProbe {
+        enabled: true,
+        state: "on".into(),
+        reason: Some("host key changed".into()),
+        failed_at: Some("2026-11-26T21:00:00+00:00".into()),
+        cleared_at: Some("2026-11-26T22:00:00+00:00".into()),
+        cleared_by: Some("Robin".into()),
+        credential: Some("password".into()),
+        ..Default::default()
+    };
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <ProbeFacts probe=probe.clone()/> },
+    );
+    assert_eq!(count(&host, ".system-banner"), 0, "nothing is wrong now");
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Last failure"), "{text}");
+    assert!(text.contains("2026-11-26 22:00:00 UTC by Robin"), "{text}");
+    assert!(text.contains("a password is stored"), "{text}");
+    assert!(
+        text.contains("none yet"),
+        "no host key before the first connection: {text}"
+    );
+}

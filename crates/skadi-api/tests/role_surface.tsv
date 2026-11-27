@@ -31,6 +31,10 @@ admin	GET	/library/genres	allow
 admin	GET	/library/storage/summary	allow
 admin	GET	/library/storage/files	allow
 admin	GET	/library/storage/orphans	allow
+admin	GET	/storage/probe	allow
+admin	POST	/storage/probe/clear	allow
+admin	PUT	/storage/probe/credential	allow
+admin	DELETE	/storage/probe/credential	allow
 admin	GET	/new-imports	allow
 admin	GET	/new-imports/count	allow
 admin	POST	/new-imports	allow
@@ -100,6 +104,10 @@ member	GET	/library/genres	allow
 member	GET	/library/storage/summary	deny
 member	GET	/library/storage/files	deny
 member	GET	/library/storage/orphans	deny
+member	GET	/storage/probe	deny
+member	POST	/storage/probe/clear	deny
+member	PUT	/storage/probe/credential	deny
+member	DELETE	/storage/probe/credential	deny
 member	GET	/new-imports	allow
 member	GET	/new-imports/count	allow
 member	POST	/new-imports	deny
@@ -169,6 +177,10 @@ contributor	GET	/library/genres	allow
 contributor	GET	/library/storage/summary	deny
 contributor	GET	/library/storage/files	deny
 contributor	GET	/library/storage/orphans	deny
+contributor	GET	/storage/probe	deny
+contributor	POST	/storage/probe/clear	deny
+contributor	PUT	/storage/probe/credential	deny
+contributor	DELETE	/storage/probe/credential	deny
 contributor	GET	/new-imports	allow
 contributor	GET	/new-imports/count	allow
 contributor	POST	/new-imports	deny
@@ -238,6 +250,10 @@ kid	GET	/library/genres	allow
 kid	GET	/library/storage/summary	deny
 kid	GET	/library/storage/files	deny
 kid	GET	/library/storage/orphans	deny
+kid	GET	/storage/probe	deny
+kid	POST	/storage/probe/clear	deny
+kid	PUT	/storage/probe/credential	deny
+kid	DELETE	/storage/probe/credential	deny
 kid	GET	/new-imports	allow
 kid	GET	/new-imports/count	allow
 kid	POST	/new-imports	deny

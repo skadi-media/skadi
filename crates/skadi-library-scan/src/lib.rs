@@ -17,6 +17,7 @@
 //! rest of the daemon** while it walks tens of thousands of files on a network
 //! share.
 
+pub mod probe;
 pub mod storage;
 
 use std::path::PathBuf;

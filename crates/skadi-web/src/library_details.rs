@@ -12,7 +12,10 @@
 //! **The gate is a known-good role**, as on the System page: the panels and
 //! their fetches live in a child that only an admin mounts (SKADI-T-0639).
 
-use aurora_leptos::components::{PageRange, Pagination, Select, Table};
+use aurora_leptos::components::{
+    Alert, Button, DetailList, KeyValue, PageRange, Pagination, Select, Table, TextInput, Textarea,
+};
+use aurora_leptos::tokens::token;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -128,6 +131,35 @@ pub fn files_query(kind: &str, state: &str, sort: &str, offset: usize) -> String
         q.push_str(&format!("&kind={kind}"));
     }
     q
+}
+
+/// The credential choices of the piece probe: `(value, label)`.
+pub const CREDENTIAL_KINDS: &[(&str, &str)] = &[("key", "Private key"), ("password", "Password")];
+
+/// The state of the piece probe in a few words.
+pub fn probe_state_label(probe: &api::StorageProbe) -> String {
+    match probe.state.as_str() {
+        "off" => "Off".into(),
+        "on" => "On".into(),
+        "failed" => "Stopped after a failure".into(),
+        "not_set_up" => format!("On, but not set up: {} missing", probe.missing.join(", ")),
+        other => other.to_string(),
+    }
+}
+
+/// A public key for a table cell: its type and the end of its body, enough to
+/// compare with what the host prints.
+pub fn host_key_label(key: Option<&str>) -> String {
+    let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) else {
+        return "none yet: it is kept at the first connection".into();
+    };
+    let mut parts = key.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some(kind), Some(body)) if body.len() > 16 => {
+            format!("{kind} …{}", &body[body.len() - 16..])
+        }
+        _ => key.to_string(),
+    }
 }
 
 fn pairs(options: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -260,6 +292,8 @@ fn LibraryDetailsPanels() -> impl IntoView {
                 <SweepTable sweeps=s.sweeps.clone() kinds=s.kinds/>
             })}
         </section>
+
+        <ProbePanel/>
 
         <section class="provider-section">
             <div class="section-head">
@@ -574,4 +608,192 @@ pub fn OrphanTable(orphans: Vec<api::StorageOrphan>) -> impl IntoView {
         </Table>
     }
     .into_any()
+}
+
+/// The piece probe: its state, the Clear button after a failure, and the
+/// credential it logs in with. The other settings are on Settings → Library,
+/// under `storage`.
+#[component]
+fn ProbePanel() -> impl IntoView {
+    let probe = RwSignal::new(None::<api::StorageProbe>);
+    let load = ListLoad::new();
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(None::<String>);
+    let kind = RwSignal::new(String::from("key"));
+    let secret = RwSignal::new(String::new());
+    let passphrase = RwSignal::new(String::new());
+
+    let fetch = move || {
+        spawn_local(async move {
+            if let Some(p) = load.settle(api::storage_probe().await.map_err(|e| e.0)) {
+                let _ = probe.try_set(Some(p));
+            }
+        });
+    };
+    Effect::new(move |_| fetch());
+
+    // Every write answers with the probe's new state.
+    let settle = move |result: Result<api::StorageProbe, api::ApiError>| {
+        match result {
+            Ok(p) => {
+                let _ = probe.try_set(Some(p));
+                let _ = error.try_set(None);
+            }
+            Err(e) => {
+                let _ = error.try_set(Some(e.0));
+            }
+        }
+        let _ = busy.try_set(false);
+    };
+    let clear = move |()| {
+        busy.set(true);
+        spawn_local(async move { settle(api::storage_probe_clear().await) });
+    };
+    let save = move |()| {
+        let (k, s, p) = (
+            kind.get_untracked(),
+            secret.get_untracked(),
+            passphrase.get_untracked(),
+        );
+        if s.trim().is_empty() {
+            error.set(Some("Enter the password or the private key first.".into()));
+            return;
+        }
+        busy.set(true);
+        spawn_local(async move {
+            let result = api::storage_probe_set_credential(&k, &s, &p).await;
+            if result.is_ok() {
+                // The secret leaves the page as soon as the daemon has it.
+                let _ = secret.try_set(String::new());
+                let _ = passphrase.try_set(String::new());
+            }
+            settle(result);
+        });
+    };
+    let remove = move |()| {
+        busy.set(true);
+        spawn_local(async move { settle(api::storage_probe_delete_credential().await) });
+    };
+
+    view! {
+        <section class="provider-section probe-panel">
+            <div class="section-head">
+                <div>
+                    <h3>"Piece probe"</h3>
+                    <p class="muted">
+                        "Asks the storage host over SSH how many pieces each file is in. "
+                        "It only reads. Its host, user, path map and rate are in Settings → Library, under storage."
+                    </p>
+                </div>
+            </div>
+            {load.status_n(SkeletonKind::Rows, Some(2), Callback::new(move |()| fetch()))}
+            {move || error.get().map(|e| view! {
+                <Alert color=token::BAD class:probe-error=true>{e}</Alert>
+            })}
+            {move || probe.get().map(|p| view! {
+                <ProbeFacts probe=p.clone()/>
+                {(p.state == "failed").then(|| view! {
+                    <div class="checks">
+                        <Button variant="default" loading=busy on_click=Callback::new(clear)>
+                            "Clear the failure"
+                        </Button>
+                        <span class="muted">"Fix the cause first. The probe runs again after this."</span>
+                    </div>
+                })}
+            })}
+            {move || load.is_loaded().then(|| view! {
+                <div class="probe-credential">
+                    <div class="field">
+                        <Select label="Logs in with" value=kind option_pairs=pairs(CREDENTIAL_KINDS)/>
+                    </div>
+                    {move || if kind.get() == "password" {
+                        view! {
+                            <div class="field">
+                                <TextInput label="Password" input_type="password"
+                                    autocomplete="off" value=secret/>
+                            </div>
+                        }
+                        .into_any()
+                    } else {
+                        view! {
+                            <div class="field">
+                                <Textarea label="Private key" rows=5 mono=true value=secret
+                                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"/>
+                            </div>
+                            <div class="field">
+                                <TextInput label="Passphrase of the key, if it has one"
+                                    input_type="password" autocomplete="off" value=passphrase/>
+                            </div>
+                        }
+                        .into_any()
+                    }}
+                    <div class="checks">
+                        <Button variant="primary" loading=busy on_click=Callback::new(save)>
+                            "Save the credential"
+                        </Button>
+                        {move || probe.get().and_then(|p| p.credential).map(|_| view! {
+                            <Button variant="default" loading=busy on_click=Callback::new(remove)>
+                                "Remove the stored credential"
+                            </Button>
+                        })}
+                    </div>
+                    <p class="muted">
+                        "The credential is kept in the daemon's vault. This page never shows it again."
+                    </p>
+                </div>
+            })}
+        </section>
+    }
+}
+
+/// What the daemon says of the piece probe. It carries no secret.
+#[component]
+pub fn ProbeFacts(probe: api::StorageProbe) -> impl IntoView {
+    let failed = probe.state == "failed";
+    let credential = match probe.credential.as_deref() {
+        Some("key") => "a private key is stored",
+        Some("password") => "a password is stored",
+        Some(_) => "stored",
+        None => "none stored",
+    };
+    let cleared = probe.cleared_at.as_ref().map(|at| {
+        format!(
+            "{} UTC by {}",
+            time_label(Some(at)),
+            probe
+                .cleared_by
+                .clone()
+                .unwrap_or_else(|| "an admin".into())
+        )
+    });
+    // After a clear the reason stays as a record; it is the last failure,
+    // not a current one.
+    let reason_label = if failed { "Reason" } else { "Last failure" };
+    let state = probe_state_label(&probe);
+    let host_key = host_key_label(probe.host_key.as_deref());
+    view! {
+        {failed.then(|| view! {
+            <Alert color=token::BAD class:system-banner=true class:bad=true>
+                "The piece probe has stopped. It does not try again until the failure is cleared."
+            </Alert>
+        })}
+        <DetailList>
+            <KeyValue label="State">
+                <span class="probe-state">{state}</span>
+            </KeyValue>
+            {probe.reason.clone().map(|r| view! {
+                <KeyValue label=reason_label>
+                    <span class="probe-reason">{r}</span>
+                    {probe.failed_at.as_ref().map(|at| view! {
+                        <span class="muted">{format!(" ({} UTC)", time_label(Some(at)))}</span>
+                    })}
+                </KeyValue>
+            })}
+            {cleared.map(|c| view! { <KeyValue label="Cleared">{c}</KeyValue> })}
+            <KeyValue label="Credential">{credential}</KeyValue>
+            <KeyValue label="Host key">
+                <span class="mono">{host_key}</span>
+            </KeyValue>
+        </DetailList>
+    }
 }

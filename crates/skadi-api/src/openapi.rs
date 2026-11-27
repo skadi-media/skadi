@@ -129,6 +129,30 @@ pub const ROUTES: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "GET",
+        "/storage/probe",
+        "system",
+        "The piece probe of the storage host: state, reason, what is not set, the kind of credential. No secret. Admin only",
+    ),
+    (
+        "POST",
+        "/storage/probe/clear",
+        "system",
+        "Clear the recorded failure of the piece probe so it runs again. Admin only",
+    ),
+    (
+        "PUT",
+        "/storage/probe/credential",
+        "system",
+        "Store the password or the private key the piece probe logs in with. Admin only",
+    ),
+    (
+        "DELETE",
+        "/storage/probe/credential",
+        "system",
+        "Remove the stored credential of the piece probe. Admin only",
+    ),
+    (
+        "GET",
         "/system/task",
         "system",
         "Scheduler task states and their next run times",
@@ -1214,6 +1238,7 @@ const RESPONSE_SCHEMAS: &[(&str, &str, &str)] = &[
     ("GET", "/library/storage/summary", "StorageSummary"),
     ("GET", "/library/storage/files", "StorageFilesPage"),
     ("GET", "/library/storage/orphans", "StorageOrphansPage"),
+    ("GET", "/storage/probe", "ProbeDto"),
     // The list adds sort keys to each book (SKADI-T-0737).
     ("GET", "/books", "ListedBook"),
     ("GET", "/books/{id}", "Book"),
@@ -1232,6 +1257,7 @@ fn builtin_schemas() -> Schemas {
     out.extend(schema_for::<crate::library_storage::StorageSummary>());
     out.extend(schema_for::<crate::library_storage::StorageFilesPage>());
     out.extend(schema_for::<crate::library_storage::StorageOrphansPage>());
+    out.extend(schema_for::<crate::library_storage::ProbeDto>());
     out
 }
 

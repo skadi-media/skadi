@@ -1369,6 +1369,11 @@ p.genres.muted {
 .storage-space { margin: 0 0 0.75rem; }
 .sweep-row.running .sweep-state { font-weight: 600; }
 .probe-credential { margin-top: 1rem; max-width: 40rem; }
+.trend-tiles { margin-bottom: 0.75rem; }
+.trend-figures { margin-top: 0.5rem; }
+.trend-figures summary { cursor: pointer; }
+.storage-history { margin-top: 0.35rem; }
+.storage-file-row.gone .storage-history { text-decoration: none; }
 .probe-panel .probe-error { margin-bottom: 0.75rem; }
 .system-table .status-dot { margin-right: 0.4rem; vertical-align: middle; }
 .check-level { font-size: 0.72rem; color: var(--fg-2); }

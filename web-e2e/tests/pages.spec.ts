@@ -32,6 +32,7 @@ test("Library details opens for the admin and is not offered to a member", async
   await expect(page.getByRole("heading", { name: "Files", exact: true })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Sort" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Files with no item" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Change over time" })).toBeVisible();
   // The piece probe is off in the harness: its panel says so and offers the credential form.
   await expect(page.getByRole("heading", { name: "Piece probe" })).toBeVisible();
   await expect(page.locator(".probe-state")).toHaveText("Off");

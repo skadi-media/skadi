@@ -13,7 +13,8 @@
 //! their fetches live in a child that only an admin mounts (SKADI-T-0639).
 
 use aurora_leptos::components::{
-    Alert, Button, DetailList, KeyValue, PageRange, Pagination, Select, Table, TextInput, Textarea,
+    Alert, Button, DetailList, KeyValue, PageRange, Pagination, Select, Sparkline, StatTile, Table,
+    TextInput, Textarea,
 };
 use aurora_leptos::tokens::token;
 use leptos::prelude::*;
@@ -131,6 +132,94 @@ pub fn files_query(kind: &str, state: &str, sort: &str, offset: usize) -> String
         q.push_str(&format!("&kind={kind}"));
     }
     q
+}
+
+/// The spans of the trend: `(days, label)`.
+pub const TREND_SPANS: &[(&str, &str)] = &[
+    ("30", "Last 30 days"),
+    ("90", "Last 90 days"),
+    ("365", "Last year"),
+];
+
+/// The trend of one kind over the days the daemon has totals for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KindTrend {
+    pub kind: String,
+    /// The first and the newest day with a row.
+    pub first_day: String,
+    pub last_day: String,
+    /// The newest day's figures.
+    pub size_bytes: i64,
+    pub files: i64,
+    /// One value per day with a row, oldest first.
+    pub size_series: Vec<f64>,
+    /// Pieces per GB of the measured files, for the days that have a
+    /// measurement. Empty until the piece probe has run.
+    pub pieces_series: Vec<f64>,
+}
+
+impl KindTrend {
+    /// The change of the size over the span: `+1.5 GB since 2026-08-28`. No
+    /// text when the span is one day: one point is not a trend.
+    pub fn delta_label(&self) -> String {
+        let (Some(first), Some(last)) = (self.size_series.first(), self.size_series.last()) else {
+            return String::new();
+        };
+        if self.size_series.len() < 2 {
+            return String::new();
+        }
+        let change = (last - first) as i64;
+        let amount = match change {
+            0 => "no change".to_string(),
+            c if c > 0 => format!("+{}", bytes_label(c)),
+            c => format!("−{}", bytes_label(-c)),
+        };
+        format!("{amount} since {}", self.first_day)
+    }
+
+    /// The newest pieces per GB, when there is one.
+    pub fn pieces_now(&self) -> Option<String> {
+        self.pieces_series.last().map(|v| format!("{v:.0}"))
+    }
+}
+
+/// The daily rows as one trend per kind, in the order of [`KIND_FILTERS`],
+/// then any other kind by name.
+pub fn kind_trends(days: &[api::StorageDay]) -> Vec<KindTrend> {
+    let mut kinds: Vec<&str> = Vec::new();
+    for d in days {
+        if !kinds.contains(&d.kind.as_str()) {
+            kinds.push(&d.kind);
+        }
+    }
+    let rank = |k: &str| {
+        KIND_FILTERS
+            .iter()
+            .position(|(v, _)| *v == k)
+            .unwrap_or(usize::MAX)
+    };
+    kinds.sort_by(|a, b| (rank(a), *a).cmp(&(rank(b), *b)));
+    kinds
+        .into_iter()
+        .filter_map(|kind| {
+            let mut rows: Vec<&api::StorageDay> = days.iter().filter(|d| d.kind == kind).collect();
+            rows.sort_by(|a, b| a.day.cmp(&b.day));
+            let (first, last) = (rows.first()?, rows.last()?);
+            Some(KindTrend {
+                kind: kind.to_string(),
+                first_day: first.day.clone(),
+                last_day: last.day.clone(),
+                size_bytes: last.size_bytes,
+                files: last.files,
+                size_series: rows.iter().map(|d| d.size_bytes as f64).collect(),
+                pieces_series: rows
+                    .iter()
+                    .filter(|d| d.measured_bytes > 0)
+                    .map(|d| d.pieces as f64 / (d.measured_bytes as f64 / 1e9))
+                    .collect(),
+            })
+        })
+        .collect()
 }
 
 /// The credential choices of the piece probe: `(value, label)`.
@@ -292,6 +381,8 @@ fn LibraryDetailsPanels() -> impl IntoView {
                 <SweepTable sweeps=s.sweeps.clone() kinds=s.kinds/>
             })}
         </section>
+
+        <TrendPanel/>
 
         <ProbePanel/>
 
@@ -527,6 +618,8 @@ pub fn FileTable(files: Vec<api::StorageFile>) -> impl IntoView {
             } else {
                 "storage-file-row"
             };
+            let open = RwSignal::new(false);
+            let id = f.id.clone();
             view! {
                 <tr class=class>
                     <td class="storage-path mono" data-label="File">
@@ -536,6 +629,13 @@ pub fn FileTable(files: Vec<api::StorageFile>) -> impl IntoView {
                                 {format!("Not found since {} UTC", time_label(Some(at)))}
                             </div>
                         })}
+                        <div class="storage-history">
+                            <Button variant="default" size="xs"
+                                on_click=Callback::new(move |()| open.update(|o| *o = !*o))>
+                                {move || if open.get() { "Hide history" } else { "History" }}
+                            </Button>
+                            {move || open.get().then(|| view! { <FileHistory id=id.clone()/> })}
+                        </div>
                     </td>
                     <td class="nowrap" data-label="Kind">{kind_label(&f.kind)}</td>
                     <td class="nowrap num" data-label="Size">{bytes_label(f.size_bytes)}</td>
@@ -796,4 +896,227 @@ pub fn ProbeFacts(probe: api::StorageProbe) -> impl IntoView {
             </KeyValue>
         </DetailList>
     }
+}
+
+/// How the library changed: a tile per kind with its size now, the change
+/// over the span and a small line of the daily sizes; the same for pieces per
+/// GB once the probe has measured; and the daily figures as a table.
+#[component]
+fn TrendPanel() -> impl IntoView {
+    let history = RwSignal::new(api::StorageHistory::default());
+    let load = ListLoad::new();
+    let span = RwSignal::new(String::from("90"));
+    let fetch = move || {
+        let days = span.get_untracked().parse().unwrap_or(90);
+        spawn_local(async move {
+            if let Some(h) = load.settle(api::library_storage_history(days).await.map_err(|e| e.0))
+            {
+                let _ = history.try_set(h);
+            }
+        });
+    };
+    Effect::new(move |_| {
+        span.track();
+        fetch();
+    });
+    view! {
+        <section class="provider-section trend-panel">
+            <div class="section-head">
+                <div>
+                    <h3>"Change over time"</h3>
+                    <p class="muted">
+                        "One point a day, written when a reading of the library completes."
+                    </p>
+                </div>
+                <div class="page-head-actions">
+                    <Select aria_label="Span" value=span option_pairs=pairs(TREND_SPANS)/>
+                </div>
+            </div>
+            {load.status_n(SkeletonKind::Rows, Some(2), Callback::new(move |()| fetch()))}
+            {move || load.is_loaded().then(|| view! { <TrendTiles days=history.with(|h| h.days.clone())/> })}
+        </section>
+    }
+}
+
+/// The tiles and the table of the trend.
+#[component]
+pub fn TrendTiles(days: Vec<api::StorageDay>) -> impl IntoView {
+    let trends = kind_trends(&days);
+    if trends.is_empty() {
+        return view! {
+            <p class="muted">
+                "No day has totals yet. The first point is written when the first reading of the library completes."
+            </p>
+        }
+        .into_any();
+    }
+    let size_tiles = trends
+        .iter()
+        .map(|t| {
+            let series = t.size_series.clone();
+            let name = kind_label(&t.kind);
+            let spark_label = format!("{name}: size by day, {} to {}", t.first_day, t.last_day);
+            let has_line = series.len() >= 2;
+            view! {
+                <StatTile class:trend-tile=true label=format!("{name} size")
+                    value=Signal::derive({
+                        let v = bytes_label(t.size_bytes);
+                        move || v.clone()
+                    })
+                    sub=format!("{} files", count_label(t.files))
+                    delta=t.delta_label()
+                    spark=Box::new(move || {
+                        if has_line {
+                            // Not from zero: a library grows by a small share of
+                            // itself, and a zero base would draw a flat line.
+                            view! {
+                                <Sparkline values=Signal::derive(move || series.clone()) fluid=true
+                                    height=36.0 zero_base=false label=spark_label/>
+                            }
+                            .into_any()
+                        } else {
+                            view! { <span class="muted">"One day so far."</span> }.into_any()
+                        }
+                    })/>
+            }
+        })
+        .collect_view();
+    let piece_tiles = trends
+        .iter()
+        .filter(|t| !t.pieces_series.is_empty())
+        .map(|t| {
+            let series = t.pieces_series.clone();
+            let name = kind_label(&t.kind);
+            let spark_label = format!("{name}: pieces per GB by day");
+            let has_line = series.len() >= 2;
+            view! {
+                <StatTile class:trend-tile=true label=format!("{name} pieces per GB")
+                    value=Signal::derive({
+                        let v = t.pieces_now().unwrap_or_default();
+                        move || v.clone()
+                    })
+                    sub="of the measured files"
+                    spark=Box::new(move || {
+                        if has_line {
+                            view! {
+                                <Sparkline values=Signal::derive(move || series.clone()) fluid=true
+                                    height=36.0 label=spark_label/>
+                            }
+                            .into_any()
+                        } else {
+                            view! { <span class="muted">"One day so far."</span> }.into_any()
+                        }
+                    })/>
+            }
+        })
+        .collect_view();
+    // The figures behind the lines, newest first: the table view of the
+    // tiles, and where an exact value is read.
+    let mut rows = days;
+    rows.sort_by(|a, b| (&b.day, &a.kind).cmp(&(&a.day, &b.kind)));
+    let table_rows = rows
+        .into_iter()
+        .map(|d| {
+            view! {
+                <tr class="trend-row">
+                    <td class="nowrap mono" data-label="Day (UTC)">{d.day.clone()}</td>
+                    <td data-label="Kind">{kind_label(&d.kind)}</td>
+                    <td class="nowrap num" data-label="Files">{count_label(d.files)}</td>
+                    <td class="nowrap num" data-label="Size">{bytes_label(d.size_bytes)}</td>
+                    <td class="nowrap num" data-label="Gone">{count_label(d.gone)}</td>
+                    <td class="nowrap muted" data-label="Pieces per GB">
+                        {pieces_per_gb_label(d.pieces, d.measured_bytes)}
+                    </td>
+                </tr>
+            }
+        })
+        .collect_view();
+    view! {
+        <div class="metrics-row trend-tiles">{size_tiles}</div>
+        <div class="metrics-row trend-tiles trend-pieces">{piece_tiles}</div>
+        <details class="trend-figures">
+            <summary>"Daily figures"</summary>
+            <Table class:system-table=true class:storage-trend=true>
+                <thead>
+                    <tr>
+                        <th>"Day (UTC)"</th>
+                        <th>"Kind"</th>
+                        <th>"Files"</th>
+                        <th>"Size"</th>
+                        <th>"Gone"</th>
+                        <th>"Pieces per GB"</th>
+                    </tr>
+                </thead>
+                <tbody>{table_rows}</tbody>
+            </Table>
+        </details>
+    }
+    .into_any()
+}
+
+/// One file's history: fetched when the row is opened.
+#[component]
+fn FileHistory(id: String) -> impl IntoView {
+    let samples = RwSignal::new(Vec::<api::StorageSample>::new());
+    let load = ListLoad::new();
+    let fetch = {
+        let id = id.clone();
+        move || {
+            let id = id.clone();
+            spawn_local(async move {
+                if let Some(s) = load.settle(
+                    api::library_storage_file_samples(&id)
+                        .await
+                        .map_err(|e| e.0),
+                ) {
+                    let _ = samples.try_set(s);
+                }
+            });
+        }
+    };
+    let retry = fetch.clone();
+    Effect::new(move |_| fetch());
+    view! {
+        {load.status_n(SkeletonKind::Rows, Some(1), Callback::new(move |()| retry()))}
+        {move || load.is_loaded().then(|| view! { <SampleTable samples=samples.get()/> })}
+    }
+}
+
+/// Each change of a file's size, hard links or pieces, newest first.
+#[component]
+pub fn SampleTable(samples: Vec<api::StorageSample>) -> impl IntoView {
+    if samples.is_empty() {
+        return view! { <p class="muted">"No change is on record for this file."</p> }.into_any();
+    }
+    let rows = samples
+        .into_iter()
+        .rev()
+        .map(|s| {
+            let pieces = s
+                .pieces
+                .map_or_else(|| NOT_MEASURED.to_string(), count_label);
+            view! {
+                <tr class="sample-row">
+                    <td class="nowrap mono muted" data-label="When (UTC)">{time_label(Some(&s.at))}</td>
+                    <td class="nowrap num" data-label="Size">{bytes_label(s.size_bytes)}</td>
+                    <td class="nowrap num" data-label="Links">{count_label(s.links)}</td>
+                    <td class="nowrap muted" data-label="Pieces">{pieces}</td>
+                </tr>
+            }
+        })
+        .collect_view();
+    view! {
+        <Table class:system-table=true class:storage-samples=true>
+            <thead>
+                <tr>
+                    <th>"When (UTC)"</th>
+                    <th>"Size"</th>
+                    <th>"Links"</th>
+                    <th>"Pieces"</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </Table>
+    }
+    .into_any()
 }

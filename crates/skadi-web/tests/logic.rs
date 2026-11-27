@@ -3603,3 +3603,75 @@ fn the_piece_probe_state_reads_in_words() {
         "ssh-ed25519 …J0ZXN0a2V5Ym9keQ"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The storage trend (SKADI-T-0776)
+// ---------------------------------------------------------------------------
+
+fn storage_day(
+    day: &str,
+    kind: &str,
+    size_gb: i64,
+    pieces: i64,
+    measured_gb: i64,
+) -> skadi_web::api::StorageDay {
+    skadi_web::api::StorageDay {
+        day: day.into(),
+        kind: kind.into(),
+        files: 10,
+        size_bytes: size_gb * 1024 * 1024 * 1024,
+        measured_bytes: measured_gb * 1_000_000_000,
+        pieces,
+        gone: 0,
+    }
+}
+
+#[wasm_bindgen_test]
+fn the_daily_rows_become_one_trend_per_kind() {
+    use skadi_web::library_details::kind_trends;
+    // Out of order on purpose: the daemon's order is not relied on.
+    let days = vec![
+        storage_day("2026-11-03", "series", 30, 6000, 20),
+        storage_day("2026-11-01", "series", 20, 0, 0),
+        storage_day("2026-11-02", "series", 25, 9000, 10),
+        storage_day("2026-11-03", "movie", 5, 0, 0),
+        storage_day("2026-11-03", "audiobook", 1, 0, 0),
+    ];
+    let trends = kind_trends(&days);
+    assert_eq!(
+        trends.iter().map(|t| t.kind.as_str()).collect::<Vec<_>>(),
+        vec!["movie", "series", "audiobook"],
+        "the order of the kind filter, not of the alphabet"
+    );
+    let tv = &trends[1];
+    assert_eq!(
+        (tv.first_day.as_str(), tv.last_day.as_str()),
+        ("2026-11-01", "2026-11-03")
+    );
+    assert_eq!(tv.size_series.len(), 3);
+    assert!(tv.size_series[0] < tv.size_series[2], "oldest first");
+    assert_eq!(tv.delta_label(), "+10.0 GB since 2026-11-01");
+    // Pieces per GB only for the days with a measurement: 900, then 300.
+    assert_eq!(tv.pieces_series, vec![900.0, 300.0]);
+    assert_eq!(tv.pieces_now().as_deref(), Some("300"));
+
+    // One day is not a trend: no change is claimed.
+    let movie = &trends[0];
+    assert_eq!(movie.delta_label(), "");
+    assert_eq!(movie.pieces_now(), None);
+}
+
+#[wasm_bindgen_test]
+fn a_trend_says_when_the_library_shrank_or_did_not_change() {
+    use skadi_web::library_details::kind_trends;
+    let shrank = kind_trends(&[
+        storage_day("2026-11-01", "movie", 8, 0, 0),
+        storage_day("2026-11-02", "movie", 6, 0, 0),
+    ]);
+    assert_eq!(shrank[0].delta_label(), "−2.0 GB since 2026-11-01");
+    let same = kind_trends(&[
+        storage_day("2026-11-01", "movie", 8, 0, 0),
+        storage_day("2026-11-02", "movie", 8, 0, 0),
+    ]);
+    assert_eq!(same[0].delta_label(), "no change since 2026-11-01");
+}

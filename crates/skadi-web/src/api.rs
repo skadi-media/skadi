@@ -1695,6 +1695,76 @@ pub async fn library_storage_orphans(
     Ok(resp.json::<StorageOrphansPage>().await?)
 }
 
+/// `GET /library/storage/history` (mirror of skadi-api `StorageHistory`,
+/// SKADI-T-0776): a row per day and kind, oldest first.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageHistory {
+    #[serde(default)]
+    pub since: String,
+    #[serde(default)]
+    pub days: Vec<StorageDay>,
+}
+
+/// What the library held of one kind on one day.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageDay {
+    /// `YYYY-MM-DD` (UTC).
+    pub day: String,
+    pub kind: String,
+    #[serde(default)]
+    pub files: i64,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub measured_bytes: i64,
+    #[serde(default)]
+    pub pieces: i64,
+    #[serde(default)]
+    pub gone: i64,
+}
+
+/// One change of a file's size, hard links or pieces.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSample {
+    pub at: String,
+    #[serde(default)]
+    pub size_bytes: i64,
+    #[serde(default)]
+    pub links: i64,
+    #[serde(default)]
+    pub pieces: Option<i64>,
+}
+
+/// `GET /library/storage/history?days=n` — the daily totals. Admin only.
+pub async fn library_storage_history(days: u32) -> Result<StorageHistory, ApiError> {
+    let resp = get(&format!("{API_BASE}/library/storage/history?days={days}"))?
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!(
+            "library storage history -> HTTP {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json::<StorageHistory>().await?)
+}
+
+/// `GET /library/storage/files/{id}/samples` — one file's history.
+pub async fn library_storage_file_samples(id: &str) -> Result<Vec<StorageSample>, ApiError> {
+    let resp = get(&format!("{API_BASE}/library/storage/files/{id}/samples"))?
+        .send()
+        .await
+        .noted()?;
+    if !resp.ok() {
+        return Err(ApiError(format!("file history -> HTTP {}", resp.status())));
+    }
+    Ok(resp.json::<Vec<StorageSample>>().await?)
+}
+
 /// `GET /storage/probe` (mirror of skadi-api `ProbeDto`, SKADI-T-0775). It
 /// carries no secret: `credential` is only `password` or `key`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]

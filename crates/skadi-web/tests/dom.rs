@@ -2404,3 +2404,144 @@ fn a_cleared_piece_probe_keeps_the_last_failure_as_a_record() {
         "no host key before the first connection: {text}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The storage trend and a file's history (SKADI-T-0776)
+// ---------------------------------------------------------------------------
+
+fn trend_day(
+    day: &str,
+    kind: &str,
+    size_gb: i64,
+    pieces: i64,
+    measured_gb: i64,
+) -> skadi_web::api::StorageDay {
+    skadi_web::api::StorageDay {
+        day: day.into(),
+        kind: kind.into(),
+        files: 1818,
+        size_bytes: size_gb * 1024 * 1024 * 1024,
+        measured_bytes: measured_gb * 1_000_000_000,
+        pieces,
+        gone: 0,
+    }
+}
+
+#[wasm_bindgen_test]
+fn the_trend_shows_a_tile_and_a_line_per_kind_and_the_figures_as_a_table() {
+    use skadi_web::library_details::TrendTiles;
+    let days = vec![
+        trend_day("2026-11-01", "movie", 100, 0, 0),
+        trend_day("2026-11-02", "movie", 110, 0, 0),
+        trend_day("2026-11-01", "series", 300, 0, 0),
+        trend_day("2026-11-02", "series", 300, 30_000, 100),
+    ];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <TrendTiles days=days.clone()/> },
+    );
+    // Two size tiles, each with its line; one pieces tile (TV, one day: no line yet).
+    assert_eq!(count(&host, ".trend-tile"), 3);
+    assert_eq!(count(&host, ".trend-tile svg"), 2);
+    let text = host.text_content().unwrap();
+    assert!(
+        text.contains("Movies size") && text.contains("TV size"),
+        "{text}"
+    );
+    assert!(text.contains("110.0 GB"), "the newest size: {text}");
+    assert!(text.contains("+10.0 GB since 2026-11-01"), "{text}");
+    assert!(text.contains("no change since 2026-11-01"), "{text}");
+    assert!(text.contains("TV pieces per GB"), "{text}");
+    assert!(
+        !text.contains("Movies pieces per GB"),
+        "nothing measured for movies: {text}"
+    );
+    // The line has a name for a screen reader, and the table has every row.
+    // An SVG is an Element, not an HtmlElement: asked for directly.
+    let line = host
+        .query_selector(".trend-tile svg")
+        .unwrap()
+        .expect("the line");
+    let name = line.get_attribute("aria-label").unwrap_or_default();
+    assert!(name.contains("Movies: size by day"), "{name}");
+    assert_eq!(count(&host, "details.trend-figures tbody tr.trend-row"), 4);
+}
+
+#[wasm_bindgen_test]
+fn the_trend_says_so_before_the_first_day() {
+    use skadi_web::library_details::TrendTiles;
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <TrendTiles days=Vec::new()/> },
+    );
+    assert_eq!(count(&host, ".trend-tile"), 0);
+    assert!(
+        host.text_content()
+            .unwrap()
+            .contains("No day has totals yet")
+    );
+}
+
+#[wasm_bindgen_test]
+fn a_files_history_lists_its_changes_newest_first() {
+    use skadi_web::api::StorageSample;
+    use skadi_web::library_details::SampleTable;
+    let samples = vec![
+        StorageSample {
+            at: "2026-11-01T12:00:00+00:00".into(),
+            size_bytes: 1024 * 1024 * 1024,
+            links: 2,
+            pieces: None,
+        },
+        StorageSample {
+            at: "2026-11-20T12:00:00+00:00".into(),
+            size_bytes: 1024 * 1024 * 1024,
+            links: 1,
+            pieces: Some(9059),
+        },
+    ];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <SampleTable samples=samples.clone()/> },
+    );
+    assert_eq!(count(&host, "tr.sample-row"), 2);
+    let first = find(&host, "tr.sample-row").text_content().unwrap();
+    assert!(
+        first.contains("2026-11-20 12:00:00"),
+        "newest first: {first}"
+    );
+    assert!(first.contains("9,059"), "{first}");
+    assert!(host.text_content().unwrap().contains("not measured"));
+}
+
+/// A file's history is asked for when its row is opened, not for every row of
+/// the page.
+#[wasm_bindgen_test]
+fn the_file_list_offers_each_files_history_and_fetches_none_unasked() {
+    use skadi_web::api::StorageFile;
+    use skadi_web::library_details::FileTable;
+    let files = vec![StorageFile {
+        id: "file-1".into(),
+        kind: "movie".into(),
+        path: "/library/movie/A/a.mkv".into(),
+        size_bytes: 1024,
+        links: 1,
+        mtime: "2026-10-01T08:00:00+00:00".into(),
+        ..Default::default()
+    }];
+    let host = host();
+    let _handle = mount_to(
+        host.clone(),
+        move || view! { <FileTable files=files.clone()/> },
+    );
+    assert_eq!(buttons_with_text(&host, "History"), 1);
+    assert_eq!(
+        count(&host, ".storage-history .skeleton"),
+        0,
+        "nothing is fetched yet"
+    );
+    assert_eq!(count(&host, ".storage-history table"), 0);
+}

@@ -35,8 +35,10 @@ const WORKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// (SKADI-T-0764). The pass reads every download row, so it is not per tick.
 const SESSION_RECONCILE_EVERY: Duration = Duration::from_secs(600);
 
+pub mod buffer;
 pub mod egress;
 pub mod seed_policy;
+pub use buffer::Buffer;
 pub use seed_policy::{SeedAction, SeedPolicy, SeedVerdict};
 
 /// Worker configuration, from the environment.
@@ -44,8 +46,15 @@ pub use seed_policy::{SeedAction, SeedPolicy, SeedVerdict};
 pub struct Config {
     /// Where torrents are written (shared with the daemon for hardlink import).
     pub download_dir: PathBuf,
-    /// librqbit session/resume state directory.
+    /// librqbit session/resume state directory. With a buffer set, the state
+    /// lives on the buffer instead ([`Config::session_dir`]); this folder is
+    /// then only read once, to start the buffer's session from it.
     pub state_dir: PathBuf,
+    /// The download buffer (`SKADI_WORKER_BUFFER_DIR`, SKADI-T-0783): new
+    /// downloads download and seed here, and finished files are copied to the
+    /// library volume. `None` (unset or empty): downloads stay on the library
+    /// volume, as before.
+    pub buffer_dir: Option<PathBuf>,
     /// Incoming-peer TCP listen range.
     pub port_range: std::ops::Range<u16>,
     /// The `downloads`-queue database (the same Postgres the daemon uses).
@@ -197,6 +206,7 @@ impl Config {
         Ok(Config {
             download_dir,
             state_dir,
+            buffer_dir: buffer_dir_from_env(),
             port_range: lo..hi,
             database_url,
             worker_id,
@@ -241,6 +251,9 @@ impl Config {
             state_dir: view
                 .get_path("worker.state_dir")?
                 .unwrap_or_else(|| PathBuf::from("/data/downloads/.rqbit-session")),
+            // Read from the worker's own environment, not the shared table: a
+            // folder inside the worker container ([`resolve`](Self::resolve)).
+            buffer_dir: None,
             port_range: view.get_u16("worker.port_lo")?..view.get_u16("worker.port_hi")?,
             database_url,
             worker_id: view.get_string("worker.id")?,
@@ -315,8 +328,32 @@ impl Config {
                 .into_iter()
                 .map(|e| (e.key, e.value)),
         );
-        Ok(Self::from_view(&view, database_url, migrate)?)
+        let mut cfg = Self::from_view(&view, database_url, migrate)?;
+        cfg.buffer_dir = buffer_dir_from_env();
+        Ok(cfg)
     }
+
+    /// The download buffer, when one is set (SKADI-T-0783).
+    #[must_use]
+    pub fn buffer(&self) -> Option<Buffer> {
+        self.buffer_dir
+            .as_ref()
+            .map(|root| Buffer::new(root, &self.download_dir))
+    }
+
+    /// Where librqbit keeps its session state: on the buffer when one is set,
+    /// else [`state_dir`](Self::state_dir).
+    #[must_use]
+    pub fn session_dir(&self) -> PathBuf {
+        self.buffer()
+            .map_or_else(|| self.state_dir.clone(), |b| b.session_dir())
+    }
+}
+
+/// `SKADI_WORKER_BUFFER_DIR`: an env-only worker setting, like
+/// `SKADI_WORKER_DISABLE_DHT`. Unset or empty means no buffer.
+pub fn buffer_dir_from_env() -> Option<PathBuf> {
+    buffer::buffer_root(std::env::var("SKADI_WORKER_BUFFER_DIR").ok().as_deref())
 }
 
 /// `SKADI_DATABASE_URL` (or `_FILE`, with an optional
@@ -469,7 +506,31 @@ pub fn parse_forwarded_port(text: &str) -> Option<u16> {
 /// check, so out-of-band file damage still surfaces.
 pub async fn build_api(cfg: &Config) -> anyhow::Result<Arc<Api>> {
     std::fs::create_dir_all(&cfg.download_dir)?;
-    std::fs::create_dir_all(&cfg.state_dir)?;
+    let session_dir = cfg.session_dir();
+    match cfg.buffer() {
+        Some(buffer) => {
+            std::fs::create_dir_all(buffer.root())?;
+            // The first start with a buffer: carry the old session over, so the
+            // torrents that seed on the library volume are not checked in full.
+            match buffer::seed_session_dir(&session_dir, &cfg.state_dir) {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(
+                    files = n,
+                    from = %cfg.state_dir.display(),
+                    "started the buffer's session state from the old one"
+                ),
+                Err(e) => tracing::warn!(
+                    from = %cfg.state_dir.display(),
+                    "could not copy the old session state to the buffer: {e}"
+                ),
+            }
+            tracing::info!(
+                buffer = %buffer.root().display(),
+                "download buffer on: new downloads download and seed in the buffer"
+            );
+        }
+        None => std::fs::create_dir_all(&session_dir)?,
+    }
     let opts_disable_dht = env_flag("SKADI_WORKER_DISABLE_DHT");
     // A VPN-forwarded port wins over the configured one (SKADI-T-0587): the
     // port is only reachable when something forwards it, and behind a VPN
@@ -485,7 +546,7 @@ pub async fn build_api(cfg: &Config) -> anyhow::Result<Arc<Api>> {
     };
     let opts = SessionOptions {
         persistence: Some(SessionPersistenceConfig::Json {
-            folder: Some(cfg.state_dir.clone()),
+            folder: Some(session_dir.clone()),
         }),
         fastresume: true,
         concurrent_init_limit: Some(CONCURRENT_INIT_LIMIT),
@@ -546,7 +607,7 @@ pub async fn build_api(cfg: &Config) -> anyhow::Result<Arc<Api>> {
         fastresume = true,
         concurrent_init_limit = CONCURRENT_INIT_LIMIT,
         dht = !opts_disable_dht,
-        state_dir = %cfg.state_dir.display(),
+        state_dir = %session_dir.display(),
         "librqbit session up; torrents restored from session persistence"
     );
     Ok(api)
@@ -634,6 +695,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     // startup. This is the first thing the worker does.
     touch_heartbeat_file();
     let api = build_api(&cfg).await?;
+    let buffer = cfg.buffer();
     // The daemon owns the schema (runs migrations); the worker only reads/writes
     // the `downloads` table, so it does NOT migrate in the normal deployment
     // (avoids a concurrent-migrate race against the daemon). In standalone mode
@@ -685,6 +747,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
                         api.clone(),
                         store.clone(),
                         job,
+                        buffer.clone(),
                         cfg.tick_interval,
                         cfg.seed_policy,
                         cfg.metadata_timeout_secs,
@@ -741,7 +804,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         }
         live.apply_ratelimits(&api);
 
-        handle_removals(&api, &store).await;
+        handle_removals(&api, &store, buffer.as_ref()).await;
         // The startup pass again, on a timer (SKADI-T-0764): a torrent that lost
         // its row while the worker ran is dropped here, not at the next restart.
         if last_reconcile.elapsed() >= SESSION_RECONCILE_EVERY {
@@ -772,6 +835,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
                 api.clone(),
                 store.clone(),
                 job,
+                buffer.clone(),
                 cfg.tick_interval,
                 live.seed_policy,
                 live.stall_timeout_secs,
@@ -817,9 +881,17 @@ pub async fn claim_within_cap(
 
 /// Action every `remove_requested` row: tell librqbit to forget (keep data) or
 /// delete (drop data) by info-hash, then mark the row `removed`.
-async fn handle_removals(api: &Arc<Api>, store: &Store) {
+async fn handle_removals(api: &Arc<Api>, store: &Store, buffer: Option<&Buffer>) {
     let pending = match store.list_remove_requested().await {
-        Ok(p) => p,
+        Ok(mut p) => {
+            // A buffer job's folders are the buffer's, not the row's (SKADI-T-0783).
+            if let Some(b) = buffer {
+                for j in &mut p {
+                    b.apply(j);
+                }
+            }
+            p
+        }
         Err(e) => {
             tracing::warn!("list_remove_requested failed: {e}");
             return;
@@ -827,7 +899,14 @@ async fn handle_removals(api: &Arc<Api>, store: &Store) {
     };
     // Read once, only when a delete-data removal needs it for the folder prune.
     let all_jobs = if pending.iter().any(|j| j.delete_data) {
-        store.list_downloads().await.ok()
+        store.list_downloads().await.ok().map(|mut all| {
+            if let Some(b) = buffer {
+                for j in &mut all {
+                    b.apply(j);
+                }
+            }
+            all
+        })
     } else {
         None
     };
@@ -867,7 +946,12 @@ async fn handle_removals(api: &Arc<Api>, store: &Store) {
             }
         }
         match store.mark_removed(&job.id).await {
-            Ok(()) => tracing::info!(job = %job.id, delete_data = job.delete_data, "removed"),
+            Ok(()) => {
+                if let Some(b) = buffer {
+                    b.forget(&job.id);
+                }
+                tracing::info!(job = %job.id, delete_data = job.delete_data, "removed")
+            }
             Err(e) => tracing::warn!(job = %job.id, "mark_removed failed: {e}"),
         }
     }
@@ -1391,6 +1475,7 @@ async fn run_job(
     api: Arc<Api>,
     store: Store,
     job: DownloadJob,
+    buffer: Option<Buffer>,
     tick: Duration,
     policy: SeedPolicy,
     stall_timeout_secs: Option<i64>,
@@ -1419,6 +1504,30 @@ async fn run_job(
         },
         None => policy,
     };
+
+    // With a buffer set, a new job downloads and seeds in the buffer, and a job
+    // that is already a buffer job stays one (SKADI-T-0783). A job that started
+    // on the library volume finishes there.
+    if let Some(b) = buffer.as_ref() {
+        match b.adopt(&mut job) {
+            Ok(true) => {
+                tracing::info!(job = %id, buffer = %b.root().display(), "downloading in the buffer")
+            }
+            Ok(false) => {}
+            Err(e) => {
+                mark_error(
+                    &store,
+                    &id,
+                    &format!(
+                        "cannot record the job on the buffer {}: {e}",
+                        b.root().display()
+                    ),
+                )
+                .await;
+                return;
+            }
+        }
+    }
 
     // Download (and seed) into the job's configured `incomplete_dir`; fall back
     // to the session's default output folder when the job carries none.
@@ -1497,6 +1606,7 @@ async fn run_job(
         store,
         id,
         job,
+        buffer,
         torrent_id,
         info_hash,
         tick,
@@ -1548,12 +1658,16 @@ async fn start_if_paused(api: &Api, torrent_id: TorrentIdOrHash, job: &str, ctx:
 async fn reattach_seed(
     api: Arc<Api>,
     store: Store,
-    job: DownloadJob,
+    mut job: DownloadJob,
+    buffer: Option<Buffer>,
     tick: Duration,
     policy: SeedPolicy,
     metadata_timeout_secs: Option<i64>,
 ) {
     let id = job.id.clone();
+    if let Some(b) = buffer.as_ref() {
+        b.apply(&mut job);
+    }
     let Some(info_hash) = job.info_hash.clone() else {
         return; // can't reconcile a completed row with no resolved hash
     };
@@ -1627,7 +1741,7 @@ async fn reattach_seed(
     );
     // Seeding rows aren't lease-tracked (`lease_secs` unused on the seeding path).
     track(
-        api, store, id, job, torrent_id, info_hash, tick, true, policy, None, 0,
+        api, store, id, job, buffer, torrent_id, info_hash, tick, true, policy, None, 0,
     )
     .await;
 }
@@ -1644,6 +1758,7 @@ async fn track(
     store: Store,
     id: String,
     job: DownloadJob,
+    buffer: Option<Buffer>,
     torrent_id: TorrentIdOrHash,
     info_hash: String,
     tick: Duration,
@@ -1674,11 +1789,19 @@ async fn track(
             Ok(Some(j)) if seeding && j.status == DownloadJobStatus::Completed => Some(j),
             Ok(Some(j)) => {
                 tracing::info!(job = %id, status = ?j.status, "row left tracked state; stop tracking");
-                drop_if_orphaned(&api, &store, Some(&j), torrent_id, &info_hash).await;
+                drop_if_orphaned(
+                    &api,
+                    &store,
+                    buffer.as_ref(),
+                    Some(&j),
+                    torrent_id,
+                    &info_hash,
+                )
+                .await;
                 return;
             }
             Ok(None) => {
-                drop_if_orphaned(&api, &store, None, torrent_id, &info_hash).await;
+                drop_if_orphaned(&api, &store, buffer.as_ref(), None, torrent_id, &info_hash).await;
                 return;
             }
             Err(e) => {
@@ -1713,12 +1836,41 @@ async fn track(
             // report whichever paths the importer should hardlink into the
             // library.
             let incomplete_files = collect_files(&api, torrent_id);
-            let report = place_complete(
-                incomplete_files,
-                job.incomplete_dir.as_deref(),
-                job.complete_dir.as_deref(),
-            )
-            .await;
+            let buffered = buffer.as_ref().is_some_and(|b| b.recorded(&id).is_some());
+            let report = if buffered {
+                // A buffer job (SKADI-T-0783): copy the files to the complete
+                // folder on the library volume before the job reports complete.
+                // The torrent goes on seeding from the buffer copy.
+                let root = buffer
+                    .as_ref()
+                    .map(|b| b.root().to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let complete = job.complete_dir.clone().unwrap_or_default();
+                tracing::info!(job = %id, files = incomplete_files.len(), "copying the finished files to the library");
+                let copy = buffer::copy_to_library(incomplete_files, root, complete);
+                match heartbeat_while(&store, &id, lease_secs, tick, copy).await {
+                    Ok(files) => files,
+                    Err(e) => {
+                        mark_error(
+                            &store,
+                            &id,
+                            &format!(
+                                "copying the finished files to the library failed: {e}; \
+                                 the download stays in the buffer"
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                }
+            } else {
+                place_complete(
+                    incomplete_files,
+                    job.incomplete_dir.as_deref(),
+                    job.complete_dir.as_deref(),
+                )
+                .await
+            };
             match store.mark_complete(&id, &report).await {
                 Ok(()) => {
                     tracing::info!(job = %id, files = report.len(), "download complete; seeding")
@@ -1808,6 +1960,7 @@ async fn track(
 async fn drop_if_orphaned(
     api: &Arc<Api>,
     store: &Store,
+    buffer: Option<&Buffer>,
     row: Option<&DownloadJob>,
     torrent_id: TorrentIdOrHash,
     info_hash: &str,
@@ -1822,7 +1975,14 @@ async fn drop_if_orphaned(
         return;
     }
     let jobs = match store.list_downloads().await {
-        Ok(j) => j,
+        Ok(mut j) => {
+            if let Some(b) = buffer {
+                for job in &mut j {
+                    b.apply(job);
+                }
+            }
+            j
+        }
         Err(e) => {
             // Unknown whether another row shares the torrent: keep it. The timed
             // session reconcile is the backstop.
@@ -1845,7 +2005,11 @@ async fn drop_if_orphaned(
     if action == OrphanAction::Delete
         && let Some(job) = row
     {
-        prune_job_folder(job, &jobs).await;
+        let mut job = job.clone();
+        if let Some(b) = buffer {
+            b.apply(&mut job);
+        }
+        prune_job_folder(&job, &jobs).await;
     }
 }
 
@@ -1892,6 +2056,30 @@ pub fn prune_empty_tree(dir: &std::path::Path) -> bool {
         }
     }
     empty && std::fs::remove_dir(dir).is_ok()
+}
+
+/// Await `fut` while renewing the job's claim lease every `tick`, so a long
+/// copy (or a wait for the copy slot) is not taken for a dead worker
+/// (SKADI-T-0783).
+async fn heartbeat_while<F: std::future::Future>(
+    store: &Store,
+    id: &str,
+    lease_secs: i64,
+    tick: Duration,
+    fut: F,
+) -> F::Output {
+    tokio::pin!(fut);
+    let mut every = tokio::time::interval(tick.max(Duration::from_secs(1)));
+    loop {
+        tokio::select! {
+            out = &mut fut => return out,
+            _ = every.tick() => {
+                if let Err(e) = store.heartbeat(id, lease_secs).await {
+                    tracing::warn!(job = %id, "heartbeat during copy failed: {e}");
+                }
+            }
+        }
+    }
 }
 
 /// Best-effort `mark_error` (logs if the write itself fails).
@@ -2279,6 +2467,7 @@ mod tests {
         Config {
             download_dir: download,
             state_dir: PathBuf::from("/tmp/state"),
+            buffer_dir: None,
             port_range: 16881..16891,
             database_url: "sqlite://./x.db".into(),
             worker_id: "test".into(),

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- A download buffer for the download worker, off by default: with `SKADI_WORKER_BUFFER_DIR` set, new downloads download and seed in that folder and the worker's session state lives there; a finished download is copied to the complete folder on the library volume in one sequential write before it is reported complete. Downloads already on the library volume finish there (SKADI-T-0783).
+
 ## [0.1.17] - 2026-11-27
 
 ### Fixed

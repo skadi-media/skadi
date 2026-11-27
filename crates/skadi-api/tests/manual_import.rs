@@ -228,6 +228,8 @@ async fn a_manual_import_marks_the_film_imported_with_its_path_and_quality() {
     .await;
     assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(body["imported"][0], dest.to_string_lossy().as_ref());
+    // A file placed now is not also listed as already present (SKADI-T-0782).
+    assert_eq!(body["already_present"], serde_json::json!([]), "{body}");
 
     let (file, quality) = imported(&status, "edition-0766").await;
     assert_eq!(file, dest, "the status carries the placed file's path");
@@ -295,4 +297,12 @@ async fn a_manual_import_of_a_file_already_in_place_marks_the_item_imported() {
     .await;
     assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(imported(&status, "book-0766").await.0, dest);
+    // The answer lists the file (SKADI-T-0782): it said `imported: []` and
+    // nothing else, so the caller saw an import that did nothing.
+    assert_eq!(body["imported"], serde_json::json!([]), "{body}");
+    assert_eq!(
+        body["already_present"],
+        serde_json::json!([dest.to_string_lossy()]),
+        "{body}"
+    );
 }

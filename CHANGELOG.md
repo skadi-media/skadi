@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- An import that replaced an episode's or an edition's file deleted that file even when another episode or edition still pointed at it, such as a file of several episodes. That file is now kept, and the import preview no longer lists it as replaced (SKADI-T-0782).
+- A manual import (`POST /downloads/import`) of a file already in place answered `imported: []`, and the Downloads page said "Nothing imported", although the item was recorded. The answer now lists such files under `already_present`, and the page says so (SKADI-T-0782).
+
 ## [0.1.17] - 2026-11-27
 
 ### Fixed

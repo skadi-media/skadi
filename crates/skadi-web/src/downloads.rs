@@ -760,7 +760,7 @@ pub fn import_confirm_message(plan: &ImportPlan) -> Option<String> {
 }
 
 /// What the import did, as one line: `(true, …)` when it placed or replaced
-/// something, `(false, …)` when it imported nothing.
+/// something or found it already in place, `(false, …)` when it did none.
 pub fn import_result(outcome: &ImportOutcome) -> (bool, String) {
     let done = outcome.imported.len();
     let replaced = outcome.replaced.len();
@@ -769,8 +769,9 @@ pub fn import_result(outcome: &ImportOutcome) -> (bool, String) {
         .iter()
         .chain(outcome.failed.iter())
         .collect();
+    let present = outcome.already_present.len();
     let first_reason = refused.first().map(|(_, r)| r.as_str());
-    if done == 0 && replaced == 0 {
+    if done == 0 && replaced == 0 && present == 0 {
         return (
             false,
             match first_reason {
@@ -779,10 +780,19 @@ pub fn import_result(outcome: &ImportOutcome) -> (bool, String) {
             },
         );
     }
-    let mut text = format!("Imported {}", files(done));
-    if replaced > 0 {
-        text.push_str(&format!(", replaced {replaced}"));
-    }
+    let mut text = if done == 0 && replaced == 0 {
+        // Recorded on the item, nothing placed (SKADI-T-0782).
+        format!("Already in the library: {}", files(present))
+    } else {
+        let mut t = format!("Imported {}", files(done));
+        if replaced > 0 {
+            t.push_str(&format!(", replaced {replaced}"));
+        }
+        if present > 0 {
+            t.push_str(&format!(", {present} already in place"));
+        }
+        t
+    };
     if let Some(r) = first_reason {
         text.push_str(&format!("; {} not imported ({r})", refused.len()));
     }
@@ -1035,6 +1045,7 @@ mod tests {
             replaced: vec!["/lib/old.mkv".into()],
             rejected: vec![("/dl/s.mkv".into(), "sample".into())],
             failed: vec![],
+            already_present: vec![],
         };
         assert_eq!(
             import_result(&ok),
@@ -1054,6 +1065,24 @@ mod tests {
         assert_eq!(
             import_result(&ImportOutcome::default()),
             (false, "Nothing imported.".into())
+        );
+        // A file already in place is recorded on the item (SKADI-T-0782).
+        let present = ImportOutcome {
+            already_present: vec!["/lib/a.mkv".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            import_result(&present),
+            (true, "Already in the library: 1 file.".into())
+        );
+        let mixed = ImportOutcome {
+            imported: vec!["/lib/b.mkv".into()],
+            already_present: vec!["/lib/a.mkv".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            import_result(&mixed),
+            (true, "Imported 1 file, 1 already in place.".into())
         );
     }
 

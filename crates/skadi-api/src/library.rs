@@ -1816,6 +1816,10 @@ struct ManualImportResponse {
     rejected: Vec<(String, String)>,
     replaced: Vec<String>,
     failed: Vec<(String, String)>,
+    /// Destinations that already held this item's file (SKADI-T-0782). The
+    /// import records them on the item as it does `imported`, but places
+    /// nothing, so they are listed apart: `imported` keeps meaning "placed now".
+    already_present: Vec<String>,
 }
 
 /// `POST /downloads/import` — scan an operator path and import its files into the
@@ -1924,6 +1928,11 @@ async fn manual_import(
             .failed
             .into_iter()
             .map(|(p, r)| (path_str(p), r))
+            .collect(),
+        already_present: outcome
+            .already_present
+            .into_iter()
+            .map(|f| path_str(f.file.path))
             .collect(),
     }))
 }

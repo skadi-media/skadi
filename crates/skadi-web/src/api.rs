@@ -2769,6 +2769,10 @@ pub struct ImportOutcome {
     pub replaced: Vec<String>,
     #[serde(default)]
     pub failed: Vec<(String, String)>,
+    /// Files that were already in place and are recorded on the item
+    /// (SKADI-T-0782). Absent from an older daemon's answer.
+    #[serde(default)]
+    pub already_present: Vec<String>,
 }
 
 /// POST `body` as JSON to `url` and read a `T` back; a refusal becomes the

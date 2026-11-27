@@ -255,8 +255,20 @@ impl MovieMatcher {
         // Upgrade (SKADI-T-0218): the edition already holds an imported file — the
         // hunter only re-grabs when it's an upgrade, so supersede the old file
         // (possibly at a different path/quality tag) rather than orphaning it.
+        // Not a file another edition still points at (SKADI-T-0782): removing it
+        // would leave that edition pointing at a missing file.
         if let Some(existing) = edition.file.as_ref() {
-            m = m.superseding(vec![existing.path.clone()]);
+            let shared = self.editions.iter().any(|e| {
+                e.id != edition.id && e.file.as_ref().is_some_and(|f| f.path == existing.path)
+            });
+            if !shared {
+                m = m.superseding(vec![existing.path.clone()]);
+            } else if existing.path != m.dest {
+                // Still an upgrade at its own path; only the removal is
+                // dropped. At the shared path itself the default Skip stays,
+                // so the shared file is not overwritten.
+                m = m.superseding(Vec::new());
+            }
         }
         Ok(vec![m])
     }
@@ -636,6 +648,40 @@ mod tests {
             out[0].on_collision,
             skadi_importer::CollisionPolicy::Overwrite,
             "upgrade overwrites if same path"
+        );
+    }
+
+    /// SKADI-T-0782: a file another edition still points at is not superseded.
+    #[test]
+    fn a_file_another_edition_uses_is_not_superseded() {
+        let movie = matrix_movie();
+        let theatrical = theatrical_kind();
+        let extended = extended_kind();
+        let shared = PathBuf::from("/movies/The_Matrix_(1999)_{tmdb-603}/shared_720p.mkv");
+        let mut theatrical_e = edition_for(movie.id, theatrical.id);
+        let mut extended_e = edition_for(movie.id, extended.id);
+        theatrical_e.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        extended_e.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        let matcher = MovieMatcher::new(
+            movie,
+            vec![theatrical_e.clone(), extended_e],
+            vec![theatrical, extended],
+        );
+
+        let parsed = parse("The.Matrix.1999.1080p.BluRay.x264-AMIABLE.mkv");
+        let source = Path::new("/dl/The.Matrix.1999.1080p.BluRay.x264-AMIABLE.mkv");
+        let out = matcher.match_file(&parsed, source, &make_completed());
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].acquirable, theatrical_e.acquirable_ref());
+        assert!(out[0].supersedes.is_empty(), "{:?}", out[0].supersedes);
+        assert_eq!(
+            out[0].on_collision,
+            skadi_importer::CollisionPolicy::Overwrite
         );
     }
 

@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - An import onto a file that was already in place (the same file, or a hard link of it) left a second name `<name>.skadi-incoming` beside it. Library details counted these as files with no item. Such an import now leaves the file as it is and reports it already present (SKADI-T-0781).
+- An import that replaced an episode's or an edition's file deleted that file even when another episode or edition still pointed at it, such as a file of several episodes. That file is now kept, and the import preview no longer lists it as replaced (SKADI-T-0782).
+- A manual import (`POST /downloads/import`) of a file already in place answered `imported: []`, and the Downloads page said "Nothing imported", although the item was recorded. The answer now lists such files under `already_present`, and the page says so (SKADI-T-0782).
 
 ## [0.1.17] - 2026-11-27
 

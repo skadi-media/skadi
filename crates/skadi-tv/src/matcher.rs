@@ -262,12 +262,31 @@ impl EpisodeMatcher {
                 if multi {
                     m = m.with_collision(CollisionPolicy::Overwrite);
                 }
+                // Not a file another episode still points at (SKADI-T-0782): a
+                // multi-episode file, or one read as a range, is the file of
+                // several episodes, and replacing one of them must not delete it
+                // from under the rest.
                 if let Some(existing) = ep.file.as_ref() {
-                    m = m.superseding(vec![existing.path.clone()]);
+                    if !self.held_by_other_episode(&existing.path, &targets) {
+                        m = m.superseding(vec![existing.path.clone()]);
+                    } else if existing.path != dest {
+                        // Still an upgrade at its own path; only the removal
+                        // is dropped. At the shared path itself the default
+                        // Skip stays, so the shared file is not overwritten.
+                        m = m.superseding(Vec::new());
+                    }
                 }
                 m
             })
             .collect())
+    }
+
+    /// Does an episode outside `targets` point at `path`? Those episodes keep
+    /// their file through this import, so it must not be removed.
+    fn held_by_other_episode(&self, path: &Path, targets: &[&Episode]) -> bool {
+        self.episodes.iter().any(|e| {
+            !targets.iter().any(|t| t.id == e.id) && e.file.as_ref().is_some_and(|f| f.path == path)
+        })
     }
 
     /// The download folder's parse, when the download holds exactly one video
@@ -506,6 +525,83 @@ pub(crate) mod tests {
         let refs: Vec<_> = got.iter().map(|x| &x.acquirable).collect();
         assert!(refs.contains(&&e5.acquirable_ref()) && refs.contains(&&e6.acquirable_ref()));
         assert!(got[0].dest.to_string_lossy().contains("S01E05-E06"));
+    }
+
+    /// SKADI-T-0782: E05 and E06 both point at one file. E06's own file must
+    /// not supersede it, because E05 still uses it; an episode alone on its old
+    /// file still supersedes that file.
+    #[test]
+    fn a_file_another_episode_uses_is_not_superseded() {
+        let s = series(crate::SeriesType::Standard);
+        let shared = PathBuf::from("/tv/Game_of_Thrones/S01E05-E06.mkv");
+        let own = PathBuf::from("/tv/Game_of_Thrones/S01E07-old.mkv");
+        let (mut e5, mut e6, mut e7) = (ep(&s, 1, 5), ep(&s, 1, 6), ep(&s, 1, 7));
+        e5.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        e6.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        e7.file = Some(skadi_core::FileRef { path: own.clone() });
+        let m = EpisodeMatcher::new(s, vec![e5, e6.clone(), e7.clone()]);
+
+        let got = match_one(&m, "Game.of.Thrones.S01E06.1080p.WEB.mkv");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].acquirable, e6.acquirable_ref());
+        assert!(got[0].supersedes.is_empty(), "{:?}", got[0].supersedes);
+        assert_eq!(
+            got[0].on_collision,
+            CollisionPolicy::Overwrite,
+            "still an upgrade at its own path"
+        );
+
+        let got = match_one(&m, "Game.of.Thrones.S01E07.1080p.WEB.mkv");
+        assert_eq!(got[0].acquirable, e7.acquirable_ref());
+        assert_eq!(got[0].supersedes, vec![own]);
+
+        // A file that holds both episodes replaces the shared file: no other
+        // episode uses it.
+        let got = match_one(&m, "Game.of.Thrones.S01E05E06.2160p.WEB.mkv");
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|x| x.supersedes == vec![shared.clone()]));
+    }
+
+    /// SKADI-T-0782, on disk: two episodes on one file; importing one
+    /// episode's own file keeps the shared file, and the preview does not list
+    /// it as replaced.
+    #[tokio::test]
+    async fn replacing_one_episode_keeps_the_file_the_other_still_uses() {
+        use skadi_importer::{DefaultImporter, Importer};
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = series(crate::SeriesType::Standard);
+        s.root_folder = RootFolder::new(tmp.path().join("tv").to_string_lossy().as_ref());
+        let shared = tmp.path().join("tv/Game_of_Thrones/S01E05-E06.mkv");
+        std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
+        std::fs::write(&shared, b"episodes five and six").unwrap();
+        let src = tmp.path().join("dl/Game.of.Thrones.S01E06.1080p.WEB.mkv");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, b"episode six").unwrap();
+        let (mut e5, mut e6) = (ep(&s, 1, 5), ep(&s, 1, 6));
+        e5.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        e6.file = Some(skadi_core::FileRef {
+            path: shared.clone(),
+        });
+        let importer = DefaultImporter::new(EpisodeMatcher::new(s, vec![e5, e6]));
+        let mut c = completed();
+        c.files = vec![src.clone()];
+
+        let plan = importer.preview(c.clone()).await.unwrap();
+        assert_eq!(plan.would_import.len(), 1);
+        assert!(plan.would_replace.is_empty(), "{:?}", plan.would_replace);
+
+        let outcome = importer.import(c).await.unwrap();
+        assert_eq!(outcome.imported.len(), 1, "{outcome:?}");
+        assert!(outcome.replaced.is_empty(), "{:?}", outcome.replaced);
+        assert_ne!(outcome.imported[0].file.path, shared);
+        assert!(outcome.imported[0].file.path.exists());
+        assert_eq!(std::fs::read(&shared).unwrap(), b"episodes five and six");
     }
 
     #[test]

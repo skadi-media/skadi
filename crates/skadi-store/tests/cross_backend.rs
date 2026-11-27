@@ -282,7 +282,7 @@ const GB: i64 = 1_000_000_000;
 /// The behavioral contract of the library storage tables on every backend
 /// (SKADI-T-0772).
 async fn assert_library_files_contract(store: &Store, label: &str) {
-    // A new file: a row, its first sample, nothing measured.
+    // A new file: a row, nothing measured.
     let a = store
         .record_library_file_stat(&stat("movie", "/lib/movie/a.mkv", 10 * GB, 1), t(1))
         .await
@@ -291,26 +291,16 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
     assert_eq!((a.pieces, a.pieces_at, a.checksum_at), (None, None, None));
     assert_eq!(a.stat_at, t(1), "{label}: timestamps round-trip");
     assert_eq!(a.mtime, t(0), "{label}");
-    assert_eq!(
-        store.library_file_samples(&a.id).await.unwrap().len(),
-        1,
-        "{label}: a new file gets its first sample"
-    );
 
-    // The same facts again: the row is read again, no sample.
+    // The same facts again: the same row.
     let again = store
         .record_library_file_stat(&stat("movie", "/lib/movie/a.mkv", 10 * GB, 1), t(2))
         .await
         .unwrap();
     assert_eq!(again.id, a.id, "{label}: the path is the key");
     assert_eq!(again.stat_at, t(2), "{label}: stat_at moves");
-    assert_eq!(
-        store.library_file_samples(&a.id).await.unwrap().len(),
-        1,
-        "{label}: nothing changed, no sample"
-    );
 
-    // Pieces and a checksum arrive; a changed piece count is one sample.
+    // Pieces and a checksum arrive.
     assert!(
         store
             .record_library_file_pieces(&a.id, 5000, t(3))
@@ -329,10 +319,6 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
             .await
             .unwrap()
     );
-    let samples = store.library_file_samples(&a.id).await.unwrap();
-    assert_eq!(samples.len(), 2, "{label}: same count again, no sample");
-    assert_eq!(samples[1].pieces, Some(5000), "{label}");
-    assert_eq!(samples[1].at, t(3), "{label}: oldest first");
     assert!(
         !store
             .record_library_file_pieces("no-such-id", 1, t(4))
@@ -341,8 +327,8 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: unknown file"
     );
 
-    // Only the link count changes: one sample, and the measurements stay
-    // current, because the content did not change.
+    // Only the link count changes: the measurements stay current, because
+    // the content did not change.
     let linked = store
         .record_library_file_stat(&stat("movie", "/lib/movie/a.mkv", 10 * GB, 2), t(5))
         .await
@@ -353,16 +339,10 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         "{label}: pieces still current"
     );
     assert_eq!(linked.checksum_at, Some(t(3)), "{label}");
-    let samples = store.library_file_samples(&a.id).await.unwrap();
-    assert_eq!(samples.len(), 3, "{label}: changed links, one sample");
-    assert_eq!(
-        (samples[2].links, samples[2].pieces),
-        (2, Some(5000)),
-        "{label}: the sample carries the last known pieces"
-    );
+    assert_eq!(linked.links, 2, "{label}: the row holds the new link count");
 
-    // The size changes: one sample, and both measurements are queued again
-    // with the last known values kept.
+    // The size changes: both measurements are queued again with the last
+    // known values kept.
     let grown = store
         .record_library_file_stat(&stat("movie", "/lib/movie/a.mkv", 12 * GB, 2), t(6))
         .await
@@ -376,11 +356,6 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
         (grown.checksum.as_deref(), grown.checksum_at),
         (Some("abc"), None),
         "{label}"
-    );
-    assert_eq!(
-        store.library_file_samples(&a.id).await.unwrap().len(),
-        4,
-        "{label}: changed size, one sample"
     );
 
     // An mtime finer than a microsecond does not read back as a change.
@@ -723,10 +698,6 @@ async fn assert_library_files_contract(store: &Store, label: &str) {
     assert_eq!(
         store.library_file_by_path("/lib/tv/c.mkv").await.unwrap(),
         None
-    );
-    assert!(
-        store.library_file_samples(c).await.unwrap().is_empty(),
-        "{label}: the history goes with the row"
     );
 }
 

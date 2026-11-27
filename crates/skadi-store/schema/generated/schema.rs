@@ -252,20 +252,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    use diesel::sql_types::{BigInt, Nullable, Text};
-    use diesel_dualdb::sql_types::Timestamp;
-
-    library_file_samples (id) {
-        id -> Text,
-        file_id -> Text,
-        at -> Timestamp,
-        size_bytes -> BigInt,
-        links -> BigInt,
-        pieces -> Nullable<BigInt>,
-    }
-}
-
-diesel::table! {
     use diesel::sql_types::{BigInt, Text};
     use diesel_dualdb::sql_types::Timestamp;
 

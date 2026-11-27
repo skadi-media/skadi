@@ -10,12 +10,6 @@ CREATE INDEX library_files_pieces_at_idx ON library_files(pieces_at);
 
 CREATE INDEX library_files_checksum_at_idx ON library_files(checksum_at);
 
-CREATE TABLE library_file_samples (id TEXT PRIMARY KEY NOT NULL, file_id TEXT NOT NULL, at TIMESTAMPTZ NOT NULL, size_bytes BIGINT NOT NULL, links BIGINT NOT NULL, pieces BIGINT);
-
-CREATE INDEX library_file_samples_file_idx ON library_file_samples(file_id,at);
-
-CREATE INDEX library_file_samples_at_idx ON library_file_samples(at);
-
 CREATE TABLE library_orphans (path TEXT PRIMARY KEY NOT NULL, size_bytes BIGINT NOT NULL, mtime TIMESTAMPTZ NOT NULL, first_seen TIMESTAMPTZ NOT NULL, last_seen TIMESTAMPTZ NOT NULL);
 
 CREATE TABLE storage_probe_state (probe TEXT PRIMARY KEY NOT NULL, state TEXT NOT NULL, failed_at TIMESTAMPTZ, reason TEXT, cleared_at TIMESTAMPTZ, cleared_by TEXT);

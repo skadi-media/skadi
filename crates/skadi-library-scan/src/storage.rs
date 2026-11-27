@@ -794,15 +794,12 @@ mod tests {
         let row = lib.store.library_file_by_path(&key).await.unwrap().unwrap();
         assert_eq!(row.size_bytes, 1000);
 
-        // Nothing changed: the same row, no new sample.
+        // Nothing changed: the same row.
         lib.sweep().await;
-        assert_eq!(
-            lib.store.library_file_samples(&row.id).await.unwrap().len(),
-            1
-        );
+        let same = lib.store.library_file_by_path(&key).await.unwrap().unwrap();
+        assert_eq!((same.id.as_str(), same.size_bytes), (row.id.as_str(), 1000));
 
-        // A hard link appears and the file grows: the row follows, with one
-        // sample.
+        // A hard link appears and the file grows: the row follows.
         std::fs::hard_link(&path, lib.root.join("A (2020)/link.mkv")).unwrap();
         lib.hold("ed-1", &lib.root.join("A (2020)/link.mkv"));
         std::fs::write(&path, vec![1u8; 3000]).unwrap();
@@ -810,10 +807,6 @@ mod tests {
         let after = lib.store.library_file_by_path(&key).await.unwrap().unwrap();
         assert_eq!(after.id, row.id);
         assert_eq!((after.size_bytes, after.links), (3000, 2));
-        assert_eq!(
-            lib.store.library_file_samples(&row.id).await.unwrap().len(),
-            2
-        );
     }
 
     #[tokio::test]

@@ -21,7 +21,7 @@ use diesel_dualdb::types::Timestamp;
 
 use skadi_core::Result;
 
-use crate::schema::{library_file_samples, library_files, library_orphans, storage_probe_state};
+use crate::schema::{library_files, library_orphans, storage_probe_state};
 use crate::{Store, db_err};
 
 /// The storage facts of one library file.
@@ -68,16 +68,6 @@ pub struct LibraryFileStat {
     pub disk_bytes: i64,
     pub links: i64,
     pub mtime: DateTime<Utc>,
-}
-
-/// One point of a file's history.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LibraryFileSample {
-    pub file_id: String,
-    pub at: DateTime<Utc>,
-    pub size_bytes: i64,
-    pub links: i64,
-    pub pieces: Option<i64>,
 }
 
 /// A file under the library root that no record points at.
@@ -178,15 +168,14 @@ pub struct StorageProbeStatus {
     pub cleared_by: Option<String>,
 }
 
-/// The storage facts of the library's files, their history and the orphans.
+/// The storage facts of the library's files, and the orphans.
 #[async_trait]
 pub trait LibraryFileRepo: Send + Sync {
     /// Write what one `stat` gave, keyed by path, at `at`.
     ///
-    /// A new path gets a row and its first sample. A known path is updated; a
-    /// sample is written only when the size or the link count changed. The file
-    /// is on disk, so `gone_at` is cleared, and an orphan row of the same path
-    /// is removed: a record claims the file now.
+    /// A new path gets a row. A known path is updated. The file is on disk, so
+    /// `gone_at` is cleared, and an orphan row of the same path is removed: a
+    /// record claims the file now.
     ///
     /// When the size, the modification time or the identity changed, the piece
     /// count and the checksum are no longer current: `pieces_at` and
@@ -197,8 +186,7 @@ pub trait LibraryFileRepo: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<LibraryFile>;
 
-    /// Write a measured piece count. A sample is written when the count differs
-    /// from the last known one. `false` = no such file.
+    /// Write a measured piece count. `false` = no such file.
     async fn record_library_file_pieces(
         &self,
         id: &str,
@@ -220,9 +208,6 @@ pub trait LibraryFileRepo: Send + Sync {
 
     /// One file by its path.
     async fn library_file_by_path(&self, path: &str) -> Result<Option<LibraryFile>>;
-
-    /// A file's history, oldest first.
-    async fn library_file_samples(&self, file_id: &str) -> Result<Vec<LibraryFileSample>>;
 
     /// The files with the most pieces per GB, worst first; equal values in
     /// path order. Only files on disk with a current piece count and a size.
@@ -343,17 +328,6 @@ impl From<FileRow> for LibraryFile {
 }
 
 #[derive(Queryable, Selectable, Insertable)]
-#[diesel(table_name = library_file_samples)]
-struct SampleRow {
-    id: String,
-    file_id: String,
-    at: Timestamp,
-    size_bytes: i64,
-    links: i64,
-    pieces: Option<i64>,
-}
-
-#[derive(Queryable, Selectable, Insertable)]
 #[diesel(table_name = library_orphans)]
 struct OrphanRow {
     path: String,
@@ -393,26 +367,6 @@ impl From<ProbeRow> for StorageProbeStatus {
     }
 }
 
-fn insert_sample(
-    conn: &mut crate::DualConnection,
-    file_id: &str,
-    at: DateTime<Utc>,
-    size_bytes: i64,
-    links: i64,
-    pieces: Option<i64>,
-) -> QueryResult<usize> {
-    diesel::insert_into(library_file_samples::table)
-        .values(SampleRow {
-            id: uuid::Uuid::new_v4().to_string(),
-            file_id: file_id.to_string(),
-            at: Timestamp(at),
-            size_bytes,
-            links,
-            pieces,
-        })
-        .execute(conn)
-}
-
 fn files(rows: QueryResult<Vec<FileRow>>) -> Result<Vec<LibraryFile>> {
     Ok(rows
         .map_err(db_err)?
@@ -436,7 +390,7 @@ impl LibraryFileRepo for Store {
                 .unwrap_or(stat.mtime);
         self.with_conn(move |conn| {
             // Read, then insert or update, in one transaction: the path is the
-            // key, and the sample depends on what the row held before.
+            // key, and what goes stale depends on what the row held before.
             conn.transaction(|conn| {
                 let old: Option<FileRow> = library_files::table
                     .filter(library_files::path.eq(&stat.path))
@@ -466,7 +420,6 @@ impl LibraryFileRepo for Store {
                                 gone_at: None,
                             })
                             .execute(conn)?;
-                        insert_sample(conn, &id, at, stat.size_bytes, stat.links, None)?;
                         id
                     }
                     Some(old) => {
@@ -497,16 +450,6 @@ impl LibraryFileRepo for Store {
                                 ))
                                 .execute(conn)?;
                         }
-                        if old.size_bytes != stat.size_bytes || old.links != stat.links {
-                            insert_sample(
-                                conn,
-                                &old.id,
-                                at,
-                                stat.size_bytes,
-                                stat.links,
-                                old.pieces,
-                            )?;
-                        }
                         old.id
                     }
                 };
@@ -531,27 +474,14 @@ impl LibraryFileRepo for Store {
     ) -> Result<bool> {
         let id = id.to_string();
         self.with_conn(move |conn| {
-            conn.transaction(|conn| {
-                let old: Option<FileRow> = library_files::table
-                    .filter(library_files::id.eq(&id))
-                    .select(FileRow::as_select())
-                    .first(conn)
-                    .optional()?;
-                let Some(old) = old else {
-                    return Ok(false);
-                };
-                diesel::update(library_files::table.filter(library_files::id.eq(&id)))
-                    .set((
-                        library_files::pieces.eq(Some(pieces)),
-                        library_files::pieces_at.eq(Some(Timestamp(at))),
-                    ))
-                    .execute(conn)?;
-                if old.pieces != Some(pieces) {
-                    insert_sample(conn, &id, at, old.size_bytes, old.links, Some(pieces))?;
-                }
-                QueryResult::Ok(true)
-            })
-            .map_err(db_err)
+            let n = diesel::update(library_files::table.filter(library_files::id.eq(&id)))
+                .set((
+                    library_files::pieces.eq(Some(pieces)),
+                    library_files::pieces_at.eq(Some(Timestamp(at))),
+                ))
+                .execute(conn)
+                .map_err(db_err)?;
+            Ok(n > 0)
         })
         .await
     }
@@ -608,32 +538,6 @@ impl LibraryFileRepo for Store {
                 .optional()
                 .map_err(db_err)?;
             Ok(row.map(LibraryFile::from))
-        })
-        .await
-    }
-
-    async fn library_file_samples(&self, file_id: &str) -> Result<Vec<LibraryFileSample>> {
-        let file_id = file_id.to_string();
-        self.with_conn(move |conn| {
-            let rows: Vec<SampleRow> = library_file_samples::table
-                .filter(library_file_samples::file_id.eq(&file_id))
-                .order((
-                    library_file_samples::at.asc(),
-                    library_file_samples::id.asc(),
-                ))
-                .select(SampleRow::as_select())
-                .load(conn)
-                .map_err(db_err)?;
-            Ok(rows
-                .into_iter()
-                .map(|r| LibraryFileSample {
-                    file_id: r.file_id,
-                    at: r.at.0,
-                    size_bytes: r.size_bytes,
-                    links: r.links,
-                    pieces: r.pieces,
-                })
-                .collect())
         })
         .await
     }
@@ -957,16 +861,10 @@ impl LibraryFileRepo for Store {
     async fn delete_library_file(&self, id: &str) -> Result<bool> {
         let id = id.to_string();
         self.with_conn(move |conn| {
-            conn.transaction(|conn| {
-                diesel::delete(
-                    library_file_samples::table.filter(library_file_samples::file_id.eq(&id)),
-                )
-                .execute(conn)?;
-                let n = diesel::delete(library_files::table.filter(library_files::id.eq(&id)))
-                    .execute(conn)?;
-                QueryResult::Ok(n > 0)
-            })
-            .map_err(db_err)
+            let n = diesel::delete(library_files::table.filter(library_files::id.eq(&id)))
+                .execute(conn)
+                .map_err(db_err)?;
+            Ok(n > 0)
         })
         .await
     }

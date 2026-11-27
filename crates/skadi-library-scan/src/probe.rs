@@ -19,6 +19,7 @@
 //! never logged: [`ProbeCredential`] has a `Debug` that prints no secret, and
 //! every error text is built here from fixed words and the host's own output.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -60,6 +61,10 @@ pub const TICK: Duration = Duration::from_secs(5 * 60);
 const START_DELAY: Duration = Duration::from_secs(2 * 60);
 /// Longest one step of the SSH conversation may take.
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
+/// The longest one count may take. The count of a large file in very many
+/// pieces takes over a minute on a busy host, and prints nothing until it
+/// ends (SKADI-T-0780).
+pub const COUNT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// This many failures in a row that could have passed by themselves (the host
 /// did not answer) become a recorded failure.
 pub const TRANSIENT_LIMIT: u32 = 5;
@@ -227,6 +232,9 @@ pub enum ProbeError {
     Missing,
     /// It may pass by itself: the host did not answer, the connection broke.
     Transient(String),
+    /// The count of this file took longer than the limit. The host is well;
+    /// the file is left aside.
+    Slow,
     /// It will not pass by itself. The text is shown to the operator.
     Permanent(String),
 }
@@ -355,7 +363,26 @@ pub fn parse_answer(exit: Option<u32>, output: &str) -> std::result::Result<i64,
 }
 
 /// The real connector: SSH with `russh`.
-pub struct SshConnector;
+pub struct SshConnector {
+    /// The longest one count may take.
+    count_timeout: Duration,
+}
+
+impl Default for SshConnector {
+    fn default() -> Self {
+        Self {
+            count_timeout: COUNT_TIMEOUT,
+        }
+    }
+}
+
+impl SshConnector {
+    /// Another limit for one count. Tests only.
+    #[must_use]
+    pub fn with_count_timeout(count_timeout: Duration) -> Self {
+        Self { count_timeout }
+    }
+}
 
 struct HostKeyCheck {
     pinned: Option<String>,
@@ -411,7 +438,9 @@ impl Connector for SshConnector {
             seen: Arc::clone(&seen),
         };
         let config = Arc::new(russh::client::Config {
-            inactivity_timeout: Some(STEP_TIMEOUT * 2),
+            // Above the count limit: a count says nothing until it ends, and
+            // a connection closed for silence would cut it (SKADI-T-0780).
+            inactivity_timeout: Some(self.count_timeout + STEP_TIMEOUT),
             ..Default::default()
         });
         let addr = (settings.host.clone(), settings.port);
@@ -461,12 +490,19 @@ impl Connector for SshConnector {
                 settings.user
             )));
         }
-        Ok((Box::new(SshCounter { handle }), shown))
+        Ok((
+            Box::new(SshCounter {
+                handle,
+                count_timeout: self.count_timeout,
+            }),
+            shown,
+        ))
     }
 }
 
 struct SshCounter {
     handle: russh::client::Handle<HostKeyCheck>,
+    count_timeout: Duration,
 }
 
 #[async_trait]
@@ -495,8 +531,11 @@ impl PieceCounter for SshCounter {
                 }
             }
         };
-        if tokio::time::timeout(STEP_TIMEOUT * 4, read).await.is_err() {
-            return Err(ProbeError::Transient("the count took too long".into()));
+        if tokio::time::timeout(self.count_timeout, read)
+            .await
+            .is_err()
+        {
+            return Err(ProbeError::Slow);
         }
         parse_answer(exit, &String::from_utf8_lossy(&output))
     }
@@ -531,12 +570,15 @@ pub struct PieceProbeWorker {
     transient: AtomicU32,
     /// Files in a row the mount has and the host does not.
     missing: AtomicU32,
+    /// Files whose count passed the limit, by id. They are left aside until
+    /// the daemon starts again, so one file does not hold the others back.
+    slow: std::sync::Mutex<HashSet<String>>,
 }
 
 impl PieceProbeWorker {
     #[must_use]
     pub fn new(store: Store) -> Self {
-        Self::with_connector(store, Arc::new(SshConnector))
+        Self::with_connector(store, Arc::new(SshConnector::default()))
     }
 
     #[must_use]
@@ -548,6 +590,7 @@ impl PieceProbeWorker {
             start_delay: START_DELAY,
             transient: AtomicU32::new(0),
             missing: AtomicU32::new(0),
+            slow: std::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -594,10 +637,15 @@ impl PieceProbeWorker {
         now: DateTime<Utc>,
     ) -> Result<Vec<LibraryFile>> {
         let want = batch_size(settings.per_hour, self.tick);
+        // The files left aside are first in the queue: ask for that many more
+        // and take them out.
+        let aside = self.slow.lock().map(|s| s.clone()).unwrap_or_default();
         let mut files = self
             .store
-            .library_files_awaiting_pieces(want as i64)
+            .library_files_awaiting_pieces((want + aside.len()) as i64)
             .await?;
+        files.retain(|f| !aside.contains(&f.id));
+        files.truncate(want);
         if files.len() < want && settings.remeasure_days > 0 {
             let cutoff = now - chrono::Duration::days(i64::from(settings.remeasure_days));
             let old = self
@@ -644,7 +692,9 @@ impl PieceProbeWorker {
             Ok(open) => open,
             Err(ProbeError::Permanent(why)) => return self.fail(why).await,
             Err(ProbeError::Transient(why)) => return self.transient(why).await,
-            Err(ProbeError::Missing) => return self.transient("no such host".into()).await,
+            Err(ProbeError::Missing | ProbeError::Slow) => {
+                return self.transient("no such host".into()).await;
+            }
         };
         if settings.pinned.is_none() {
             // The first connection: trust this key from now on.
@@ -657,10 +707,15 @@ impl PieceProbeWorker {
             }
             tracing::info!("piece probe: pinned the storage host's key");
         }
-        self.transient.store(0, Ordering::Relaxed);
 
+        let started = tokio::time::Instant::now();
         let mut measured = 0;
         for file in files {
+            // A tick that has used its time takes no new file: slow counts
+            // lower the pace, they do not pile up (SKADI-T-0780).
+            if measured > 0 && started.elapsed() >= self.tick {
+                break;
+            }
             let Some(host_path) = settings.host_path(Path::new(&file.path)) else {
                 return self
                     .fail(format!(
@@ -671,6 +726,9 @@ impl PieceProbeWorker {
             };
             match counter.count(&host_path).await {
                 Ok(pieces) => {
+                    // Only a count that worked ends a row of failures. A good
+                    // login does not: a count can break after it each time.
+                    self.transient.store(0, Ordering::Relaxed);
                     self.missing.store(0, Ordering::Relaxed);
                     match self
                         .store
@@ -702,6 +760,19 @@ impl PieceProbeWorker {
                     }
                 }
                 Err(ProbeError::Permanent(why)) => return self.fail(why).await,
+                Err(ProbeError::Slow) => {
+                    tracing::warn!(
+                        path = %file.path,
+                        limit_secs = COUNT_TIMEOUT.as_secs(),
+                        "piece probe: the count took too long; the file is left aside until the daemon starts again"
+                    );
+                    if let Ok(mut slow) = self.slow.lock() {
+                        slow.insert(file.id.clone());
+                    }
+                    // The count may still run on the host: end the tick so a
+                    // second one does not start beside it.
+                    return Tick::Measured(measured);
+                }
                 Err(ProbeError::Transient(why)) => {
                     let tick = self.transient(why).await;
                     return if measured > 0 && !matches!(tick, Tick::Failed(_)) {

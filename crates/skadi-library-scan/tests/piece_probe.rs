@@ -23,12 +23,20 @@ const PASSWORD: &str = "correct-horse-battery";
 /// What the host answers to one command: its output and exit status.
 type Answer = Arc<dyn Fn(&str) -> (String, u32) + Send + Sync>;
 
+/// How long the host works on one command before it answers.
+type Delay = Arc<dyn Fn(&str) -> Duration + Send + Sync>;
+
+/// An exit status that means: close the channel and say nothing, as a host
+/// does when the connection breaks in the middle of a count.
+const HANG_UP: u32 = u32::MAX;
+
 #[derive(Clone)]
 struct Host {
     password: String,
     /// The public key that may log in, in OpenSSH form.
     key: Option<String>,
     answer: Answer,
+    delay: Delay,
     connections: Arc<AtomicUsize>,
     commands: Arc<Mutex<Vec<String>>>,
 }
@@ -83,8 +91,16 @@ impl russh::server::Handler for Host {
     ) -> Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).into_owned();
         let (out, code) = (self.answer)(&command);
+        let delay = (self.delay)(&command);
         self.commands.lock().unwrap().push(command);
         session.channel_success(channel)?;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        if code == HANG_UP {
+            session.close(channel)?;
+            return Ok(());
+        }
         session.data(channel, out.into_bytes())?;
         session.exit_status_request(channel, code)?;
         session.eof(channel)?;
@@ -127,12 +143,18 @@ impl Rig {
     /// the probe on and set up for it, and `files` library files that wait
     /// for a count.
     async fn new(answer: Answer, key: Option<String>, files: usize) -> Self {
+        Self::with_delay(answer, key, files, Arc::new(|_| Duration::ZERO)).await
+    }
+
+    /// The same, with a host that takes `delay` to answer a command.
+    async fn with_delay(answer: Answer, key: Option<String>, files: usize, delay: Delay) -> Self {
         let connections = Arc::new(AtomicUsize::new(0));
         let commands = Arc::new(Mutex::new(Vec::new()));
         let port = start_host(Host {
             password: PASSWORD.into(),
             key,
             answer,
+            delay,
             connections: Arc::clone(&connections),
             commands: Arc::clone(&commands),
         })
@@ -195,6 +217,14 @@ impl Rig {
 
     fn worker(&self) -> PieceProbeWorker {
         PieceProbeWorker::new(self.store.clone())
+    }
+
+    /// A worker whose counts may take no longer than `limit`.
+    fn worker_with_count_limit(&self, limit: Duration) -> PieceProbeWorker {
+        PieceProbeWorker::with_connector(
+            self.store.clone(),
+            Arc::new(probe::SshConnector::with_count_timeout(limit)),
+        )
     }
 
     async fn set(&self, key: &str, value: &str) {
@@ -456,6 +486,83 @@ async fn a_host_that_does_not_answer_is_tried_again_and_then_recorded() {
     };
     assert!(reason.contains("did not answer"), "{reason}");
     assert_eq!(rig.state().await.unwrap().state, ProbeState::Failed);
+}
+
+#[tokio::test]
+async fn a_count_that_answers_late_but_within_the_limit_is_stored() {
+    let rig = Rig::with_delay(
+        pieces(97_468),
+        None,
+        1,
+        Arc::new(|_| Duration::from_millis(400)),
+    )
+    .await;
+    let worker = rig.worker_with_count_limit(Duration::from_secs(20));
+    assert_eq!(worker.tick_once().await, Tick::Measured(1));
+    assert_eq!(rig.measured().await, vec![97_468]);
+}
+
+#[tokio::test]
+async fn a_count_over_the_limit_leaves_the_file_aside_and_the_next_tick_goes_on() {
+    // The first file in the queue is the slow one (SKADI-T-0780).
+    let rig = Rig::with_delay(
+        pieces(7),
+        None,
+        3,
+        Arc::new(|command| {
+            if command.contains("film 00.mkv") {
+                Duration::from_secs(5)
+            } else {
+                Duration::ZERO
+            }
+        }),
+    )
+    .await;
+    let worker = rig.worker_with_count_limit(Duration::from_millis(300));
+    assert_eq!(
+        worker.tick_once().await,
+        Tick::Measured(0),
+        "the slow count ends the tick"
+    );
+    assert_eq!(rig.state().await, None, "a slow file is not a failure");
+    assert_eq!(
+        worker.tick_once().await,
+        Tick::Measured(2),
+        "the other files are measured"
+    );
+    assert_eq!(rig.measured().await, vec![7, 7]);
+    let asked = rig.commands.lock().unwrap().clone();
+    assert_eq!(
+        asked.iter().filter(|c| c.contains("film 00.mkv")).count(),
+        1,
+        "the slow file is not asked for again"
+    );
+    assert_eq!(
+        worker.tick_once().await,
+        Tick::Idle,
+        "only the slow file waits"
+    );
+}
+
+#[tokio::test]
+async fn counts_that_break_after_a_good_login_are_recorded_as_a_failure() {
+    // Each connection opens well and the count gets no answer. Before
+    // SKADI-T-0780 the good login ended the row, so this never stopped.
+    let rig = Rig::new(Arc::new(|_| (String::new(), HANG_UP)), None, 1).await;
+    let worker = rig.worker();
+    for attempt in 1..TRANSIENT_LIMIT {
+        assert!(
+            matches!(worker.tick_once().await, Tick::Retrying(_)),
+            "attempt {attempt} is tried again"
+        );
+        assert_eq!(rig.state().await, None, "no failure is recorded yet");
+    }
+    let Tick::Failed(reason) = worker.tick_once().await else {
+        panic!("the last broken count in a row is a recorded failure");
+    };
+    assert!(reason.contains("did not answer"), "{reason}");
+    assert_eq!(rig.state().await.unwrap().state, ProbeState::Failed);
+    assert_eq!(rig.connections(), TRANSIENT_LIMIT as usize);
 }
 
 #[tokio::test]

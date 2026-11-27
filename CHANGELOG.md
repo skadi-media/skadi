@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-11-26
+
 ### Added
 - A piece probe, off by default: Skadi can ask the storage host over SSH how many pieces each library file is in, which the mount cannot say. Set `storage.probe.host`, `.user` and `.path_map` in Settings → Library, store a private key or a password in Settings → Storage, then turn `storage.probe.pieces.enabled` on. It measures at most 120 files an hour, only reads, and needs `filefrag` or `python3` on the host. The host's key is kept at the first connection and a different key is refused. When the probe cannot work (login refused, key changed, no tool, wrong path map) it stops, a health check shows the reason, and it stays off until an admin clears it (SKADI-T-0775).
 - Settings has a "Library details" page for the admin: files, size, space on disk, hard-linked files and gone files by kind; the free space of the library disk; when each kind was last read and whether a reading runs now; the list of every file, sorted and filtered by the daemon one page at a time; and the media files in the library folders that no item holds. Piece counts and checksums read "not measured" until their collectors exist (SKADI-T-0774).

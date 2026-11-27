@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- An import onto a file that was already in place (the same file, or a hard link of it) left a second name `<name>.skadi-incoming` beside it. Library details counted these as files with no item. Such an import now leaves the file as it is and reports it already present (SKADI-T-0781).
+
 ## [0.1.17] - 2026-11-27
 
 ### Fixed

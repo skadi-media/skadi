@@ -810,14 +810,16 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
             for m in matches {
                 // Read-only facts for this destination (existence + free space).
                 let dest = m.dest.clone();
+                let src = source.clone();
                 let reserve = self.min_free_bytes;
                 let need = src_size.unwrap_or(0);
-                let (exists, available) =
-                    tokio::task::spawn_blocking(move || (dest.exists(), available_space(&dest)))
-                        .await
-                        .map_err(|e| {
-                            AppError::Internal(format!("preview-probe task panicked: {e}"))
-                        })?;
+                let (exists, same_file, available) = tokio::task::spawn_blocking(move || {
+                    let exists = dest.exists();
+                    let same = exists && same_inode(&src, &dest).unwrap_or(false);
+                    (exists, same, available_space(&dest))
+                })
+                .await
+                .map_err(|e| AppError::Internal(format!("preview-probe task panicked: {e}")))?;
 
                 if let SpaceVerdict::Insufficient { need, available } =
                     space_check(need, available, reserve)
@@ -828,6 +830,13 @@ impl<M: AcquirableMatcher> Importer for DefaultImporter<M> {
                             "insufficient free space: need {need} bytes, {available} available"
                         ),
                     ));
+                    continue;
+                }
+                // The destination already is this file: `import` leaves it as it
+                // is and reports it present (SKADI-T-0781), unless the policy
+                // refuses any occupied destination.
+                if same_file && m.on_collision != CollisionPolicy::Error {
+                    plan.already_present.push(m.dest);
                     continue;
                 }
                 match collision_decision(exists, m.on_collision) {
@@ -1437,7 +1446,8 @@ pub enum Placement {
     Placed,
     /// The file replaced an existing destination (overwrite policy, SKADI-T-0218).
     Replaced,
-    /// An existing destination was left untouched (skip policy).
+    /// An existing destination was left untouched: the skip policy, or the
+    /// destination already is the source file (SKADI-T-0781).
     Skipped,
 }
 
@@ -1457,6 +1467,14 @@ pub fn place_with_collision(
         CollisionDecision::Error => Err(AppError::Validation(format!(
             "destination already exists: {dest:?}"
         ))),
+        // `src` already is `dest` (the same path, or a hard link of it): there is
+        // nothing to replace (SKADI-T-0781). Staging would hard-link the file to
+        // `<dest>.skadi-incoming`, and `rename` of one name of an inode over
+        // another name of the same inode does nothing and succeeds, so the
+        // staging name stayed behind.
+        CollisionDecision::Place if exists && same_inode(src, dest).unwrap_or(false) => {
+            Ok(Placement::Skipped)
+        }
         CollisionDecision::Place if exists => {
             // Atomic replace (SKADI-T-0220): stage the new file beside `dest` then
             // rename over it. The existing file is only gone once the new one is
@@ -2303,6 +2321,71 @@ mod tests {
         );
         // No staging artifacts left behind.
         assert!(!dest.with_extension("skadi-incoming").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// SKADI-T-0781: a replace whose source is a hard link of the destination
+    /// left `<dest>.skadi-incoming` behind, because `rename` between two names
+    /// of one inode does nothing.
+    #[cfg(unix)]
+    #[test]
+    fn replace_with_a_hard_link_of_dest_leaves_no_staging_name() {
+        let dir = unique_dir("same-inode");
+        let dest = dir.join("lib/Movie.mkv");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"the film").unwrap();
+        let src = dir.join("downloads/Movie.2020.mkv");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::hard_link(&dest, &src).unwrap();
+
+        let placed = place_with_collision(&src, &dest, CollisionPolicy::Overwrite, true).unwrap();
+
+        assert_eq!(placed, Placement::Skipped, "the file is already in place");
+        assert!(!dest.with_extension("skadi-incoming").exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the film");
+        assert!(src.exists(), "the source is kept");
+
+        // The same path as source and destination, too.
+        let placed = place_with_collision(&dest, &dest, CollisionPolicy::Overwrite, true).unwrap();
+        assert_eq!(placed, Placement::Skipped);
+        assert!(!dest.with_extension("skadi-incoming").exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the film");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// SKADI-T-0781, end to end: importing a hard link of the library file onto
+    /// itself reports it present, leaves one name, and the preview agrees.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_onto_the_same_file_reports_present_and_leaves_no_staging_name() {
+        let dir = unique_dir("same-inode-import");
+        let dest = dir.join("lib/Movie.mkv");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"the film").unwrap();
+        let src = dir.join("downloads/Movie.2020.mkv");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::hard_link(&dest, &src).unwrap();
+
+        let importer = DefaultImporter::new(ToDest {
+            dest: dest.clone(),
+            on_collision: CollisionPolicy::Overwrite,
+        });
+        let plan = importer
+            .preview(completed(vec![src.clone()]))
+            .await
+            .unwrap();
+        assert!(plan.would_replace.is_empty(), "{:?}", plan.would_replace);
+        assert!(plan.would_import.is_empty());
+        assert_eq!(plan.already_present, vec![dest.clone()]);
+
+        let outcome = importer.import(completed(vec![src.clone()])).await.unwrap();
+        assert!(outcome.imported.is_empty());
+        assert!(outcome.replaced.is_empty());
+        assert_eq!(outcome.already_present.len(), 1);
+        assert!(!dest.with_extension("skadi-incoming").exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the film");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The piece probe measured nothing when the first file in its queue was a large file in very many pieces: the count of such a file takes over a minute, the connection was closed after 60 seconds of silence, and the same file was tried again at every tick with no failure recorded. A count may now take 10 minutes; a file over that is left aside until the daemon starts again and the probe goes on with the next; counts that break five times in a row stop the probe with the reason, as the failure rule says; and a tick that has used its five minutes takes no new file (SKADI-T-0780).
+
 ## [0.1.16] - 2026-11-26
 
 ### Added

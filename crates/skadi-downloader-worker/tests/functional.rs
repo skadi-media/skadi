@@ -107,6 +107,7 @@ async fn picks_up_and_downloads_from_magnet_url_and_watch_folder() {
     let cfg = Config {
         download_dir: dl.clone(),
         state_dir: base.join("state"),
+        buffer_dir: None,
         port_range: 27881..27891,
         database_url: db_url.clone(),
         worker_id: "fn-worker".into(),
@@ -212,6 +213,7 @@ async fn seed_time_limit_stops_seeding_after_completion() {
     let cfg = Config {
         download_dir: dl.clone(),
         state_dir: base.join("state"),
+        buffer_dir: None,
         port_range: 28881..28891,
         database_url: db_url.clone(),
         worker_id: "seed-fn".into(),
@@ -286,6 +288,7 @@ async fn tracker_drops_a_torrent_whose_row_is_already_removed() {
     let cfg = Config {
         download_dir: dl.clone(),
         state_dir: base.join("state"),
+        buffer_dir: None,
         port_range: 29881..29891,
         database_url: db_url.clone(),
         worker_id: "orphan-fn".into(),

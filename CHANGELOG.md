@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- A download buffer for the download worker, off by default: with `SKADI_WORKER_BUFFER_DIR` set, new downloads download and seed in that folder and the worker's session state lives there; a finished download is copied to the complete folder on the library volume in one sequential write before it is reported complete. Downloads already on the library volume finish there (SKADI-T-0783).
+
 ### Fixed
 - An import onto a file that was already in place (the same file, or a hard link of it) left a second name `<name>.skadi-incoming` beside it. Library details counted these as files with no item. Such an import now leaves the file as it is and reports it already present (SKADI-T-0781).
 - An import that replaced an episode's or an edition's file deleted that file even when another episode or edition still pointed at it, such as a file of several episodes. That file is now kept, and the import preview no longer lists it as replaced (SKADI-T-0782).

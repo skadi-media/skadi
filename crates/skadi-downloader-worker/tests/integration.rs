@@ -26,6 +26,7 @@ async fn downloads_via_worker_api() {
     let cfg = Config {
         download_dir: tmp.join("dl"),
         state_dir: tmp.join("state"),
+        buffer_dir: None,
         port_range: 26881..26891,
         database_url: skadi_store::DEFAULT_DATABASE_URL.to_string(),
         worker_id: "it-worker".to_string(),
@@ -107,6 +108,7 @@ async fn worker_db_queue_claim_track_remove() {
     let cfg = Config {
         download_dir: tmp.join("dl"),
         state_dir: tmp.join("state"),
+        buffer_dir: None,
         port_range: 26901..26911,
         database_url: db_url.clone(),
         worker_id: "it-worker".into(),

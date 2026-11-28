@@ -41,6 +41,13 @@ pub enum DownloadJobStatus {
     /// stall timeout (SKADI-T-0213). Still actively tracked — distinct from `Error`
     /// — and flips back to `Downloading` when transfer resumes.
     Stalled,
+    /// Held by the worker because the download can never fit in its download
+    /// buffer (SKADI-T-0784): bigger than the buffer's size cap, or than the
+    /// buffer with every seed evicted. `error` says why, with the sizes and the
+    /// limits. Like `Paused`, it is held and not failed: nothing is blocklisted,
+    /// and [`resume`](DownloadJobRepo::resume) puts it back in the queue to be
+    /// tried again under the limits of that time.
+    BufferTooSmall,
     Completed,
     /// Finished downloading and **stopped seeding** because a seed-ratio/seed-time
     /// limit was reached (SKADI-T-0210). Terminal: the data is kept but the worker
@@ -60,6 +67,7 @@ impl DownloadJobStatus {
             DownloadJobStatus::Downloading => "downloading",
             DownloadJobStatus::Paused => "paused",
             DownloadJobStatus::Stalled => "stalled",
+            DownloadJobStatus::BufferTooSmall => "buffer_too_small",
             DownloadJobStatus::Completed => "completed",
             DownloadJobStatus::Seeded => "seeded",
             DownloadJobStatus::Error => "error",
@@ -75,6 +83,7 @@ impl DownloadJobStatus {
             "downloading" => DownloadJobStatus::Downloading,
             "paused" => DownloadJobStatus::Paused,
             "stalled" => DownloadJobStatus::Stalled,
+            "buffer_too_small" => DownloadJobStatus::BufferTooSmall,
             "completed" => DownloadJobStatus::Completed,
             "seeded" => DownloadJobStatus::Seeded,
             "error" => DownloadJobStatus::Error,
@@ -323,8 +332,14 @@ pub trait DownloadJobRepo: Send + Sync {
     /// Pause an active (`queued`/`downloading`) job → `paused` (SKADI-T-0168). The
     /// worker pauses librqbit and stops claiming it until resumed.
     async fn request_pause(&self, id: &str) -> Result<()>;
-    /// Resume a `paused` job → `queued` so the worker re-claims and re-tracks it.
+    /// Resume a `paused` or `buffer_too_small` job → `queued` so the worker
+    /// re-claims and re-tracks it. Clears `error`: a held job's reason is gone
+    /// once a person retries it (SKADI-T-0784).
     async fn resume(&self, id: &str) -> Result<()>;
+    /// Hold a claimed job as `buffer_too_small` with `reason` (SKADI-T-0784): the
+    /// worker found it can never fit in its download buffer. Clears the claim.
+    /// Only a `downloading` or `stalled` row moves; a missing row is a no-op.
+    async fn mark_buffer_too_small(&self, id: &str, reason: &str) -> Result<()>;
     /// Reset every `downloading` row back to `queued` — called once at worker
     /// startup so jobs orphaned by a previous worker instance get re-claimed and
     /// re-tracked (SKADI-T-0168). Returns how many were reset.
@@ -569,6 +584,7 @@ impl DownloadJobRepo for Store {
                     DownloadJobStatus::Queued.as_str(),
                     DownloadJobStatus::Downloading.as_str(),
                     DownloadJobStatus::Paused.as_str(),
+                    DownloadJobStatus::BufferTooSmall.as_str(),
                 ]))
                 .order(downloads::created_at.asc())
                 .select(downloads::id)
@@ -879,6 +895,7 @@ impl DownloadJobRepo for Store {
                 DownloadJobStatus::Queued.as_str(),
                 DownloadJobStatus::Downloading.as_str(),
                 DownloadJobStatus::Paused.as_str(),
+                DownloadJobStatus::BufferTooSmall.as_str(),
                 DownloadJobStatus::Completed.as_str(),
             ];
             match hash {
@@ -938,14 +955,41 @@ impl DownloadJobRepo for Store {
     async fn resume(&self, id: &str) -> Result<()> {
         let id = id.to_string();
         self.with_conn(move |conn| {
-            diesel::update(
-                downloads::table
-                    .find(&id)
-                    .filter(downloads::status.eq(DownloadJobStatus::Paused.as_str())),
-            )
+            diesel::update(downloads::table.find(&id).filter(downloads::status.eq_any([
+                DownloadJobStatus::Paused.as_str(),
+                DownloadJobStatus::BufferTooSmall.as_str(),
+            ])))
             .set((
                 downloads::status.eq(DownloadJobStatus::Queued.as_str()),
                 downloads::worker_id.eq(None::<String>),
+                downloads::error.eq(None::<String>),
+                downloads::updated_at.eq(Timestamp(Utc::now())),
+            ))
+            .execute(conn)
+            .map_err(db_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn mark_buffer_too_small(&self, id: &str, reason: &str) -> Result<()> {
+        let id = id.to_string();
+        let reason = reason.to_string();
+        self.with_conn(move |conn| {
+            diesel::update(downloads::table.find(&id).filter(downloads::status.eq_any([
+                DownloadJobStatus::Downloading.as_str(),
+                DownloadJobStatus::Stalled.as_str(),
+            ])))
+            .set((
+                downloads::status.eq(DownloadJobStatus::BufferTooSmall.as_str()),
+                downloads::error.eq(Some(reason)),
+                downloads::worker_id.eq(None::<String>),
+                downloads::lease_expires_at.eq(None::<Timestamp>),
+                downloads::stalled_at.eq(None::<Timestamp>),
+                downloads::client_state.eq(None::<String>),
+                downloads::down_speed_bps.eq(None::<i64>),
+                downloads::up_speed_bps.eq(None::<i64>),
+                downloads::eta_seconds.eq(None::<i64>),
                 downloads::updated_at.eq(Timestamp(Utc::now())),
             ))
             .execute(conn)
@@ -1382,6 +1426,54 @@ mod tests {
         assert_eq!(
             store.get_download(&job.id).await.unwrap().unwrap().status,
             DownloadJobStatus::Queued
+        );
+    }
+
+    /// SKADI-T-0784: a job too big for the buffer is held with its reason, is
+    /// still the active job of its item, can be removed, and a resume clears the
+    /// hold and the reason.
+    #[tokio::test]
+    async fn a_job_too_big_for_the_buffer_is_held_and_a_resume_clears_it() {
+        let store = temp_store().await;
+        let job = store.enqueue(&req("big", "magnet:?x")).await.unwrap();
+        store.claim_next("w").await.unwrap().unwrap();
+        store
+            .mark_buffer_too_small(&job.id, "150 GB, the cap is 100 GB")
+            .await
+            .unwrap();
+        let held = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(held.status, DownloadJobStatus::BufferTooSmall);
+        assert_eq!(held.error.as_deref(), Some("150 GB, the cap is 100 GB"));
+        assert_eq!(held.worker_id, None);
+        assert_eq!(
+            DownloadJobStatus::parse(held.status.as_str()).unwrap(),
+            DownloadJobStatus::BufferTooSmall
+        );
+        // Not claimed again while held.
+        assert!(store.claim_next("w").await.unwrap().is_none());
+        // A second enqueue for the item returns the held job, not a duplicate.
+        let again = store.enqueue(&req("big", "magnet:?x")).await.unwrap();
+        assert_eq!(again.id, job.id);
+
+        store.resume(&job.id).await.unwrap();
+        let back = store.get_download(&job.id).await.unwrap().unwrap();
+        assert_eq!(back.status, DownloadJobStatus::Queued);
+        assert_eq!(back.error, None, "a retry clears the reason");
+
+        // Only a claimed row is held; a queued one is left alone.
+        store.mark_buffer_too_small(&job.id, "x").await.unwrap();
+        assert_eq!(
+            store.get_download(&job.id).await.unwrap().unwrap().status,
+            DownloadJobStatus::Queued
+        );
+
+        // A held job can be removed.
+        store.claim_next("w").await.unwrap().unwrap();
+        store.mark_buffer_too_small(&job.id, "x").await.unwrap();
+        store.request_remove(&job.id, false).await.unwrap();
+        assert_eq!(
+            store.get_download(&job.id).await.unwrap().unwrap().status,
+            DownloadJobStatus::RemoveRequested
         );
     }
 

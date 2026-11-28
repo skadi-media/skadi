@@ -55,6 +55,10 @@ pub struct Config {
     /// library volume. `None` (unset or empty): downloads stay on the library
     /// volume, as before.
     pub buffer_dir: Option<PathBuf>,
+    /// The buffer's size cap and free-space floor (SKADI-T-0784), from
+    /// `SKADI_WORKER_BUFFER_MAX_GB` (default 100) and
+    /// `SKADI_WORKER_BUFFER_MIN_FREE_GB` (default 20). Unused with no buffer.
+    pub buffer_limits: buffer::Limits,
     /// Incoming-peer TCP listen range.
     pub port_range: std::ops::Range<u16>,
     /// The `downloads`-queue database (the same Postgres the daemon uses).
@@ -207,6 +211,7 @@ impl Config {
             download_dir,
             state_dir,
             buffer_dir: buffer_dir_from_env(),
+            buffer_limits: buffer_limits_from_env(),
             port_range: lo..hi,
             database_url,
             worker_id,
@@ -254,6 +259,7 @@ impl Config {
             // Read from the worker's own environment, not the shared table: a
             // folder inside the worker container ([`resolve`](Self::resolve)).
             buffer_dir: None,
+            buffer_limits: buffer::Limits::default(),
             port_range: view.get_u16("worker.port_lo")?..view.get_u16("worker.port_hi")?,
             database_url,
             worker_id: view.get_string("worker.id")?,
@@ -330,6 +336,7 @@ impl Config {
         );
         let mut cfg = Self::from_view(&view, database_url, migrate)?;
         cfg.buffer_dir = buffer_dir_from_env();
+        cfg.buffer_limits = buffer_limits_from_env();
         Ok(cfg)
     }
 
@@ -338,7 +345,7 @@ impl Config {
     pub fn buffer(&self) -> Option<Buffer> {
         self.buffer_dir
             .as_ref()
-            .map(|root| Buffer::new(root, &self.download_dir))
+            .map(|root| Buffer::new(root, &self.download_dir).with_limits(self.buffer_limits))
     }
 
     /// Where librqbit keeps its session state: on the buffer when one is set,
@@ -352,6 +359,16 @@ impl Config {
 
 /// `SKADI_WORKER_BUFFER_DIR`: an env-only worker setting, like
 /// `SKADI_WORKER_DISABLE_DHT`. Unset or empty means no buffer.
+pub fn buffer_limits_from_env() -> buffer::Limits {
+    buffer::Limits::from_settings(
+        std::env::var("SKADI_WORKER_BUFFER_MAX_GB").ok().as_deref(),
+        std::env::var("SKADI_WORKER_BUFFER_MIN_FREE_GB")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// `SKADI_WORKER_BUFFER_DIR`, env only.
 pub fn buffer_dir_from_env() -> Option<PathBuf> {
     buffer::buffer_root(std::env::var("SKADI_WORKER_BUFFER_DIR").ok().as_deref())
 }
@@ -763,6 +780,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     // The egress IP the heartbeat carries (SKADI-T-0683): asked of gluetun on
     // loopback, at most once a minute (see `egress`).
     let mut egress = egress::EgressProbe::from_env();
+    if let Some(b) = buffer.as_ref() {
+        log_buffer_status(&store, b).await;
+    }
     let mut last_reconcile = std::time::Instant::now();
     loop {
         // Liveness heartbeat (SKADI-T-0288): upsert our last-seen every tick,
@@ -809,6 +829,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         // its row while the worker ran is dropped here, not at the next restart.
         if last_reconcile.elapsed() >= SESSION_RECONCILE_EVERY {
             reconcile_session(&api, &store).await;
+            if let Some(b) = buffer.as_ref() {
+                log_buffer_status(&store, b).await;
+            }
             last_reconcile = std::time::Instant::now();
         }
         handle_pauses(&api, &store).await;
@@ -898,7 +921,7 @@ async fn handle_removals(api: &Arc<Api>, store: &Store, buffer: Option<&Buffer>)
         }
     };
     // Read once, only when a delete-data removal needs it for the folder prune.
-    let all_jobs = if pending.iter().any(|j| j.delete_data) {
+    let all_jobs = if pending.iter().any(|j| j.delete_data) || buffer.is_some() {
         store.list_downloads().await.ok().map(|mut all| {
             if let Some(b) = buffer {
                 for j in &mut all {
@@ -923,6 +946,16 @@ async fn handle_removals(api: &Arc<Api>, store: &Store, buffer: Option<&Buffer>)
                 // Already gone / unknown is fine — still mark it removed.
                 tracing::warn!(job = %job.id, "librqbit remove action failed (continuing): {e}");
             }
+        }
+        // A finished buffer job removed with its files kept: the kept files are
+        // the library copy, so the buffer copy goes (SKADI-T-0784). An
+        // unfinished one keeps its partial data for a re-acquire.
+        if !job.delete_data
+            && !job.files.is_empty()
+            && let Some(b) = buffer.filter(|b| b.recorded(&job.id).is_some())
+            && let Some(all) = all_jobs.as_deref()
+        {
+            delete_buffer_copy_of(b, &job, all).await;
         }
         // librqbit only knows the incomplete tree it downloaded into; the finished
         // files it mirrored into `complete_dir` on completion are hardlinks it has
@@ -1508,9 +1541,13 @@ async fn run_job(
     // With a buffer set, a new job downloads and seeds in the buffer, and a job
     // that is already a buffer job stays one (SKADI-T-0783). A job that started
     // on the library volume finishes there.
+    let mut needs_room = false;
     if let Some(b) = buffer.as_ref() {
         match b.adopt(&mut job) {
             Ok(true) => {
+                // Not yet given room (SKADI-T-0784): the torrent is added paused,
+                // to learn its size, and starts only once it fits.
+                needs_room = !b.is_admitted(&id);
                 tracing::info!(job = %id, buffer = %b.root().display(), "downloading in the buffer")
             }
             Ok(false) => {}
@@ -1540,6 +1577,7 @@ async fn run_job(
         output_folder: job_output_folder(&job),
         overwrite: true,
         preferred_id: Some(next_torrent_id()),
+        paused: needs_room,
         ..Default::default()
     });
 
@@ -1596,6 +1634,15 @@ async fn run_job(
             return;
         }
     };
+    if needs_room
+        && let Some(b) = buffer.as_ref()
+        && !wait_for_room(
+            &api, &store, b, &job, torrent_id, &info_hash, tick, lease_secs,
+        )
+        .await
+    {
+        return;
+    }
     // Ensure the torrent is live: a resumed job (or a re-add of a paused one) may
     // still be paused in librqbit. (SKADI-T-0168)
     start_if_paused(&api, torrent_id, &id, "").await;
@@ -1616,6 +1663,216 @@ async fn run_job(
         lease_secs,
     )
     .await;
+}
+
+/// One room check at a time over the worker, so two new downloads cannot both
+/// take the same room (SKADI-T-0784).
+static ROOM_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The buffer jobs and the buffer's free space, for a room check or a status
+/// line. `None` when the rows cannot be read.
+async fn buffer_view(store: &Store, buffer: &Buffer) -> Option<(Vec<DownloadJob>, u64)> {
+    let mut jobs = match store.list_downloads().await {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::warn!("list_downloads (buffer room) failed: {e}");
+            return None;
+        }
+    };
+    for j in &mut jobs {
+        buffer.apply(j);
+    }
+    let root = buffer.root().to_path_buf();
+    let free = tokio::task::spawn_blocking(move || buffer::free_space(&root))
+        .await
+        .ok()
+        .and_then(|r| {
+            r.map_err(|e| tracing::warn!("free space of the buffer unknown: {e}"))
+                .ok()
+        })
+        .unwrap_or(0);
+    Some((jobs, free))
+}
+
+/// Log the buffer's use and limits (SKADI-T-0784: the worker's status is its
+/// log for now).
+async fn log_buffer_status(store: &Store, buffer: &Buffer) {
+    if let Some((jobs, free)) = buffer_view(store, buffer).await {
+        let held = buffer::held_jobs(buffer, &jobs);
+        tracing::info!(
+            buffer = %buffer.root().display(),
+            "{}",
+            buffer::status_line(&buffer::usage(&held, free), buffer.limits())
+        );
+    }
+}
+
+/// Hold a new buffer download, added paused, until it fits in the buffer
+/// (SKADI-T-0784), evicting the oldest seeding copies when that makes room.
+/// Returns `true` once it may start. A download that can never fit is dropped
+/// from the session and its row held as `buffer_too_small` with the reason;
+/// a row that leaves `downloading` while it waits ends the wait. Both give
+/// `false`. While it waits the row stays `downloading` with client state
+/// `initializing`, which the daemon reports as queued: no stall clock runs.
+#[allow(clippy::too_many_arguments)]
+async fn wait_for_room(
+    api: &Arc<Api>,
+    store: &Store,
+    buffer: &Buffer,
+    job: &DownloadJob,
+    torrent_id: TorrentIdOrHash,
+    info_hash: &str,
+    tick: Duration,
+    lease_secs: i64,
+) -> bool {
+    let id = job.id.as_str();
+    let size = api.api_stats_v1(torrent_id).map_or(0, |s| s.total_bytes);
+    // The hash and the size on the row; the client state stays `initializing`.
+    let _ = store
+        .update_progress(
+            id,
+            &DownloadProgress {
+                progress_bytes: 0,
+                total_bytes: size as i64,
+                info_hash: Some(info_hash.to_string()),
+                client_state: Some("initializing".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+    let mut last_reason = String::new();
+    let mut last_logged = std::time::Instant::now();
+    loop {
+        if let Err(e) = store.heartbeat(id, lease_secs).await {
+            tracing::warn!(job = %id, "heartbeat (waiting for buffer room) failed: {e}");
+        }
+        match store.get_download(id).await {
+            Ok(Some(j)) if j.status == DownloadJobStatus::Downloading => {}
+            Ok(row) => {
+                tracing::info!(job = %id, status = ?row.as_ref().map(|j| j.status), "row left downloading while waiting for buffer room");
+                drop_if_orphaned(
+                    api,
+                    store,
+                    Some(buffer),
+                    row.as_ref(),
+                    torrent_id,
+                    info_hash,
+                )
+                .await;
+                return false;
+            }
+            Err(e) => tracing::warn!(job = %id, "get_download (buffer room) failed: {e}"),
+        }
+        let turn = ROOM_LOCK.lock().await;
+        let Some((jobs, free)) = buffer_view(store, buffer).await else {
+            drop(turn);
+            tokio::time::sleep(tick.max(Duration::from_secs(1))).await;
+            continue;
+        };
+        let held = buffer::held_jobs(buffer, &jobs);
+        match buffer::check_room(size, &held, free, buffer.limits()) {
+            buffer::Room::Start { evict } => {
+                for victim in &evict {
+                    if let Some(v) = jobs.iter().find(|j| &j.id == victim) {
+                        evict_seed(
+                            api,
+                            store,
+                            buffer,
+                            v,
+                            &jobs,
+                            "to make room for a new download",
+                        )
+                        .await;
+                    }
+                }
+                if let Err(e) = buffer.admit(id) {
+                    tracing::warn!(job = %id, "could not record the buffer room: {e}");
+                }
+                drop(turn);
+                tracing::info!(job = %id, size = %buffer::gb(size), evicted = evict.len(), "room in the buffer; starting");
+                log_buffer_status(store, buffer).await;
+                return true;
+            }
+            buffer::Room::Never { reason } => {
+                drop(turn);
+                tracing::warn!(job = %id, size = %buffer::gb(size), "{reason}");
+                // Nothing of it is downloaded: drop it from the session and its
+                // empty folder, then hold the row with the reason.
+                let _ = api.api_torrent_action_delete(torrent_id).await;
+                prune_job_folder(job, &jobs).await;
+                if let Err(e) = store.mark_buffer_too_small(id, &reason).await {
+                    tracing::warn!(job = %id, "mark_buffer_too_small failed: {e}");
+                }
+                return false;
+            }
+            buffer::Room::Wait { reason } => {
+                drop(turn);
+                if reason != last_reason || last_logged.elapsed() >= SESSION_RECONCILE_EVERY {
+                    tracing::info!(job = %id, "{reason}");
+                    last_reason = reason;
+                    last_logged = std::time::Instant::now();
+                }
+            }
+        }
+        tokio::time::sleep(tick.max(Duration::from_secs(1))).await;
+    }
+}
+
+/// Stop seeding a buffer job and delete its buffer copy (SKADI-T-0784): at its
+/// seed limit, or evicted to make room. The library copy stays: only the job's
+/// own folder below the buffer is deleted, and not while another live job uses
+/// the same folder. `job` is passed through [`Buffer::apply`]. Marks the row
+/// `seeded` when it was seeding.
+async fn evict_seed(
+    api: &Arc<Api>,
+    store: &Store,
+    buffer: &Buffer,
+    job: &DownloadJob,
+    jobs: &[DownloadJob],
+    why: &str,
+) {
+    if let Some(hash) = &job.info_hash
+        && let Ok(t) = TorrentIdOrHash::parse(hash)
+    {
+        let _ = api.api_torrent_action_forget(t).await;
+    }
+    delete_buffer_copy_of(buffer, job, jobs).await;
+    if job.status == DownloadJobStatus::Completed
+        && let Err(e) = store.mark_seeded(&job.id).await
+    {
+        tracing::warn!(job = %job.id, "mark_seeded (buffer) failed: {e}");
+    }
+    tracing::info!(job = %job.id, size = %buffer::gb(job.total_bytes.max(0) as u64), "stopped seeding and deleted the buffer copy {why}; the library copy stays");
+}
+
+/// Delete a buffer job's folder below the buffer, unless another live job uses
+/// the same folder (SKADI-T-0784).
+async fn delete_buffer_copy_of(buffer: &Buffer, job: &DownloadJob, jobs: &[DownloadJob]) {
+    let Some(folder) = job_output_folder(job) else {
+        return;
+    };
+    let shared = jobs.iter().any(|j| {
+        j.id != job.id
+            && !matches!(
+                j.status,
+                DownloadJobStatus::Seeded | DownloadJobStatus::Removed
+            )
+            && job_output_folder(j).as_deref() == Some(folder.as_str())
+    });
+    if shared {
+        tracing::info!(job = %job.id, %folder, "buffer copy kept: another job uses the folder");
+        return;
+    }
+    let root = buffer.root().to_path_buf();
+    let res = tokio::task::spawn_blocking(move || {
+        buffer::delete_buffer_copy(&root, std::path::Path::new(&folder))
+    })
+    .await;
+    match res {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => tracing::warn!(job = %job.id, "buffer copy not deleted: {e}"),
+        Err(e) => tracing::warn!(job = %job.id, "buffer delete task failed: {e}"),
+    }
 }
 
 /// Issue `start` only if librqbit reports the torrent `Paused` (SKADI-T-0392).
@@ -1926,6 +2183,22 @@ async fn track(
                     // Drop the torrent from the session (keeps the files) so it stops
                     // seeding, then mark the row terminal.
                     let _ = api.api_torrent_action_forget(torrent_id).await;
+                    // A buffer job's buffer copy goes at the seed limit; the library
+                    // copy stays (SKADI-T-0784).
+                    if let Some(b) = buffer.as_ref().filter(|b| b.recorded(&id).is_some()) {
+                        match store.list_downloads().await {
+                            Ok(mut jobs) => {
+                                for j in &mut jobs {
+                                    b.apply(j);
+                                }
+                                delete_buffer_copy_of(b, &job, &jobs).await;
+                                tracing::info!(job = %id, "deleted the buffer copy at the seed limit; the library copy stays");
+                            }
+                            Err(e) => {
+                                tracing::warn!(job = %id, "buffer copy kept: list_downloads failed: {e}")
+                            }
+                        }
+                    }
                     if let Err(e) = store.mark_seeded(&id).await {
                         tracing::warn!(job = %id, "mark_seeded failed: {e}");
                     }
@@ -2468,6 +2741,7 @@ mod tests {
             download_dir: download,
             state_dir: PathBuf::from("/tmp/state"),
             buffer_dir: None,
+            buffer_limits: buffer::Limits::default(),
             port_range: 16881..16891,
             database_url: "sqlite://./x.db".into(),
             worker_id: "test".into(),

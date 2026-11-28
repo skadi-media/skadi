@@ -688,6 +688,7 @@ async fn activity(
                 DownloadJobStatus::Queued,
                 DownloadJobStatus::Downloading,
                 DownloadJobStatus::Paused,
+                DownloadJobStatus::BufferTooSmall,
                 DownloadJobStatus::Stalled,
             ])
             .await
@@ -738,6 +739,7 @@ async fn activity_retry(
                 DownloadJobStatus::Queued,
                 DownloadJobStatus::Downloading,
                 DownloadJobStatus::Paused,
+                DownloadJobStatus::BufferTooSmall,
                 DownloadJobStatus::Stalled,
             ])
             .await?;
@@ -1441,6 +1443,7 @@ async fn downloads(
             DownloadJobStatus::Queued,
             DownloadJobStatus::Downloading,
             DownloadJobStatus::Paused,
+            DownloadJobStatus::BufferTooSmall,
             DownloadJobStatus::Stalled,
             DownloadJobStatus::Completed,
         ])
@@ -1494,7 +1497,7 @@ async fn downloads(
     let rank = |s: DownloadJobStatus| match s {
         DownloadJobStatus::Downloading => 0u8,
         DownloadJobStatus::Stalled => 1,
-        DownloadJobStatus::Paused => 2,
+        DownloadJobStatus::Paused | DownloadJobStatus::BufferTooSmall => 2,
         DownloadJobStatus::Queued => 3,
         DownloadJobStatus::Error => 4,
         _ => 5,
@@ -1624,7 +1627,8 @@ async fn pause_download(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// `POST /downloads/{id}/resume` — resume a paused download (SKADI-T-0168).
+/// `POST /downloads/{id}/resume` — resume a paused download (SKADI-T-0168), or
+/// retry one held as too big for the worker's buffer (SKADI-T-0784).
 async fn resume_download(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -1742,7 +1746,8 @@ async fn pause_all(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// `POST /downloads/resume-all` — resume every paused transfer.
+/// `POST /downloads/resume-all` — resume every paused transfer, and retry
+/// every one held as too big for the worker's buffer (SKADI-T-0784).
 async fn resume_all(
     State(state): State<Arc<AppState>>,
 ) -> std::result::Result<impl IntoResponse, ApiError> {
@@ -1752,7 +1757,10 @@ async fn resume_all(
         .as_ref()
         .ok_or_else(|| ApiError(skadi_core::AppError::Internal("no store configured".into())))?;
     for j in store.list_downloads().await? {
-        if matches!(j.status, DownloadJobStatus::Paused) {
+        if matches!(
+            j.status,
+            DownloadJobStatus::Paused | DownloadJobStatus::BufferTooSmall
+        ) {
             let _ = store.resume(&j.id).await;
         }
     }

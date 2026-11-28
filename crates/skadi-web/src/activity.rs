@@ -707,7 +707,7 @@ pub fn row_actions(run: &api::ActivityRun, role: Option<&str>) -> Vec<RowAction>
     let mut out = Vec::new();
     if PAUSABLE.contains(&status) {
         out.push(RowAction::Pause);
-    } else if status == "paused" {
+    } else if crate::downloads::is_resumable(status) {
         out.push(RowAction::Resume);
     }
     out.extend([
@@ -1305,6 +1305,7 @@ mod tests {
         assert_eq!(first("queued"), Some(RowAction::Pause));
         assert_eq!(first("downloading"), Some(RowAction::Pause));
         assert_eq!(first("paused"), Some(RowAction::Resume));
+        assert_eq!(first("buffer_too_small"), Some(RowAction::Resume));
         // The store cannot pause a stalled transfer, so neither is offered.
         assert_eq!(first("stalled"), Some(RowAction::Retry));
     }

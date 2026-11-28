@@ -357,6 +357,17 @@ importer can't hardlink and falls back to a full **copy** — doubling disk use
 and, on a space-limited host, filling it and crashing Docker. Keep everything
 under the one `storage` mount and that can't happen.
 
+### Download buffer (optional)
+
+Off by default. Set `SKADI_BUFFER_SOURCE` in `.env` to a host folder (a local
+drive, or an NFS share mounted on the host) and the worker downloads and seeds
+there, mounted at `/buffer` in the worker only; finished files are copied to
+`downloads/complete` in one sequential write, and the importer hard-links from
+there as above. `SKADI_WORKER_BUFFER_MAX_GB` (default 100) and
+`SKADI_WORKER_BUFFER_MIN_FREE_GB` (default 20) bound it. See the docs page
+*How-to → Download buffer* for the limits, eviction and the trade-offs of each
+kind of folder.
+
 ### Adopting an existing library (migration)
 
 Import is now a **reorg-via-link move**: each matched file is

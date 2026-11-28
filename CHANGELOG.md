@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-11-28
+
 ### Added
 - A download buffer for the download worker, off by default: with `SKADI_WORKER_BUFFER_DIR` set, new downloads download and seed in that folder and the worker's session state lives there; a finished download is copied to the complete folder on the library volume in one sequential write before it is reported complete. Downloads already on the library volume finish there (SKADI-T-0783).
 - Limits for the download buffer: a size cap (`SKADI_WORKER_BUFFER_MAX_GB`, default 100) and a free-space floor (`SKADI_WORKER_BUFFER_MIN_FREE_GB`, default 20); the first one reached applies. A new download waits, still queued, until it fits; the oldest seeding copies are evicted to make room, and an evicted torrent stops seeding. At the seed limit the buffer copy is deleted; the library copy stays. The worker logs the buffer's use and limits. A download that can never fit gets the new status `buffer_too_small` with the reason: it is held like a pause, so its release is not blocklisted, the Downloads page shows the reason, and Resume tries it again (SKADI-T-0784).

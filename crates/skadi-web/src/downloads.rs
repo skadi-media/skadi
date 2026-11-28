@@ -44,11 +44,22 @@ impl RowState {
     }
 }
 
+/// Status of a job the worker holds because it can never fit in its download
+/// buffer (SKADI-T-0784). The row carries the reason; Resume retries it.
+pub const BUFFER_TOO_SMALL: &str = "buffer_too_small";
+
+/// Whether a row offers Resume: a paused row, or one held as too big for the
+/// worker's buffer (Resume is its retry, SKADI-T-0784).
+#[must_use]
+pub fn is_resumable(status: &str) -> bool {
+    status == "paused" || status == BUFFER_TOO_SMALL
+}
+
 /// The state of one row. An error wins over the status, so a stalled or
 /// seeding row that failed counts once, under Errored.
 pub fn row_state(d: &Download) -> RowState {
     let has_error = d.error.as_deref().is_some_and(|e| !e.trim().is_empty());
-    if has_error || d.status == "error" {
+    if has_error || d.status == "error" || d.status == BUFFER_TOO_SMALL {
         return RowState::Errored;
     }
     match d.status.as_str() {
@@ -121,7 +132,11 @@ pub fn error_message(d: &Download) -> Option<String> {
             .as_deref()
             .map(str::trim)
             .filter(|e| !e.is_empty())
-            .unwrap_or("The transfer failed. The worker gave no reason.")
+            .unwrap_or(if d.status == BUFFER_TOO_SMALL {
+                "The download does not fit in the worker's download buffer."
+            } else {
+                "The transfer failed. The worker gave no reason."
+            })
             .to_string(),
     )
 }
@@ -144,7 +159,11 @@ pub fn row_badge_at(d: &Download, stalled_for_secs: Option<f64>) -> Option<RowBa
             title: stalled_title(stalled_for_secs),
         }),
         RowState::Errored => Some(RowBadge {
-            label: "Error",
+            label: if d.status == BUFFER_TOO_SMALL {
+                "Too big for buffer"
+            } else {
+                "Error"
+            },
             level: state.level(),
             title: error_message(d).unwrap_or_default(),
         }),
@@ -528,8 +547,8 @@ impl BulkAction {
     /// is not paused, Resume on a paused one; every row can be removed.
     pub fn applies_to(self, d: &Download) -> bool {
         match self {
-            BulkAction::Pause => d.status != "error" && d.status != "paused",
-            BulkAction::Resume => d.status == "paused",
+            BulkAction::Pause => d.status != "error" && !is_resumable(&d.status),
+            BulkAction::Resume => is_resumable(&d.status),
             BulkAction::Remove | BulkAction::RemoveWithFiles => true,
         }
     }
@@ -1098,6 +1117,28 @@ mod tests {
         let chosen: Vec<String> = (0..10).map(|i| format!("r{i}")).collect();
         let s: Selection = chosen.iter().cloned().collect();
         assert_eq!(bulk_targets(BulkAction::Pause, &s, &rows), chosen);
+    }
+
+    /// SKADI-T-0784: a job held as too big for the buffer shows its reason, is
+    /// counted as errored, and offers Resume (its retry), not Pause.
+    #[test]
+    fn a_job_too_big_for_the_buffer_shows_its_reason_and_offers_resume() {
+        let mut held = row("big", BUFFER_TOO_SMALL);
+        held.error = Some("150 GB; the buffer cap is 100 GB".into());
+        assert_eq!(row_state(&held), RowState::Errored);
+        assert_eq!(
+            error_message(&held).as_deref(),
+            Some("150 GB; the buffer cap is 100 GB")
+        );
+        let badge = row_badge(&held).unwrap();
+        assert_eq!(badge.label, "Too big for buffer");
+        assert_eq!(badge.title, "150 GB; the buffer cap is 100 GB");
+        assert!(BulkAction::Resume.applies_to(&held));
+        assert!(!BulkAction::Pause.applies_to(&held));
+        // Even with no reason, the row says what holds it.
+        let bare = row("bare", BUFFER_TOO_SMALL);
+        assert_eq!(row_state(&bare), RowState::Errored);
+        assert!(error_message(&bare).unwrap().contains("buffer"));
     }
 
     #[test]

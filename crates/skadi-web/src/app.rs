@@ -1288,7 +1288,8 @@ fn DownloadsSection() -> impl IntoView {
                 let full_name = label.clone();
                 let pct = j.percent;
                 let state = dlm::row_state(&j);
-                let paused = j.status == "paused";
+                // Resume also retries a job held as too big for the buffer.
+                let paused = dlm::is_resumable(&j.status);
                 // A failed job (status `error`) has nothing to pause or resume;
                 // Remove still clears it.
                 let failed = j.status == "error";
@@ -1731,7 +1732,10 @@ fn DownloadsSection() -> impl IntoView {
             .filter(|j| j.status == "queued" || j.status == "stalled")
             .count();
         let sd = js.iter().filter(|j| j.status == "seeding").count();
-        let paused = js.iter().filter(|j| j.status == "paused").count();
+        let paused = js
+            .iter()
+            .filter(|j| crate::downloads::is_resumable(&j.status))
+            .count();
         let down: i64 = js.iter().filter_map(|j| j.down_speed_bps).sum();
         let up: i64 = js.iter().filter_map(|j| j.up_speed_bps).sum();
 

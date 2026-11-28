@@ -179,6 +179,13 @@ impl Downloader for DbDownloader {
             DownloadJobStatus::Paused => DownloadStatus::Paused {
                 progress: progress_fraction(job.progress_bytes, job.total_bytes),
             },
+            // Held by the worker: the download can never fit in its buffer
+            // (SKADI-T-0784). The cause is the buffer, not the release, so it is
+            // a hold like a pause: the run waits, the stall clock stops, and
+            // nothing is blocklisted. A person's resume puts it back in the queue.
+            DownloadJobStatus::BufferTooSmall => DownloadStatus::Paused {
+                progress: progress_fraction(job.progress_bytes, job.total_bytes),
+            },
             DownloadJobStatus::Downloading | DownloadJobStatus::Stalled
                 if job.client_state.as_deref().is_some_and(|s| s == "paused") =>
             {
@@ -472,5 +479,37 @@ mod tests {
             "/mnt/storage/skadi-torrent/complete".into(),
         );
         dl.test().await.unwrap();
+    }
+
+    /// SKADI-T-0784: a job the worker holds as too big for its buffer reaches
+    /// the hunter as a hold, never as a failure (which would blocklist the
+    /// release), and a resume puts it back in the queue.
+    #[tokio::test]
+    async fn a_job_too_big_for_the_buffer_is_a_hold_not_a_failure() {
+        let store = temp_store().await;
+        let dl = DbDownloader::new(
+            DownloaderId::new(),
+            Arc::new(store.clone()),
+            "/mnt/storage/skadi-torrent/incomplete".into(),
+            "/mnt/storage/skadi-torrent/complete".into(),
+        );
+        let handle = dl
+            .add(&magnet_release("Big One"), &Category(2000))
+            .await
+            .unwrap();
+        store.claim_next("w1").await.unwrap().unwrap();
+        store
+            .mark_buffer_too_small(&handle.native_id, "too big for the buffer")
+            .await
+            .unwrap();
+        assert!(matches!(
+            dl.status(&handle).await.unwrap(),
+            DownloadStatus::Paused { .. }
+        ));
+        store.resume(&handle.native_id).await.unwrap();
+        assert!(matches!(
+            dl.status(&handle).await.unwrap(),
+            DownloadStatus::Waiting
+        ));
     }
 }

@@ -66,6 +66,7 @@ fn config(l: &Layout, buffer: Option<PathBuf>, port: u16) -> Config {
         download_dir: l.complete.clone(),
         state_dir: l.base.join("lib/downloads/.rqbit-session"),
         buffer_dir: buffer,
+        buffer_limits: skadi_downloader_worker::buffer::Limits::none(),
         port_range: port..port + 1,
         database_url: format!("sqlite://{}", l.base.join("worker.db").display()),
         worker_id: "buffer-test".into(),
@@ -269,6 +270,191 @@ async fn a_download_already_on_the_library_volume_finishes_there() {
         "finished where it was, linked as before"
     );
     assert!(files_under(&l.buffer.join(REF)).is_empty());
+
+    agent.abort();
+    let _ = std::fs::remove_dir_all(&l.base);
+}
+
+// ---- Limits, eviction and the seed limit (SKADI-T-0784) ----
+
+/// Another payload and its `.torrent` beside `l`'s, under `name`.
+async fn another_torrent(l: &Layout, name: &str, salt: u8) -> (PathBuf, Vec<u8>) {
+    let dir = l.base.join(format!("src-{name}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let payload: Vec<u8> = (0..1_500_000u32)
+        .map(|i| ((i % 241) as u8).wrapping_add(salt))
+        .collect();
+    let src = dir.join("episode.mkv");
+    std::fs::write(&src, &payload).unwrap();
+    let t = create_torrent(
+        &src,
+        CreateTorrentOptions {
+            name: None,
+            trackers: Vec::new(),
+            piece_length: Some(65536),
+        },
+        &BlockingSpawner::new(2),
+    )
+    .await
+    .unwrap();
+    let torrent = l.base.join(format!("{name}.torrent"));
+    std::fs::write(&torrent, t.as_bytes().unwrap()).unwrap();
+    (torrent, payload)
+}
+
+async fn enqueue_as(store: &Store, l: &Layout, reff: &str, torrent: &Path) -> DownloadJob {
+    store
+        .enqueue(&NewDownloadJob {
+            acquirable_ref: reff.into(),
+            source: torrent.to_string_lossy().into_owned(),
+            category: None,
+            incomplete_dir: Some(l.incomplete.to_string_lossy().into_owned()),
+            complete_dir: Some(l.complete.to_string_lossy().into_owned()),
+        })
+        .await
+        .unwrap()
+}
+
+async fn wait_status(store: &Store, id: &str, want: DownloadJobStatus, secs: u64) -> DownloadJob {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let row = store.get_download(id).await.unwrap().unwrap();
+        if row.status == want {
+            return row;
+        }
+        assert!(
+            row.status != DownloadJobStatus::Error,
+            "job failed: {:?}",
+            row.error
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "job is {:?}, not {want:?}, after {secs}s",
+            row.status
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+fn place(dir: &Path, payload: &[u8]) -> PathBuf {
+    let f = dir.join("episode.mkv");
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(&f, payload).unwrap();
+    f
+}
+
+/// A download bigger than the cap is held as `buffer_too_small` with the
+/// reason, nothing of it stays in the buffer, and a resume tries it again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_download_bigger_than_the_cap_is_held_with_the_reason() {
+    let l = layout("buffer-cap").await;
+    let mut cfg = config(&l, Some(l.buffer.clone()), 27931);
+    cfg.buffer_limits = skadi_downloader_worker::buffer::Limits {
+        cap_bytes: Some(1_000_000),
+        floor_bytes: None,
+    };
+    let agent = tokio::spawn(run(cfg.clone()));
+    let store = store_of(&cfg).await;
+    let job = enqueue(&store, &l).await;
+    let held = wait_status(&store, &job.id, DownloadJobStatus::BufferTooSmall, 60).await;
+    let reason = held.error.clone().unwrap_or_default();
+    assert!(reason.contains("1.5 MB"), "{reason}");
+    assert!(reason.contains("cap is 1.0 MB"), "{reason}");
+    assert!(reason.contains("SKADI_WORKER_BUFFER_MAX_GB"), "{reason}");
+    assert!(files_under(&l.complete).is_empty());
+    assert!(files_under(&l.buffer.join(REF)).is_empty());
+
+    // A person's retry: back in the queue, checked again under the same
+    // limits, and held again.
+    store.resume(&job.id).await.unwrap();
+    let back = store.get_download(&job.id).await.unwrap().unwrap();
+    assert_eq!(back.error, None);
+    wait_status(&store, &job.id, DownloadJobStatus::BufferTooSmall, 60).await;
+
+    agent.abort();
+    let _ = std::fs::remove_dir_all(&l.base);
+}
+
+/// The cap holds one download: the second evicts the first's seeding copy.
+/// The first stops seeding (`seeded`), its buffer copy goes, its library copy
+/// stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_new_download_evicts_the_oldest_seed_and_the_library_copy_stays() {
+    let l = layout("buffer-evict").await;
+    let (second, second_payload) = another_torrent(&l, "second", 7).await;
+    let first_in_buffer = place(&l.buffer.join(REF), &l.payload);
+    let second_in_buffer = place(&l.buffer.join("Second Show S01E01"), &second_payload);
+
+    let mut cfg = config(&l, Some(l.buffer.clone()), 27941);
+    cfg.buffer_limits = skadi_downloader_worker::buffer::Limits {
+        cap_bytes: Some(2_000_000),
+        floor_bytes: None,
+    };
+    let agent = tokio::spawn(run(cfg.clone()));
+    let store = store_of(&cfg).await;
+    let first = enqueue(&store, &l).await;
+    wait_completed(&store, &first.id, 90).await;
+    let first_in_library = l.complete.join(REF).join("episode.mkv");
+    assert!(first_in_library.exists());
+
+    let second_job = enqueue_as(&store, &l, "Second Show S01E01", &second).await;
+    wait_completed(&store, &second_job.id, 90).await;
+
+    let evicted = wait_status(&store, &first.id, DownloadJobStatus::Seeded, 30).await;
+    assert_eq!(evicted.status, DownloadJobStatus::Seeded);
+    assert!(
+        !first_in_buffer.exists(),
+        "the evicted buffer copy is deleted"
+    );
+    assert_eq!(
+        std::fs::read(&first_in_library).unwrap(),
+        l.payload,
+        "the library copy stays"
+    );
+    assert!(
+        second_in_buffer.exists(),
+        "the new download seeds from the buffer"
+    );
+    assert_eq!(
+        std::fs::read(l.complete.join("Second Show S01E01/episode.mkv")).unwrap(),
+        second_payload
+    );
+
+    agent.abort();
+    let _ = std::fs::remove_dir_all(&l.base);
+}
+
+/// At the seed limit the buffer copy is deleted and the library copy stays.
+/// The seed time is set in minutes, so this test takes a little over one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_seed_limit_deletes_the_buffer_copy_and_the_library_copy_stays() {
+    use skadi_store::{ConfigRepo, ConfigSource};
+    let l = layout("buffer-seedlimit").await;
+    let in_buffer = place(&l.buffer.join(REF), &l.payload);
+    let cfg = config(&l, Some(l.buffer.clone()), 27951);
+    let agent = tokio::spawn(run(cfg.clone()));
+    let store = store_of(&cfg).await;
+    // The seed policy is live config: one minute, then stop.
+    store
+        .set_config("worker.seed_time_mins", "1", ConfigSource::Env)
+        .await
+        .unwrap();
+    let job = enqueue(&store, &l).await;
+    wait_completed(&store, &job.id, 90).await;
+    let in_library = l.complete.join(REF).join("episode.mkv");
+    assert!(in_buffer.exists());
+
+    wait_status(&store, &job.id, DownloadJobStatus::Seeded, 120).await;
+    assert!(
+        !in_buffer.exists(),
+        "the buffer copy is deleted at the seed limit"
+    );
+    assert!(!l.buffer.join(REF).exists());
+    assert_eq!(
+        std::fs::read(&in_library).unwrap(),
+        l.payload,
+        "the library copy stays"
+    );
 
     agent.abort();
     let _ = std::fs::remove_dir_all(&l.base);

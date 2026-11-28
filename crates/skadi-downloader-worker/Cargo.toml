@@ -46,6 +46,8 @@ url = "2"
 # (SKADI-T-0683).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# statvfs for the buffer's free-space floor (SKADI-T-0784).
+libc = "0.2"
 
 [dev-dependencies]
 cucumber = "0.23"

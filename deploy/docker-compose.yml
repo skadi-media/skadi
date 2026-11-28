@@ -714,6 +714,14 @@ services:
       SKADI_WORKER_DOWNLOAD_DIR: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}/downloads/complete
       SKADI_WORKER_STATE_DIR: ${SKADI_LIBRARY_ROOT:-/mnt/storage/skadi}/downloads/.rqbit-session
       SKADI_WORKER_ID: ${SKADI_WORKER_ID:-skadi-worker-1}
+      # Download buffer (SKADI-T-0785, COLLIERY-I-0677): off unless
+      # SKADI_BUFFER_SOURCE is set. Set, new downloads download and seed in
+      # /buffer and finished files are copied to downloads/complete in one
+      # sequential write. Empty limits use the worker's defaults (cap 100 GB,
+      # floor 20 GB). See docs: how-to/download-buffer.
+      SKADI_WORKER_BUFFER_DIR: ${SKADI_BUFFER_SOURCE:+/buffer}
+      SKADI_WORKER_BUFFER_MAX_GB: ${SKADI_WORKER_BUFFER_MAX_GB:-}
+      SKADI_WORKER_BUFFER_MIN_FREE_GB: ${SKADI_WORKER_BUFFER_MIN_FREE_GB:-}
       # Optional: "1" turns off the BitTorrent DHT in the built-in client (peer discovery
       # then relies on trackers + PEX). Used for the SKADI-T-0392 memory A/B; empty = on.
       SKADI_WORKER_DISABLE_DHT: ${SKADI_WORKER_DISABLE_DHT:-}
@@ -755,6 +763,10 @@ services:
       - storage:/mnt/storage
       # gluetun's forwarded-port status file (SKADI-T-0587), read at startup.
       - gluetun-run:/tmp/gluetun:ro
+      # The download buffer, the worker only (SKADI-T-0785). SKADI_BUFFER_SOURCE
+      # is a host folder (a local drive, or an NFS share mounted on the host);
+      # unset, an empty named volume sits here unused and the buffer is off.
+      - ${SKADI_BUFFER_SOURCE:-download-buffer}:/buffer
     restart: unless-stopped
 
 networks:
@@ -771,6 +783,9 @@ volumes:
   tailscale-state:
   # gluetun's runtime status files (forwarded port), shared with the worker.
   gluetun-run:
+  # Stand-in for the download buffer when SKADI_BUFFER_SOURCE is unset: mounted
+  # but unused, since the worker's buffer setting is then empty (SKADI-T-0785).
+  download-buffer:
   # The native cardigann definition library (SKADI-I-0036): bundled defs seeded on
   # first run, plus anything synced from the Prowlarr/Indexers repo.
   cardigann-defs:

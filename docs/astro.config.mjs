@@ -61,6 +61,7 @@ export default defineConfig({
 					label: 'How-to guides',
 					items: [
 						page('how-to/audiobooks', 'Audiobooks'),
+						page('how-to/download-buffer', 'Download buffer'),
 						page('how-to/operations', 'Operations runbook'),
 					],
 				},
